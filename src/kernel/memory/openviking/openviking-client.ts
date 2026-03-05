@@ -43,6 +43,7 @@ export class OpenVikingClient {
     path: string,
     body?: unknown,
     params?: Record<string, string>,
+    maxRetries?: number,
   ): Promise<T> {
     const url = new URL(`${this.baseUrl}${path}`);
     if (params) {
@@ -53,7 +54,9 @@ export class OpenVikingClient {
 
     let lastError: Error | null = null;
 
-    for (let attempt = 0; attempt <= this.retries; attempt++) {
+    const retries = maxRetries ?? this.retries;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), this.timeout);
@@ -83,7 +86,7 @@ export class OpenVikingClient {
         if (err instanceof OVError && err.status && err.status < 500) {
           throw err;
         }
-        if (attempt < this.retries) {
+        if (attempt < retries) {
           await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 200));
         }
       }
@@ -152,6 +155,15 @@ export class OpenVikingClient {
 
   async read(uri: string): Promise<string> {
     return this.request('GET', '/api/v1/content/read', undefined, { uri });
+  }
+
+  /** Read a file, returning null if not found (no retries, no throw) */
+  async tryRead(uri: string): Promise<string | null> {
+    try {
+      return await this.request('GET', '/api/v1/content/read', undefined, { uri }, 0);
+    } catch {
+      return null;
+    }
   }
 
   async ls(uri: string): Promise<FileEntry[]> {

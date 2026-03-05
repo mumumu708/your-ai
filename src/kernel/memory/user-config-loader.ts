@@ -34,11 +34,23 @@ export class UserConfigLoader {
       return this.cache;
     }
 
+    // Pre-check which user config files exist on VikingFS to avoid
+    // noisy server-side FileNotFoundError for missing files
+    let remoteFiles: Set<string>;
+    try {
+      const entries = await this.ov.ls(
+        `${VIKING_USER_CONFIG_URI}/${this.userId}/config`,
+      );
+      remoteFiles = new Set(entries.map((e) => e.name));
+    } catch {
+      remoteFiles = new Set();
+    }
+
     const [soul, identity, user, agents] = await Promise.all([
-      this.loadFile('SOUL.md'),
-      this.loadFile('IDENTITY.md'),
-      this.loadFile('USER.md'),
-      this.loadFile('AGENTS.md'),
+      this.loadFile('SOUL.md', remoteFiles),
+      this.loadFile('IDENTITY.md', remoteFiles),
+      this.loadFile('USER.md', remoteFiles),
+      this.loadFile('AGENTS.md', remoteFiles),
     ]);
 
     this.cache = { soul, identity, user, agents };
@@ -88,12 +100,12 @@ export class UserConfigLoader {
       // fall through
     }
 
-    // Check VikingFS
+    // Check VikingFS via ls to avoid noisy server errors on missing files
     try {
-      const content = await this.ov.read(
-        `${VIKING_USER_CONFIG_URI}/${this.userId}/config/${filename}`,
+      const entries = await this.ov.ls(
+        `${VIKING_USER_CONFIG_URI}/${this.userId}/config`,
       );
-      return !!content && !content.startsWith('<!--');
+      return entries.some((e) => e.name === filename);
     } catch {
       return false;
     }
@@ -105,7 +117,10 @@ export class UserConfigLoader {
   }
 
   /** Load a single file with three-level fallback */
-  private async loadFile(filename: string): Promise<string> {
+  private async loadFile(
+    filename: string,
+    remoteFiles?: Set<string>,
+  ): Promise<string> {
     const localPath = `${this.localDir}/${filename}`;
 
     // Level 1: user-space local file
@@ -118,16 +133,14 @@ export class UserConfigLoader {
       // fall through
     }
 
-    // Level 2: VikingFS user config
-    try {
-      const content = await this.ov.read(
+    // Level 2: VikingFS user config (skip if we know the file doesn't exist remotely)
+    if (!remoteFiles || remoteFiles.has(filename)) {
+      const content = await this.ov.tryRead(
         `${VIKING_USER_CONFIG_URI}/${this.userId}/config/${filename}`,
       );
       if (content && !content.startsWith('<!--')) {
         return content;
       }
-    } catch {
-      // fall through
     }
 
     // Level 3: global config fallback

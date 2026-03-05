@@ -1,6 +1,7 @@
 import { Logger } from '../shared/logging/logger';
 import type { ConfigLoader } from '../kernel/memory/config-loader';
 import type { OpenVikingClient } from '../kernel/memory/openviking/openviking-client';
+import type { UserConfigLoader } from '../kernel/memory/user-config-loader';
 import type { ExtractedLesson } from './lesson-extractor';
 
 const MAX_PER_CATEGORY = 20;
@@ -29,8 +30,11 @@ export class LessonsLearnedUpdater {
   ) {}
 
   /** Add a new lesson to SOUL.md */
-  async addLesson(lesson: ExtractedLesson): Promise<boolean> {
-    const config = await this.configLoader.loadAll();
+  async addLesson(lesson: ExtractedLesson, userConfigLoader?: UserConfigLoader): Promise<boolean> {
+    // Prefer user workspace; fall back to global config
+    const config = userConfigLoader
+      ? await userConfigLoader.loadAll()
+      : await this.configLoader.loadAll();
     const soulContent = config.soul;
 
     const { before, entries } = this.parseLessons(soulContent);
@@ -51,18 +55,21 @@ export class LessonsLearnedUpdater {
     // Rebuild SOUL.md
     const newSoul = this.rebuildSoul(before, entries);
 
-    // Write to local file + VikingFS
-    await Bun.write(LOCAL_SOUL_PATH, newSoul);
-    try {
-      await this.ov.write(VIKING_SOUL_URI, newSoul);
-    } catch (err) {
-      this.logger.warn('VikingFS 同步 SOUL.md 失败', {
-        error: err instanceof Error ? err.message : String(err),
-      });
+    // Write to user workspace if available, otherwise fall back to global
+    if (userConfigLoader) {
+      await userConfigLoader.writeConfig('SOUL.md', newSoul);
+      userConfigLoader.invalidateCache();
+    } else {
+      await Bun.write(LOCAL_SOUL_PATH, newSoul);
+      try {
+        await this.ov.write(VIKING_SOUL_URI, newSoul);
+      } catch (err) {
+        this.logger.warn('VikingFS 同步 SOUL.md 失败', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      this.configLoader.invalidateCache();
     }
-
-    // Invalidate config cache
-    this.configLoader.invalidateCache();
 
     this.logger.info('教训已记录', {
       category: lesson.category,

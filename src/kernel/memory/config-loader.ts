@@ -84,12 +84,13 @@ export class ConfigLoader {
       // Fall through to VikingFS
     }
 
-    // Fallback to VikingFS
-    try {
-      return await this.ov.read(`${VIKING_CONFIG_URI}/${filename}`);
-    } catch {
-      this.logger.warn(`${filename} not found locally or in VikingFS`);
-      return `<!-- ${filename} not found -->`;
+    // Fallback to VikingFS (tryRead: no retries, returns null on missing)
+    const content = await this.ov.tryRead(`${VIKING_CONFIG_URI}/${filename}`);
+    if (content) {
+      return content;
     }
+
+    this.logger.warn(`${filename} not found locally or in VikingFS`);
+    return `<!-- ${filename} not found -->`;
   }
 }

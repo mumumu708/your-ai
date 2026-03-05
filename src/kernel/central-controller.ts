@@ -150,10 +150,19 @@ export class CentralController {
       });
 
     // PostResponseAnalyzer — uses new Lessons pipeline
+    const lightLLM = deps?.lightLLM ?? null;
     this.postResponseAnalyzer =
       deps?.postResponseAnalyzer ??
       new PostResponseAnalyzer({
         lessonsUpdater: this.lessonsUpdater,
+        llmCall: lightLLM
+          ? async (prompt: string) => {
+              const res = await lightLLM.complete({
+                messages: [{ role: 'user', content: prompt }],
+              });
+              return res.content;
+            }
+          : null,
       });
 
     this.workspaceManager = deps?.workspaceManager ?? new WorkspaceManager();
@@ -471,6 +480,7 @@ export class CentralController {
       task.message.content,
       result.content,
       contextMessages,
+      task.session.userConfigLoader,
     );
     if (feedbackText) {
       responseContent += '\n\n---\n' + feedbackText;

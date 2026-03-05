@@ -56,12 +56,18 @@ export function detectErrorSignal(
   }
 
   // 3. Repetition detection — user repeats same request within recent history
-  const userMessages = history.filter((m) => m.role === 'user').slice(-5);
+  // Skip short/trivial messages (greetings, single words, etc.)
+  if (trimmed.length < 10) return null;
+
+  // Only compare with truly previous messages (exclude the current one)
+  const userMessages = history
+    .filter((m) => m.role === 'user' && m.content !== trimmed)
+    .slice(-5);
   const currentTokens = new Set(tokenize(trimmed));
   for (const prev of userMessages) {
     const prevTokens = new Set(tokenize(prev.content));
     const overlap = jaccardSimilarity(currentTokens, prevTokens);
-    if (overlap > 0.7) {
+    if (overlap > 0.8) {
       return {
         type: 'repetition',
         text: trimmed,

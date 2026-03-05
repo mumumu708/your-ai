@@ -1,18 +1,35 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 
+// Helper: create a mock SDK file response with writeFile (matching official SDK behavior)
+function createMockFileResponse(buf: Buffer) {
+  const fs = require('node:fs');
+  return {
+    writeFile: async (filePath: string) => {
+      fs.writeFileSync(filePath, buf);
+    },
+    getReadableStream: () => require('node:stream').Readable.from(buf),
+    headers: {},
+  };
+}
+
 // Mock @larksuiteoapi/node-sdk before importing the channel
 const mockCreate = mock(() => Promise.resolve({ message_id: 'mock_msg_id' }));
 const mockPatch = mock(() => Promise.resolve({}));
+const mockMessageResourceGet = mock(() => Promise.resolve(createMockFileResponse(Buffer.from('file-content'))));
 const mockWsStart = mock(() => Promise.resolve());
 const mockWsClose = mock(() => {});
 let _capturedEventHandler: ((data: unknown) => Promise<void>) | null = null;
 
 mock.module('@larksuiteoapi/node-sdk', () => ({
+  LoggerLevel: { fatal: 0, error: 1, warn: 2, info: 3, debug: 4, trace: 5 },
   Client: class MockClient {
     im = {
       message: {
         create: mockCreate,
         patch: mockPatch,
+      },
+      messageResource: {
+        get: mockMessageResourceGet,
       },
     };
   },
@@ -39,6 +56,7 @@ describe('FeishuChannel', () => {
     channel = new FeishuChannel(TEST_CONFIG);
     mockCreate.mockClear();
     mockPatch.mockClear();
+    mockMessageResourceGet.mockClear();
     mockWsStart.mockClear();
     mockWsClose.mockClear();
     _capturedEventHandler = null;
@@ -122,6 +140,68 @@ describe('FeishuChannel', () => {
 
     await channel.sendStreamChunk('user_1', { type: 'done' });
     // Buffer should be cleared
+  });
+
+  test('downloadFile returns Buffer on first attempt success', async () => {
+    await channel.initialize();
+    const buf = Buffer.from('hello-file');
+    mockMessageResourceGet.mockImplementationOnce(() => Promise.resolve(createMockFileResponse(buf)));
+
+    const result = await channel.downloadFile('msg_001', 'fkey_001');
+    expect(result).toEqual(buf);
+    expect(mockMessageResourceGet).toHaveBeenCalledTimes(1);
+  });
+
+  test('downloadFile retries on socket error and succeeds on second attempt', async () => {
+    await channel.initialize();
+    const buf = Buffer.from('retry-success');
+    mockMessageResourceGet
+      .mockImplementationOnce(() => Promise.reject(new Error('The socket connection was closed unexpectedly.')))
+      .mockImplementationOnce(() => Promise.resolve(createMockFileResponse(buf)));
+
+    const result = await channel.downloadFile('msg_002', 'fkey_002');
+    expect(result).toEqual(buf);
+    expect(mockMessageResourceGet).toHaveBeenCalledTimes(2);
+  });
+
+  test('downloadFile throws YourBotError after all retries exhausted', async () => {
+    await channel.initialize();
+    mockMessageResourceGet.mockImplementation(() =>
+      Promise.reject(new Error('The socket connection was closed unexpectedly.')),
+    );
+
+    await expect(channel.downloadFile('msg_003', 'fkey_003')).rejects.toThrow('飞书文件下载失败');
+    expect(mockMessageResourceGet).toHaveBeenCalledTimes(3); // MAX_RETRIES = 3
+    mockMessageResourceGet.mockReset();
+    mockMessageResourceGet.mockImplementation(() => Promise.resolve(createMockFileResponse(Buffer.from(''))));
+  });
+
+  test('duplicate feishu events should be deduplicated', async () => {
+    await channel.initialize();
+    expect(_capturedEventHandler).toBeTruthy();
+
+    const handler = mock(() => Promise.resolve());
+    channel.onMessage(handler);
+
+    const rawEvent = {
+      sender: { sender_id: { open_id: 'ou_abc', union_id: 'on_xyz' } },
+      message: {
+        message_id: 'om_dedup_test',
+        chat_id: 'oc_456',
+        message_type: 'text',
+        content: JSON.stringify({ text: '你好' }),
+      },
+    };
+
+    // Trigger the same event twice (simulating Feishu SDK redelivery)
+    await _capturedEventHandler!(rawEvent);
+    await _capturedEventHandler!(rawEvent);
+
+    // Allow fire-and-forget promises to settle
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Handler should only be called once
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   test('shutdown calls wsClient.close and clears state', async () => {

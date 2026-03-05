@@ -61,8 +61,8 @@ function buildRuleLesson(signal: ErrorSignal): string {
     case 'correction':
       return `用户纠正：${signal.text}`;
     case 'repetition':
-      return `用户重复请求，需注意：${signal.text.slice(0, 40)}`;
+      return '用户多次请求未得到满意回应，需改进处理方式';
     case 'frustration':
-      return `用户表达不满，需改进：${signal.text.slice(0, 40)}`;
+      return '用户表达不满，需改进交互体验';
   }
 }

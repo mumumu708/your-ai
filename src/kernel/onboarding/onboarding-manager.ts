@@ -36,19 +36,19 @@ export class OnboardingManager {
   }
 
   /** Try to restore onboarding state from BOOTSTRAP.md file */
-  async tryRestoreState(userId: string, userConfigLoader: UserConfigLoader): Promise<boolean> {
+  async tryRestoreState(userId: string, _userConfigLoader?: UserConfigLoader): Promise<boolean> {
     if (this.states.has(userId)) return true;
 
     try {
-      if (await userConfigLoader.hasUserConfig(BOOTSTRAP_FILENAME)) {
-        const localPath = `user-space/${userId}/memory/${BOOTSTRAP_FILENAME}`;
-        const file = Bun.file(localPath);
-        if (await file.exists()) {
-          const content = await file.text();
-          const state = JSON.parse(content) as OnboardingState;
-          this.states.set(userId, state);
-          return true;
-        }
+      // Only check local file — avoid hitting VikingFS for a transient bootstrap file,
+      // which causes FileNotFoundError on the openviking server when the file doesn't exist.
+      const localPath = `user-space/${userId}/memory/${BOOTSTRAP_FILENAME}`;
+      const file = Bun.file(localPath);
+      if (await file.exists()) {
+        const content = await file.text();
+        const state = JSON.parse(content) as OnboardingState;
+        this.states.set(userId, state);
+        return true;
       }
     } catch (err) {
       this.logger.warn('恢复引导状态失败', {

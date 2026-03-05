@@ -27,10 +27,3 @@
 - Batch evolution tasks with concurrency limit of 2
 
 ## Lessons Learned
-
-### instruction
-- [2026-03-05] 用户重复请求，需注意：你好，记住我喜欢TypeScript
-- [2026-03-05] 用户重复请求，需注意：[SOUL.md](http://soul.md/) 和[IDENTITY.md
-
-### preference
-- [2026-03-05] 用户纠正：：我的项目使用 Bun 运行时，不要给我 Node.js 的方案

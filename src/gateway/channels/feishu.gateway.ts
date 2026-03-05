@@ -19,6 +19,8 @@ export class FeishuChannel extends BaseChannel {
   private readonly config: FeishuConfig;
   /** Accumulated stream text per userId for card updates */
   private readonly streamBuffers: Map<string, { text: string; messageId: string }> = new Map();
+  /** Recently processed message IDs for deduplication (Feishu SDK may redeliver events) */
+  private readonly processedMessages = new Set<string>();
   /** Whether the long connection is established */
   private connected = false;
 
@@ -38,6 +40,7 @@ export class FeishuChannel extends BaseChannel {
     this.client = new lark.Client({
       appId: this.config.appId,
       appSecret: this.config.appSecret,
+      loggerLevel: lark.LoggerLevel.warn,
     });
 
     // Build eventDispatcher with im.message.receive_v1 handler
@@ -45,10 +48,27 @@ export class FeishuChannel extends BaseChannel {
       'im.message.receive_v1': async (data: unknown) => {
         try {
           const message = await this.transformToStandardMessage(data);
+
+          // Dedup: Feishu SDK may redeliver events when handler is slow
+          if (this.processedMessages.has(message.id)) {
+            this.logger.warn('飞书消息重复，已忽略', { messageId: message.id });
+            return;
+          }
+          this.processedMessages.add(message.id);
+          // Auto-cleanup after 5 minutes to prevent memory leak
+          setTimeout(() => this.processedMessages.delete(message.id), 5 * 60 * 1000);
+
           message.metadata.rawEvent = data;
-          await this.emitMessage(message);
+          // Fire-and-forget: don't block the event handler, otherwise
+          // the SDK considers the event unprocessed and redelivers it
+          this.emitMessage(message).catch((error) => {
+            this.logger.error('飞书消息处理失败', {
+              messageId: message.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
         } catch (error) {
-          this.logger.error('飞书消息处理失败', {
+          this.logger.error('飞书消息解析失败', {
             error: error instanceof Error ? error.message : String(error),
           });
         }
@@ -209,40 +229,52 @@ export class FeishuChannel extends BaseChannel {
   }
 
   async downloadFile(messageId: string, fileKey: string): Promise<Buffer> {
-    try {
-      const resp = await this.client.im.messageResource.get({
-        path: { message_id: messageId, file_key: fileKey },
-        params: { type: 'file' },
-      });
+    const MAX_RETRIES = 3;
+    let lastError: Error | null = null;
 
-      // resp is a ReadableStream or Buffer depending on SDK version
-      if (Buffer.isBuffer(resp)) {
-        return resp;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        // Use native fetch instead of SDK's axios-based client to avoid
+        // ECONNRESET issues with axios/follow-redirects under Bun
+        const token = await this.client.tokenManager.getCustomTenantAccessToken();
+        const url = `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`;
+        const resp = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) {
+          throw new Error(`Feishu API responded with ${resp.status}: ${resp.statusText}`);
+        }
+        return Buffer.from(await resp.arrayBuffer());
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        const errorDetail =
+          error && typeof error === 'object'
+            ? JSON.stringify(error, Object.getOwnPropertyNames(error as object))
+            : String(error);
+        if (attempt < MAX_RETRIES) {
+          const delay = Math.pow(2, attempt - 1) * 500; // 500ms, 1000ms
+          this.logger.warn('飞书文件下载失败，准备重试', {
+            messageId,
+            fileKey,
+            attempt,
+            nextRetryMs: delay,
+            error: errorDetail,
+          });
+          await new Promise((r) => setTimeout(r, delay));
+        }
       }
-      if (resp && typeof (resp as Record<string, unknown>).arrayBuffer === 'function') {
-        const ab = await (resp as unknown as Response).arrayBuffer();
-        return Buffer.from(ab);
-      }
-      // Fallback: try reading as stream
-      const chunks: Uint8Array[] = [];
-      const reader = (resp as unknown as ReadableStream).getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) chunks.push(value);
-      }
-      return Buffer.concat(chunks);
-    } catch (error) {
-      this.logger.error('飞书文件下载失败', {
-        messageId,
-        fileKey,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw new YourBotError(ERROR_CODES.INVALID_CHANNEL, '飞书文件下载失败', {
-        messageId,
-        fileKey,
-        originalError: error instanceof Error ? error.message : String(error),
-      });
     }
+
+    this.logger.error('飞书文件下载失败', {
+      messageId,
+      fileKey,
+      attempts: MAX_RETRIES,
+      error: lastError?.message,
+    });
+    throw new YourBotError(ERROR_CODES.INVALID_CHANNEL, '飞书文件下载失败', {
+      messageId,
+      fileKey,
+      originalError: lastError?.message,
+    });
   }
 }

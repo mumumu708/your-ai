@@ -1,21 +1,25 @@
 import type { ConversationMessage } from '../../shared/agents/agent-instance.types';
 import { Logger } from '../../shared/logging/logger';
 import { detectErrorSignal } from '../../lessons/error-detector';
-import { extractLesson } from '../../lessons/lesson-extractor';
+import { extractLesson, type LlmCallFn } from '../../lessons/lesson-extractor';
 import type { LessonsLearnedUpdater } from '../../lessons/lessons-updater';
+import type { UserConfigLoader } from '../memory/user-config-loader';
 
 const ANALYSIS_TIMEOUT_MS = 3000;
 
 export interface PostResponseAnalyzerDeps {
   lessonsUpdater: LessonsLearnedUpdater;
+  llmCall?: LlmCallFn | null;
 }
 
 export class PostResponseAnalyzer {
   private readonly logger = new Logger('PostResponseAnalyzer');
   private readonly lessonsUpdater: LessonsLearnedUpdater;
+  private readonly llmCall?: LlmCallFn | null;
 
   constructor(deps: PostResponseAnalyzerDeps) {
     this.lessonsUpdater = deps.lessonsUpdater;
+    this.llmCall = deps.llmCall;
   }
 
   async analyzeExchange(
@@ -23,10 +27,11 @@ export class PostResponseAnalyzer {
     userMsg: string,
     assistantMsg: string,
     history: ConversationMessage[],
+    userConfigLoader?: UserConfigLoader,
   ): Promise<string | null> {
     try {
       const result = await this.withTimeout(
-        this.doAnalyze(userId, userMsg, assistantMsg, history),
+        this.doAnalyze(userId, userMsg, assistantMsg, history, userConfigLoader),
         ANALYSIS_TIMEOUT_MS,
       );
       return result;
@@ -44,6 +49,7 @@ export class PostResponseAnalyzer {
     userMsg: string,
     _assistantMsg: string,
     history: ConversationMessage[],
+    userConfigLoader?: UserConfigLoader,
   ): Promise<string | null> {
     // Detect error signal from user message
     const signal = detectErrorSignal(userMsg, history);
@@ -59,8 +65,8 @@ export class PostResponseAnalyzer {
     });
 
     // Extract and store lesson
-    const lesson = await extractLesson(signal);
-    const added = await this.lessonsUpdater.addLesson(lesson);
+    const lesson = await extractLesson(signal, this.llmCall);
+    const added = await this.lessonsUpdater.addLesson(lesson, userConfigLoader);
 
     if (!added) return null;
 
