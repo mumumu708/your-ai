@@ -1,0 +1,2 @@
+{"id": "msg_2f9ba4be2d9f40d7b025ef6f8f52347b", "role": "user", "parts": [{"type": "text", "text": "你好"}], "created_at": "2026-03-05T12:06:32.458Z"}
+{"id": "msg_de3a741423e44c47af571b003408859a", "role": "assistant", "parts": [{"type": "text", "text": "你好！我是 YourBot，你的个人 AI 助手。\n\n有什么我可以帮你的吗？我可以帮你：\n\n- 🔍 深度研究技术问题\n- 📝 总结文档或代码\n- 💻 Git 提交和 PR 相关操作\n- 🛠️ 查找或创建自定义技能\n\n随时告诉我你的需求！"}], "created_at": "2026-03-05T12:06:43.029Z"}

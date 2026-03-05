@@ -1,0 +1,6 @@
+[install]
+registry = "https://bnpm.byted.org/"
+
+[test]
+coverage = true
+coverageReporter = ["text", "lcov"]

@@ -1,0 +1,93 @@
+[
+  {
+    "num": 1,
+    "title": "第1章 项目概览与愿景",
+    "filename": "01-project-overview.md",
+    "lines": 115,
+    "chars": 3543
+  },
+  {
+    "num": 2,
+    "title": "第2章 系统架构设计",
+    "filename": "02-system-architecture.md",
+    "lines": 523,
+    "chars": 15032
+  },
+  {
+    "num": 3,
+    "title": "第3章 多通道接入系统",
+    "filename": "03-multi-channel-access.md",
+    "lines": 162,
+    "chars": 4765
+  },
+  {
+    "num": 4,
+    "title": "第4章 Agent 运行时引擎",
+    "filename": "04-agent-runtime-engine.md",
+    "lines": 2231,
+    "chars": 71062
+  },
+  {
+    "num": 5,
+    "title": "第5章 实时流式体验",
+    "filename": "05-realtime-streaming.md",
+    "lines": 113,
+    "chars": 2918
+  },
+  {
+    "num": 6,
+    "title": "第6章 工具系统（MCP Server）",
+    "filename": "06-tool-system-mcp.md",
+    "lines": 1592,
+    "chars": 42235
+  },
+  {
+    "num": 7,
+    "title": "第7章 定时任务系统",
+    "filename": "07-scheduled-tasks.md",
+    "lines": 168,
+    "chars": 3852
+  },
+  {
+    "num": 8,
+    "title": "第8章 记忆系统",
+    "filename": "08-memory-system.md",
+    "lines": 102,
+    "chars": 2487
+  },
+  {
+    "num": 9,
+    "title": "第9章 技能系统",
+    "filename": "09-skill-system.md",
+    "lines": 1510,
+    "chars": 39733
+  },
+  {
+    "num": 10,
+    "title": "第10章 文件管理系统",
+    "filename": "10-file-management.md",
+    "lines": 80,
+    "chars": 1823
+  },
+  {
+    "num": 11,
+    "title": "第11章 安全与多用户系统",
+    "filename": "11-security-multi-user.md",
+    "lines": 159,
+    "chars": 3987
+  },
+  {
+    "num": 12,
+    "title": "第12章 项目结构与开发规范",
+    "filename": "12-project-structure-conventions.md",
+    "lines": 597,
+    "chars": 18273
+  },
+  {
+    "num": 13,
+    "title": "第13章 部署与运维",
+    "filename": "13-deployment-operations.md",
+    "lines": 562,
+    "chars": 14764
+  }
+]
