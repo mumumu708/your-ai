@@ -1,0 +1,108 @@
+{
+  "description": "文档→源码映射，用于新鲜度检查（check-docs 脚本）",
+  "mappings": [
+    {
+      "doc": ".harness/architecture.md",
+      "sources": [
+        "src/gateway/index.ts",
+        "src/kernel/central-controller.ts",
+        "src/kernel/agents/agent-runtime.ts",
+        "src/kernel/classifier/task-classifier.ts",
+        "src/kernel/evolution/knowledge-router.ts"
+      ],
+      "description": "架构概览"
+    },
+    {
+      "doc": ".harness/conventions.md",
+      "sources": [
+        "biome.json",
+        "tsconfig.json",
+        "src/shared/errors/yourbot-error.ts",
+        "src/shared/errors/error-codes.ts",
+        "src/shared/logging/logger.ts"
+      ],
+      "description": "编码约定"
+    },
+    {
+      "doc": ".harness/testing.md",
+      "sources": [
+        "src/test-utils/mock-ov-deps.ts",
+        "package.json"
+      ],
+      "description": "测试约定"
+    },
+    {
+      "doc": ".harness/glossary.md",
+      "sources": [
+        "src/shared/tasking/task.types.ts",
+        "src/kernel/memory/config-loader.ts",
+        "src/kernel/memory/user-config-loader.ts",
+        "config/SOUL.md",
+        "config/IDENTITY.md"
+      ],
+      "description": "术语表"
+    },
+    {
+      "doc": "CLAUDE.md",
+      "sources": [
+        "package.json"
+      ],
+      "description": "Harness 入口"
+    },
+    {
+      "doc": ".harness/design-docs/004-gateway-channels.md",
+      "sources": [
+        "src/gateway/index.ts",
+        "src/gateway/message-router.ts",
+        "src/gateway/channel-manager.ts",
+        "src/gateway/channels/base-channel.ts",
+        "src/gateway/channels/feishu.gateway.ts",
+        "src/gateway/channels/telegram.gateway.ts",
+        "src/gateway/channels/web.gateway.ts",
+        "src/gateway/middleware/pipeline.ts",
+        "src/gateway/middleware/auth.middleware.ts"
+      ],
+      "description": "网关与通道系统"
+    },
+    {
+      "doc": ".harness/design-docs/005-agent-engine.md",
+      "sources": [
+        "src/kernel/agents/agent-runtime.ts",
+        "src/kernel/agents/claude-agent-bridge.ts",
+        "src/kernel/agents/light-llm-client.ts",
+        "src/kernel/agents/agent-lifecycle.ts",
+        "src/kernel/agents/process-security.ts",
+        "src/kernel/classifier/task-classifier.ts"
+      ],
+      "description": "Agent 引擎"
+    },
+    {
+      "doc": ".harness/design-docs/006-evolution-system.md",
+      "sources": [
+        "src/kernel/evolution/knowledge-router.ts",
+        "src/kernel/evolution/token-budget-allocator.ts",
+        "src/kernel/evolution/conflict-resolver.ts",
+        "src/kernel/evolution/evolution-scheduler.ts",
+        "src/kernel/evolution/post-response-analyzer.ts",
+        "src/kernel/evolution/error-to-rule-pipeline.ts",
+        "src/kernel/evolution/reflect.ts",
+        "src/kernel/evolution/evolve.ts",
+        "src/kernel/evolution/link.ts"
+      ],
+      "description": "自我进化系统"
+    },
+    {
+      "doc": ".harness/design-docs/007-onboarding.md",
+      "sources": [
+        "src/kernel/onboarding/onboarding-manager.ts",
+        "src/kernel/memory/user-config-loader.ts",
+        "src/kernel/memory/config-loader.ts",
+        "config/SOUL.md",
+        "config/IDENTITY.md",
+        "config/USER.md",
+        "config/AGENTS.md"
+      ],
+      "description": "新用户引导系统"
+    }
+  ]
+}

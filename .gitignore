@@ -9,3 +9,4 @@ user-space/*/
 .DS_Store
 *.log
 openviking-data/*
+.serena/*
