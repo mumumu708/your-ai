@@ -15,7 +15,9 @@ function createMockFileResponse(buf: Buffer) {
 // Mock @larksuiteoapi/node-sdk before importing the channel
 const mockCreate = mock(() => Promise.resolve({ message_id: 'mock_msg_id' }));
 const mockPatch = mock(() => Promise.resolve({}));
-const mockMessageResourceGet = mock(() => Promise.resolve(createMockFileResponse(Buffer.from('file-content'))));
+const mockMessageResourceGet = mock(() =>
+  Promise.resolve(createMockFileResponse(Buffer.from('file-content'))),
+);
 const mockWsStart = mock(() => Promise.resolve());
 const mockWsClose = mock(() => {});
 let _capturedEventHandler: ((data: unknown) => Promise<void>) | null = null;
@@ -145,7 +147,9 @@ describe('FeishuChannel', () => {
   test('downloadFile returns Buffer on first attempt success', async () => {
     await channel.initialize();
     const buf = Buffer.from('hello-file');
-    mockMessageResourceGet.mockImplementationOnce(() => Promise.resolve(createMockFileResponse(buf)));
+    mockMessageResourceGet.mockImplementationOnce(() =>
+      Promise.resolve(createMockFileResponse(buf)),
+    );
 
     const result = await channel.downloadFile('msg_001', 'fkey_001');
     expect(result).toEqual(buf);
@@ -156,7 +160,9 @@ describe('FeishuChannel', () => {
     await channel.initialize();
     const buf = Buffer.from('retry-success');
     mockMessageResourceGet
-      .mockImplementationOnce(() => Promise.reject(new Error('The socket connection was closed unexpectedly.')))
+      .mockImplementationOnce(() =>
+        Promise.reject(new Error('The socket connection was closed unexpectedly.')),
+      )
       .mockImplementationOnce(() => Promise.resolve(createMockFileResponse(buf)));
 
     const result = await channel.downloadFile('msg_002', 'fkey_002');
@@ -173,7 +179,9 @@ describe('FeishuChannel', () => {
     await expect(channel.downloadFile('msg_003', 'fkey_003')).rejects.toThrow('飞书文件下载失败');
     expect(mockMessageResourceGet).toHaveBeenCalledTimes(3); // MAX_RETRIES = 3
     mockMessageResourceGet.mockReset();
-    mockMessageResourceGet.mockImplementation(() => Promise.resolve(createMockFileResponse(Buffer.from(''))));
+    mockMessageResourceGet.mockImplementation(() =>
+      Promise.resolve(createMockFileResponse(Buffer.from(''))),
+    );
   });
 
   test('duplicate feishu events should be deduplicated', async () => {
@@ -194,8 +202,8 @@ describe('FeishuChannel', () => {
     };
 
     // Trigger the same event twice (simulating Feishu SDK redelivery)
-    await _capturedEventHandler!(rawEvent);
-    await _capturedEventHandler!(rawEvent);
+    await _capturedEventHandler?.(rawEvent);
+    await _capturedEventHandler?.(rawEvent);
 
     // Allow fire-and-forget promises to settle
     await new Promise((r) => setTimeout(r, 50));

@@ -12,7 +12,9 @@ export function loadAuthConfig(): AuthMiddlewareConfig {
   return {
     devBypass: process.env.NODE_ENV === 'development',
     jwtSecret: process.env.JWT_SECRET,
-    apiKeys: process.env.API_KEYS?.split(',').map((k) => k.trim()).filter(Boolean),
+    apiKeys: process.env.API_KEYS?.split(',')
+      .map((k) => k.trim())
+      .filter(Boolean),
     feishuVerificationToken: process.env.FEISHU_VERIFICATION_TOKEN,
     telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
   };
@@ -61,7 +63,7 @@ export async function verifyJwt(
 
     if (expectedSig !== signatureB64) return { valid: false };
 
-    const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(payloadB64)));
+    const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(payloadB64!)));
 
     // Check expiration
     if (payload.exp && typeof payload.exp === 'number') {
@@ -201,7 +203,13 @@ export function createAuthMiddleware(config?: AuthMiddlewareConfig): MessageMidd
 export function createApiAuthMiddleware(config?: AuthMiddlewareConfig) {
   const cfg = config ?? loadAuthConfig();
 
-  return async (c: { req: { header: (name: string) => string | undefined }; json: (data: unknown, status?: number) => Response }, next: () => Promise<void>) => {
+  return async (
+    c: {
+      req: { header: (name: string) => string | undefined };
+      json: (data: unknown, status?: number) => Response;
+    },
+    next: () => Promise<void>,
+  ) => {
     // Dev bypass
     if (cfg.devBypass) {
       return next();
@@ -249,7 +257,8 @@ export function createWebSocketAuthHandler(config?: AuthMiddlewareConfig) {
 
     // Check for JWT token in query param or header
     const url = new URL(req.url);
-    const token = url.searchParams.get('token') ?? req.headers.get('Authorization')?.replace('Bearer ', '');
+    const token =
+      url.searchParams.get('token') ?? req.headers.get('Authorization')?.replace('Bearer ', '');
 
     if (!token || !cfg.jwtSecret) return null;
 

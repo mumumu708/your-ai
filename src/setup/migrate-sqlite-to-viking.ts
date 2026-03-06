@@ -62,7 +62,7 @@ export async function migrateSqliteToViking(
     })();
 
     const header = [
-      `<!-- migrated from SQLite -->`,
+      '<!-- migrated from SQLite -->',
       `<!-- original_id: ${row.id} -->`,
       `<!-- tags: ${tags.join(',')} -->`,
       `<!-- importance: ${row.importance} -->`,
@@ -108,7 +108,11 @@ export async function migrateSqliteToViking(
     for (const session of sessions) {
       const uri = `viking://user/memories/episodic/session_${session.session_id}`;
       const keywords = (() => {
-        try { return JSON.parse(session.keywords); } catch { return []; }
+        try {
+          return JSON.parse(session.keywords);
+        } catch {
+          return [];
+        }
       })();
       const content = [
         `<!-- session: ${session.session_id} -->`,

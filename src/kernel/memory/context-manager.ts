@@ -21,10 +21,7 @@ export class ContextManager {
    * and return anchor text for post-compaction context.
    * Returns null if no flush needed.
    */
-  async checkAndFlush(
-    sessionId: string,
-    currentTokens: number,
-  ): Promise<string | null> {
+  async checkAndFlush(sessionId: string, currentTokens: number): Promise<string | null> {
     if (currentTokens / this.maxTokens < this.flushThreshold) {
       return null;
     }
@@ -45,14 +42,11 @@ export class ContextManager {
       limit: 10,
     });
 
-    const abstracts = await Promise.all(
-      keyMemories.map((m) => this.ov.abstract(m.uri)),
-    );
+    const abstracts = await Promise.all(keyMemories.map((m) => this.ov.abstract(m.uri)));
 
-    const anchor = [
-      '## 关键记忆（上下文压缩后保留）',
-      ...abstracts.map((a) => `- ${a}`),
-    ].join('\n');
+    const anchor = ['## 关键记忆（上下文压缩后保留）', ...abstracts.map((a) => `- ${a}`)].join(
+      '\n',
+    );
 
     this.logger.info('Pre-Compaction 完成', {
       sessionId,

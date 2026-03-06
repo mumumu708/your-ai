@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import type { LessonsLearnedUpdater } from '../lessons/lessons-updater';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import type { BotMessage } from '../shared/messaging/bot-message.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import { AgentRuntime } from './agents/agent-runtime';
 import { CentralController } from './central-controller';
 import type { CentralControllerDeps } from './central-controller';
+import type { EvolutionScheduler } from './evolution/evolution-scheduler';
+import type { KnowledgeRouter } from './evolution/knowledge-router';
+import type { PostResponseAnalyzer } from './evolution/post-response-analyzer';
+import type { ConfigLoader } from './memory/config-loader';
+import type { ContextManager } from './memory/context-manager';
+import type { EntityManager } from './memory/graph/entity-manager';
+import type { OpenVikingClient } from './memory/openviking/openviking-client';
 import { Scheduler } from './scheduling/scheduler';
 import { SessionManager } from './sessioning/session-manager';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
@@ -36,17 +44,17 @@ function createMockOVDeps(): Partial<CentralControllerDeps> {
         conflictsResolved: [],
         retrievedMemories: [],
       }),
-    } as any,
+    } as unknown as KnowledgeRouter,
     postResponseAnalyzer: {
       analyzeExchange: async () => null,
-    } as any,
+    } as unknown as PostResponseAnalyzer,
     ovClient: {
       addMessage: async () => {},
       commit: async () => ({ memories_extracted: 0 }),
-    } as any,
+    } as unknown as OpenVikingClient,
     contextManager: {
       checkAndFlush: async () => null,
-    } as any,
+    } as unknown as ContextManager,
     configLoader: {
       loadAll: async () => ({
         soul: 'Be helpful',
@@ -55,14 +63,14 @@ function createMockOVDeps(): Partial<CentralControllerDeps> {
         agents: '',
       }),
       invalidateCache: () => {},
-    } as any,
+    } as unknown as ConfigLoader,
     lessonsUpdater: {
       addLesson: async () => true,
-    } as any,
+    } as unknown as LessonsLearnedUpdater,
     evolutionScheduler: {
       schedulePostCommit: () => {},
-    } as any,
-    entityManager: {} as any,
+    } as unknown as EvolutionScheduler,
+    entityManager: {} as unknown as EntityManager,
   };
 }
 
@@ -524,7 +532,7 @@ describe('CentralController', () => {
       const callArgs = executeSpy.mock.calls[0][0];
       expect(callArgs.context.systemPrompt).toBeDefined();
       expect(callArgs.context.systemPrompt).not.toBeUndefined();
-      expect(callArgs.context.systemPrompt!.length).toBeGreaterThan(0);
+      expect(callArgs.context.systemPrompt?.length).toBeGreaterThan(0);
     });
 
     test('session 关闭后应该触发 OV commit', async () => {
@@ -545,7 +553,7 @@ describe('CentralController', () => {
           commitCalledWith = sessionId;
           return { memories_extracted: 1 };
         },
-      } as any;
+      } as unknown as OpenVikingClient;
 
       const controller = CentralController.getInstance({
         sessionManager,
@@ -574,16 +582,13 @@ describe('CentralController', () => {
 
       // Mock analyzer to return confirmation when correction keywords are present
       const mockAnalyzer = {
-        analyzeExchange: async (
-          _userId: string,
-          userMsg: string,
-        ) => {
+        analyzeExchange: async (_userId: string, userMsg: string) => {
           if (userMsg.includes('不对') || userMsg.includes('错了')) {
             return '我记住了：用户要求详细解释';
           }
           return null;
         },
-      } as any;
+      } as unknown as PostResponseAnalyzer;
 
       spyOn(agentRuntime, 'execute').mockResolvedValue({
         content: '这是简短回答',
@@ -748,7 +753,7 @@ describe('CentralController', () => {
       if (originalEnv !== undefined) {
         process.env.ADMIN_USER_IDS = originalEnv;
       } else {
-        delete process.env.ADMIN_USER_IDS;
+        process.env.ADMIN_USER_IDS = undefined;
       }
     });
 
@@ -798,7 +803,7 @@ describe('CentralController', () => {
       if (originalEnv !== undefined) {
         process.env.ADMIN_USER_IDS = originalEnv;
       } else {
-        delete process.env.ADMIN_USER_IDS;
+        process.env.ADMIN_USER_IDS = undefined;
       }
     });
   });

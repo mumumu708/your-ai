@@ -1,8 +1,8 @@
 import { Logger } from '../../shared/logging/logger';
 import type { OpenVikingClient } from '../memory/openviking/openviking-client';
-import { reflect } from './reflect';
-import { linkMemory } from './link';
 import { evolveMemory } from './evolve';
+import { linkMemory } from './link';
+import { reflect } from './reflect';
 
 const logger = new Logger('EvolutionScheduler');
 
@@ -57,7 +57,8 @@ export class EvolutionScheduler {
 
   private drain(): void {
     while (this.running < this.maxConcurrency && this.pending.length > 0) {
-      const job = this.pending.shift()!;
+      const job = this.pending.shift();
+      if (!job) break;
       this.running++;
       this.executeJob(job).finally(() => {
         this.running--;

@@ -106,7 +106,10 @@ export class TaskQueue {
 
     while (entry.retryCount <= this.maxRetries) {
       try {
-        const result = await this.handler?.(task);
+        // handler is guaranteed non-null: executeWithRetry is only called from processEntry,
+        // which is only called from enqueue after the `if (!this.handler)` early return.
+        const handler = this.handler as TaskHandler;
+        const result = await handler(task);
         return result;
       } catch (error) {
         entry.retryCount++;

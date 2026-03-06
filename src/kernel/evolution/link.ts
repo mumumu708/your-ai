@@ -7,10 +7,7 @@ const logger = new Logger('EvolutionLink');
  * Link operation: finds similar memories via ov.search(),
  * creates VikingFS links for pairs with score > 0.75.
  */
-export async function linkMemory(
-  ov: OpenVikingClient,
-  newMemoryUri: string,
-): Promise<void> {
+export async function linkMemory(ov: OpenVikingClient, newMemoryUri: string): Promise<void> {
   const content = await ov.abstract(newMemoryUri);
 
   const similar = await ov.search({
@@ -22,11 +19,7 @@ export async function linkMemory(
   let linked = 0;
   for (const result of similar) {
     if (result.score > 0.75 && result.uri !== newMemoryUri) {
-      await ov.link(
-        newMemoryUri,
-        [result.uri],
-        `semantic_similarity:${result.score.toFixed(2)}`,
-      );
+      await ov.link(newMemoryUri, [result.uri], `semantic_similarity:${result.score.toFixed(2)}`);
       linked++;
     }
   }

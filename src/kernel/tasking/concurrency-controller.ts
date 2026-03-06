@@ -87,6 +87,10 @@ export class ConcurrencyController {
     let i = 0;
     while (i < this.waiters.length) {
       const waiter = this.waiters[i];
+      if (!waiter) {
+        i++;
+        continue;
+      }
       if (this.canAcquire(waiter.userId)) {
         this.doAcquire(waiter.userId);
         this.waiters.splice(i, 1);

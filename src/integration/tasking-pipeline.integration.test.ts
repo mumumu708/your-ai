@@ -53,7 +53,7 @@ function createMockClaudeBridge(response = 'Claude says hi'): ClaudeAgentBridge 
   } as unknown as ClaudeAgentBridge;
 }
 
-function createMockLightLLM(response = 'Light says hi'): LightLLMClient {
+function _createMockLightLLM(response = 'Light says hi'): LightLLMClient {
   return {
     complete: mock(async () => ({
       content: response,
@@ -137,9 +137,9 @@ describe('任务队列管道集成测试', () => {
       await controller.handleIncomingMessage(msg);
 
       expect(capturedTask).not.toBeNull();
-      expect(capturedTask!.type).toBe('automation');
-      expect(capturedTask!.message.content).toBe('批量处理数据');
-      expect(capturedTask!.message.userId).toBe('user_capture');
+      expect(capturedTask?.type).toBe('automation');
+      expect(capturedTask?.message.content).toBe('批量处理数据');
+      expect(capturedTask?.message.userId).toBe('user_capture');
     });
   });
 

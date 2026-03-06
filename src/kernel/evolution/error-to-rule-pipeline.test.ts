@@ -14,11 +14,11 @@ describe('ErrorToRulePipeline', () => {
     addedLessons = [];
 
     lessonsUpdater = {
-      addLesson: async (lesson: any) => {
+      addLesson: async (lesson: { lesson: string; category: string }) => {
         addedLessons.push({ lesson: lesson.lesson, category: lesson.category });
         return true;
       },
-    } as any;
+    } as unknown as LessonsLearnedUpdater;
 
     pipeline = new ErrorToRulePipeline(lessonsUpdater);
   });
@@ -71,7 +71,7 @@ describe('ErrorToRulePipeline', () => {
   test('重复教训应该跳过写入', async () => {
     const duplicateUpdater = {
       addLesson: async () => false, // indicates duplicate
-    } as any;
+    } as unknown as LessonsLearnedUpdater;
 
     const dupPipeline = new ErrorToRulePipeline(duplicateUpdater);
 

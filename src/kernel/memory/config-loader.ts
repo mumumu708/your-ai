@@ -1,12 +1,8 @@
 import { Logger } from '../../shared/logging/logger';
+import type { AIEOSConfig } from '../../shared/memory/memory.interfaces';
 import type { OpenVikingClient } from './openviking/openviking-client';
 
-export interface AIEOSConfig {
-  soul: string;
-  identity: string;
-  user: string;
-  agents: string;
-}
+export type { AIEOSConfig };
 
 const CONFIG_DIR = './config';
 const VIKING_CONFIG_URI = 'viking://agent/config';

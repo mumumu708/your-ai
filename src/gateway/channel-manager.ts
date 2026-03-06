@@ -2,9 +2,9 @@ import { ERROR_CODES } from '../shared/errors/error-codes';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import { Logger } from '../shared/logging/logger';
 import type { ChannelType, IChannel, LayerHealth } from '../shared/messaging';
+import type { MessageRouter } from './message-router';
 import type { MessageMiddleware } from './middleware/middleware.types';
 import { composeMiddleware } from './middleware/pipeline';
-import type { MessageRouter } from './message-router';
 
 export class ChannelManager {
   private readonly channels: Map<ChannelType, IChannel> = new Map();

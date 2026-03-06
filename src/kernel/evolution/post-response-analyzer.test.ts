@@ -13,7 +13,7 @@ describe('PostResponseAnalyzer', () => {
 
     lessonsUpdater = {
       addLesson: async () => true,
-    } as any;
+    } as unknown as LessonsLearnedUpdater;
 
     analyzer = new PostResponseAnalyzer({
       lessonsUpdater,
@@ -37,12 +37,7 @@ describe('PostResponseAnalyzer', () => {
   });
 
   test('无纠正时应该返回 null', async () => {
-    const result = await analyzer.analyzeExchange(
-      'user1',
-      '谢谢你的回答',
-      'You are welcome',
-      [],
-    );
+    const result = await analyzer.analyzeExchange('user1', '谢谢你的回答', 'You are welcome', []);
 
     expect(result).toBeNull();
     logSpy.mockRestore();
@@ -50,12 +45,7 @@ describe('PostResponseAnalyzer', () => {
 
   test('低置信度纠正应该返回 null', async () => {
     // Normal messages without correction patterns should not trigger
-    const result = await analyzer.analyzeExchange(
-      'user1',
-      '好的，我知道了',
-      'response',
-      [],
-    );
+    const result = await analyzer.analyzeExchange('user1', '好的，我知道了', 'response', []);
 
     expect(result).toBeNull();
     logSpy.mockRestore();
@@ -64,7 +54,7 @@ describe('PostResponseAnalyzer', () => {
   test('addLesson 失败时应该返回 null', async () => {
     const failingUpdater = {
       addLesson: async () => false, // indicates duplicate, lesson not added
-    } as any;
+    } as unknown as LessonsLearnedUpdater;
 
     const customAnalyzer = new PostResponseAnalyzer({
       lessonsUpdater: failingUpdater,
@@ -83,8 +73,10 @@ describe('PostResponseAnalyzer', () => {
 
   test('管道异常时应该返回 null', async () => {
     const errorUpdater = {
-      addLesson: async () => { throw new Error('DB error'); },
-    } as any;
+      addLesson: async () => {
+        throw new Error('DB error');
+      },
+    } as unknown as LessonsLearnedUpdater;
 
     const customAnalyzer = new PostResponseAnalyzer({
       lessonsUpdater: errorUpdater,

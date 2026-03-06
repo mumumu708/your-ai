@@ -1,7 +1,7 @@
-import { Logger } from '../../shared/logging/logger';
-import type { LessonsLearnedUpdater } from '../../lessons/lessons-updater';
-import { extractLesson } from '../../lessons/lesson-extractor';
 import type { ErrorSignal } from '../../lessons/error-detector';
+import { extractLesson } from '../../lessons/lesson-extractor';
+import type { LessonsLearnedUpdater } from '../../lessons/lessons-updater';
+import { Logger } from '../../shared/logging/logger';
 
 /**
  * Error-to-Rule pipeline: delegates to the new Lessons Learned system.
@@ -12,10 +12,7 @@ export class ErrorToRulePipeline {
 
   constructor(private readonly lessonsUpdater: LessonsLearnedUpdater) {}
 
-  async processErrorSignal(
-    userId: string,
-    signal: ErrorSignal,
-  ): Promise<string> {
+  async processErrorSignal(userId: string, signal: ErrorSignal): Promise<string> {
     const lesson = await extractLesson(signal);
 
     const added = await this.lessonsUpdater.addLesson(lesson);

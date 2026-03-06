@@ -25,12 +25,7 @@ export async function retrieveMemories(
   ov: OpenVikingClient,
   options: RetrieveOptions,
 ): Promise<MatchedContext[]> {
-  const {
-    query,
-    tokenBudget = 4000,
-    memoryTopK = 20,
-    resourceTopK = 10,
-  } = options;
+  const { query, tokenBudget = 4000, memoryTopK = 20, resourceTopK = 10 } = options;
 
   // 1. Parallel search across memories and resources
   const [memoryResults, resourceResults] = await Promise.all([
@@ -47,9 +42,7 @@ export async function retrieveMemories(
   ]);
 
   // 2. Merge and sort by score descending
-  const allResults = [...memoryResults, ...resourceResults].sort(
-    (a, b) => b.score - a.score,
-  );
+  const allResults = [...memoryResults, ...resourceResults].sort((a, b) => b.score - a.score);
 
   // 3. Progressive context loading under token budget
   const contextItems: MatchedContext[] = [];

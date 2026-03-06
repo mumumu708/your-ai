@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { YourBotError } from '../../shared/errors/yourbot-error';
 import type { BotMessage, MessageHandler } from '../../shared/messaging';
-import type { AuthContext, AuthMiddlewareConfig } from './middleware.types';
 import {
-  createAuthMiddleware,
   createApiAuthMiddleware,
+  createAuthMiddleware,
   createWebSocketAuthHandler,
   verifyJwt,
 } from './auth.middleware';
+import type { AuthContext, AuthMiddlewareConfig } from './middleware.types';
 
 function createTestMessage(overrides: Partial<BotMessage> = {}): BotMessage {
   return {
@@ -76,7 +76,10 @@ describe('verifyJwt', () => {
   });
 
   test('rejects expired JWT', async () => {
-    const token = await createJwt({ sub: 'user_1', exp: Math.floor(Date.now() / 1000) - 60 }, secret);
+    const token = await createJwt(
+      { sub: 'user_1', exp: Math.floor(Date.now() / 1000) - 60 },
+      secret,
+    );
     const result = await verifyJwt(token, secret);
 
     expect(result.valid).toBe(false);
@@ -109,7 +112,7 @@ describe('createAuthMiddleware', () => {
     await handler(createTestMessage());
 
     expect(calledWith).not.toBeNull();
-    const authCtx = calledWith!.metadata.authContext as AuthContext;
+    const authCtx = calledWith?.metadata.authContext as AuthContext;
     expect(authCtx.authenticated).toBe(true);
     expect(authCtx.authMethod).toBe('dev_bypass');
   });
@@ -127,7 +130,7 @@ describe('createAuthMiddleware', () => {
     await handler(createTestMessage({ channel: 'feishu', userId: 'ou_abc123' }));
 
     expect(calledWith).not.toBeNull();
-    const authCtx = calledWith!.metadata.authContext as AuthContext;
+    const authCtx = calledWith?.metadata.authContext as AuthContext;
     expect(authCtx.authenticated).toBe(true);
     expect(authCtx.authMethod).toBe('feishu_signature');
   });
@@ -161,7 +164,7 @@ describe('createAuthMiddleware', () => {
     await handler(createTestMessage({ channel: 'telegram', userId: '12345' }));
 
     expect(calledWith).not.toBeNull();
-    const authCtx = calledWith!.metadata.authContext as AuthContext;
+    const authCtx = calledWith?.metadata.authContext as AuthContext;
     expect(authCtx.authMethod).toBe('telegram_bot');
   });
 
@@ -181,7 +184,7 @@ describe('createAuthMiddleware', () => {
     await handler(createTestMessage({ channel: 'api', metadata: { apiKey: 'key-123' } }));
 
     expect(calledWith).not.toBeNull();
-    const authCtx = calledWith!.metadata.authContext as AuthContext;
+    const authCtx = calledWith?.metadata.authContext as AuthContext;
     expect(authCtx.authMethod).toBe('api_key');
   });
 
@@ -223,7 +226,7 @@ describe('createAuthMiddleware', () => {
     await handler(createTestMessage({ channel: 'web', metadata: { token } }));
 
     expect(calledWith).not.toBeNull();
-    const authCtx = calledWith!.metadata.authContext as AuthContext;
+    const authCtx = calledWith?.metadata.authContext as AuthContext;
     expect(authCtx.authMethod).toBe('jwt');
     expect(authCtx.userId).toBe('user_web');
   });
@@ -237,7 +240,7 @@ describe('createApiAuthMiddleware', () => {
       req: {
         header: (name: string) => headers[name],
       },
-      json: (data: unknown, status?: number) => ({ data, status } as unknown as Response),
+      json: (data: unknown, status?: number) => ({ data, status }) as unknown as Response,
     };
   }
 
@@ -312,9 +315,9 @@ describe('createWebSocketAuthHandler', () => {
     const result = await handler(req);
 
     expect(result).not.toBeNull();
-    expect(result!.authenticated).toBe(true);
-    expect(result!.userId).toBe('test_user');
-    expect(result!.authMethod).toBe('dev_bypass');
+    expect(result?.authenticated).toBe(true);
+    expect(result?.userId).toBe('test_user');
+    expect(result?.authMethod).toBe('dev_bypass');
   });
 
   test('validates JWT from query param', async () => {
@@ -326,8 +329,8 @@ describe('createWebSocketAuthHandler', () => {
     const result = await handler(req);
 
     expect(result).not.toBeNull();
-    expect(result!.userId).toBe('ws_user');
-    expect(result!.authMethod).toBe('jwt');
+    expect(result?.userId).toBe('ws_user');
+    expect(result?.authMethod).toBe('jwt');
   });
 
   test('returns null for missing token in production', async () => {

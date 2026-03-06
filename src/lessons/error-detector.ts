@@ -60,9 +60,7 @@ export function detectErrorSignal(
   if (trimmed.length < 10) return null;
 
   // Only compare with truly previous messages (exclude the current one)
-  const userMessages = history
-    .filter((m) => m.role === 'user' && m.content !== trimmed)
-    .slice(-5);
+  const userMessages = history.filter((m) => m.role === 'user' && m.content !== trimmed).slice(-5);
   const currentTokens = new Set(tokenize(trimmed));
   for (const prev of userMessages) {
     const prevTokens = new Set(tokenize(prev.content));

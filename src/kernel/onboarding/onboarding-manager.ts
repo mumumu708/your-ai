@@ -15,6 +15,7 @@ export interface OnboardingState {
 }
 
 const BOOTSTRAP_FILENAME = 'BOOTSTRAP.md';
+const USER_SPACE_BASE = process.env.USER_SPACE_ROOT ?? 'user-space';
 
 /**
  * Multi-turn onboarding dialog state machine.
@@ -45,7 +46,7 @@ export class OnboardingManager {
       // which causes FileNotFoundError on the openviking server when the file doesn't exist.
       const localPath = userConfigLoader
         ? join(userConfigLoader.getLocalDir(), BOOTSTRAP_FILENAME)
-        : `user-space/${userId}/memory/${BOOTSTRAP_FILENAME}`;
+        : `${USER_SPACE_BASE}/${userId}/memory/${BOOTSTRAP_FILENAME}`;
       const file = Bun.file(localPath);
       if (await file.exists()) {
         const content = await file.text();
@@ -189,7 +190,9 @@ IDENTITY.md should contain (use dense, telegraphic style with **bold** paragraph
           soulContent = await this.generateWithTranslation(this.generateSoulTemplate(state));
         }
         if (!identityContent) {
-          identityContent = await this.generateWithTranslation(this.generateIdentityTemplate(state));
+          identityContent = await this.generateWithTranslation(
+            this.generateIdentityTemplate(state),
+          );
         }
       } catch (err) {
         this.logger.warn('LLM 生成配置失败，使用模板', {
@@ -264,7 +267,7 @@ Never share user data across different user contexts.
   /** Strip markdown code fences from LLM output before JSON parsing */
   private extractJSON(content: string): string {
     const match = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-    return match ? match[1].trim() : content.trim();
+    return match?.[1]?.trim() ?? content.trim();
   }
 
   /** Translate template content to English via LLM, fallback to original if unavailable */
@@ -309,10 +312,13 @@ Never share user data across different user contexts.
   }
 
   /** Remove BOOTSTRAP.md after onboarding completes */
-  private async removeBootstrapFile(userId: string, userConfigLoader?: UserConfigLoader): Promise<void> {
+  private async removeBootstrapFile(
+    userId: string,
+    userConfigLoader?: UserConfigLoader,
+  ): Promise<void> {
     const localPath = userConfigLoader
       ? join(userConfigLoader.getLocalDir(), BOOTSTRAP_FILENAME)
-      : `user-space/${userId}/memory/${BOOTSTRAP_FILENAME}`;
+      : `${USER_SPACE_BASE}/${userId}/memory/${BOOTSTRAP_FILENAME}`;
     try {
       const { unlinkSync } = require('node:fs');
       unlinkSync(localPath);

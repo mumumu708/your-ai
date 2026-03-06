@@ -37,9 +37,58 @@ check:all 通过后，提交前，逐条自检：
 
 ## Git 工作流
 
-- 开始工程任务前: `git checkout -b agent/{简短描述}`
-- commit 遵循 Conventional Commits（feat: / fix: / refactor: / docs:）
-- 完成后告知管理员分支名，由管理员决定合并
+### 开始前
+
+1. `git status` 检查工作区是否干净
+2. 如有未提交更改: `git stash` 暂存（可能是其他任务的残留）
+3. `git checkout main && git pull origin main` 确保基于最新代码
+4. `git checkout -b agent/{类型}/{简短描述}`
+
+### 分支命名
+
+- `agent/feat/memory-cache-layer` — 新功能
+- `agent/fix/telegram-timeout` — Bug 修复
+- `agent/refactor/memory-retriever` — 重构
+- `agent/docs/update-architecture` — 纯文档更新
+
+### 提交规范（Conventional Commits）
+
+```
+feat: 添加 memory 缓存层
+fix: 修复 Telegram 通道超时问题
+refactor: 重构 memory-retriever 查询逻辑
+docs: 更新 architecture.md 中 memory 模块描述
+test: 补充 cache-layer 单元测试
+chore: 更新 doc-source-map.json
+```
+
+- 每个逻辑单元一次 commit（不要把所有改动堆在一个 commit 里）
+- 代码变更和对应的 .harness/ 文档更新放在同一个 commit 中
+- commit message 用中文或英文均可，但同一分支内保持一致
+
+### 多步任务的提交策略
+
+```
+agent/feat/memory-cache-layer
+├── commit 1: feat: 添加 cache-layer.ts 接口和实现
+├── commit 2: feat: 集成缓存到 memory-retriever
+├── commit 3: test: 补充 cache-layer 单元测试
+└── commit 4: docs: 更新 architecture.md 和 doc-source-map
+```
+
+### 完成后
+
+1. 确认 `bun run check:all` 通过
+2. 确认 `bun run check:docs` 通过
+3. `git push origin agent/{类型}/{简短描述}`
+4. 告知管理员: 分支名、变更摘要、涉及的模块
+5. 由管理员决定合并方式（merge / squash merge / rebase）
+
+### 禁止事项
+
+- 不要直接在 main 分支上修改
+- 不要 force push
+- 不要修改不属于当前任务的文件（除非是发现的 bug，记入 pitfalls 后另开分支修复）
 
 ## 架构概览
 

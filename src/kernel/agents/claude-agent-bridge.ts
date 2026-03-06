@@ -111,7 +111,7 @@ export class ClaudeAgentBridge {
 
       // Build the prompt
       const prompt = isResume
-        ? params.messages[params.messages.length - 1]?.content ?? ''
+        ? (params.messages[params.messages.length - 1]?.content ?? '')
         : this.buildPrompt(params.messages);
 
       // Build args
@@ -398,8 +398,7 @@ export class ClaudeAgentBridge {
 
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i]!;
-      const formatted =
-        msg.role === 'user' ? `用户: ${msg.content}` : `助手: ${msg.content}`;
+      const formatted = msg.role === 'user' ? `用户: ${msg.content}` : `助手: ${msg.content}`;
       const msgChars = formatted.length + 2; // +2 for \n\n separator
 
       if (totalChars + msgChars > maxChars && selected.length > 0) {

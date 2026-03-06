@@ -11,6 +11,11 @@
     "lint": "bunx biome check src/",
     "lint:fix": "bunx biome check --write src/",
     "format": "bunx biome format --write src/",
+    "typecheck": "bunx tsc --noEmit",
+    "check:arch": "bun run scripts/check-architecture.ts",
+    "check:conventions": "bun run scripts/lint-conventions.ts",
+    "check:docs": "bun run scripts/check-docs.ts",
+    "check:all": "bun run lint && bun run typecheck && bun run check:arch && bun run check:conventions && bun test",
     "db:init": "bun run infra/scripts/db-init.ts",
     "db:migrate": "bun run infra/scripts/db-migrate.ts"
   },
@@ -27,6 +32,7 @@
     "@biomejs/biome": "^1.9.0",
     "@types/better-sqlite3": "^7.6.0",
     "@types/bun": "^1.2.0",
-    "drizzle-kit": "^0.30.0"
+    "drizzle-kit": "^0.30.0",
+    "typescript": "^5.9.3"
   }
 }

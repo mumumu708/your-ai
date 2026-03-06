@@ -112,7 +112,8 @@ export class WorkingMemory {
     const parts: string[] = [];
 
     // First message for context
-    parts.push(`[${messages[0].role}] ${messages[0].content}`);
+    const first = messages[0]!;
+    parts.push(`[${first.role}] ${first.content}`);
 
     // Pick key messages from the middle (containing action words or questions)
     const actionPatterns = /[?？]|帮|创建|修改|删除|请|需要|should|please|create|update|delete/i;
@@ -125,7 +126,7 @@ export class WorkingMemory {
     }
 
     // Last message for recency
-    const last = messages[messages.length - 1];
+    const last = messages[messages.length - 1]!;
     parts.push(`[${last.role}] ${last.content}`);
 
     return `[${messages.length}条消息摘要]\n${parts.join('\n')}`;

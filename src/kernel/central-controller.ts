@@ -1,40 +1,37 @@
+import { LessonsLearnedUpdater } from '../lessons/lessons-updater';
 import { ERROR_CODES } from '../shared/errors/error-codes';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import { Logger } from '../shared/logging/logger';
 import type { BotMessage } from '../shared/messaging/bot-message.types';
+import type { IChannel } from '../shared/messaging/channel-adapter.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import type { TaskResult } from '../shared/tasking/task-result.types';
 import type { Task, TaskType } from '../shared/tasking/task.types';
+import { isAdminUser } from '../shared/utils/admin';
 import { generateTaskId, generateTraceId } from '../shared/utils/crypto';
 import { AgentRuntime } from './agents/agent-runtime';
 import type { ClaudeAgentBridge } from './agents/claude-agent-bridge';
 import type { LightLLMClient } from './agents/light-llm-client';
 import { TaskClassifier } from './classifier/task-classifier';
+import { ConflictResolver } from './evolution/conflict-resolver';
+import { EvolutionScheduler } from './evolution/evolution-scheduler';
+import { KnowledgeRouter } from './evolution/knowledge-router';
+import { PostResponseAnalyzer } from './evolution/post-response-analyzer';
+import { TokenBudgetAllocator } from './evolution/token-budget-allocator';
+import { FileUploadHandler } from './files/file-upload-handler';
+import { ConfigLoader } from './memory/config-loader';
+import { ContextManager } from './memory/context-manager';
+import { EntityManager } from './memory/graph/entity-manager';
+import { OpenVikingClient } from './memory/openviking/openviking-client';
+import { UserConfigLoader } from './memory/user-config-loader';
+import { OnboardingManager } from './onboarding';
 import { nlToCron } from './scheduling/nl-to-cron';
 import { Scheduler } from './scheduling/scheduler';
 import { SessionManager } from './sessioning/session-manager';
 import { StreamHandler } from './streaming/stream-handler';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
 import { TaskQueue } from './tasking/task-queue';
-import { OpenVikingClient } from './memory/openviking/openviking-client';
-import { ConfigLoader } from './memory/config-loader';
-import { retrieveMemories } from './memory/memory-retriever-v2';
-import { ContextManager } from './memory/context-manager';
-import { KnowledgeRouter } from './evolution/knowledge-router';
-import { ConflictResolver } from './evolution/conflict-resolver';
-import { TokenBudgetAllocator } from './evolution/token-budget-allocator';
-import { EvolutionScheduler } from './evolution/evolution-scheduler';
-import { PostResponseAnalyzer } from './evolution/post-response-analyzer';
-import { LessonsLearnedUpdater } from '../lessons/lessons-updater';
-import { detectErrorSignal } from '../lessons/error-detector';
-import { extractLesson } from '../lessons/lesson-extractor';
-import { EntityManager } from './memory/graph/entity-manager';
 import { WorkspaceManager } from './workspace';
-import { UserConfigLoader } from './memory/user-config-loader';
-import { OnboardingManager } from './onboarding';
-import { FileUploadHandler } from './files/file-upload-handler';
-import type { IChannel } from '../shared/messaging/channel-adapter.types';
-import { isAdminUser } from '../shared/utils/admin';
 
 const SYSTEM_COMMAND_PREFIX = '/';
 
@@ -145,8 +142,7 @@ export class CentralController {
 
     // OpenViking client — connects to OpenViking Server
     const ovUrl = process.env.OPENVIKING_URL ?? 'http://localhost:1933';
-    this.ovClient =
-      deps?.ovClient ?? new OpenVikingClient({ baseUrl: ovUrl });
+    this.ovClient = deps?.ovClient ?? new OpenVikingClient({ baseUrl: ovUrl });
 
     // ConfigLoader — loads AIEOS files (local-first, VikingFS fallback)
     this.configLoader = deps?.configLoader ?? new ConfigLoader(this.ovClient);
@@ -155,8 +151,7 @@ export class CentralController {
     this.contextManager = deps?.contextManager ?? new ContextManager(this.ovClient);
 
     // Evolution modules
-    this.evolutionScheduler =
-      deps?.evolutionScheduler ?? new EvolutionScheduler(this.ovClient);
+    this.evolutionScheduler = deps?.evolutionScheduler ?? new EvolutionScheduler(this.ovClient);
     this.lessonsUpdater =
       deps?.lessonsUpdater ?? new LessonsLearnedUpdater(this.ovClient, this.configLoader);
     this.entityManager = deps?.entityManager ?? new EntityManager(this.ovClient);
@@ -480,10 +475,7 @@ export class CentralController {
       (sum, m) => sum + Math.ceil(m.content.length / 4),
       0,
     );
-    const anchor = await this.contextManager.checkAndFlush(
-      task.session.id,
-      estimatedTokens,
-    );
+    const anchor = await this.contextManager.checkAndFlush(task.session.id, estimatedTokens);
 
     // Build knowledge-routed system prompt
     const resolvedContext = await this.knowledgeRouter.buildContext(
@@ -536,7 +528,7 @@ export class CentralController {
       task.session.userConfigLoader,
     );
     if (feedbackText) {
-      responseContent += '\n\n---\n' + feedbackText;
+      responseContent += `\n\n---\n${feedbackText}`;
     }
 
     // Sync assistant message to OpenViking session

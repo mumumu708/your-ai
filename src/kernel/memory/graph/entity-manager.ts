@@ -47,11 +47,7 @@ export class EntityManager {
   }
 
   /** Add a relation between two entities */
-  async addRelation(
-    fromEntity: string,
-    toEntity: string,
-    relationType: string,
-  ): Promise<void> {
+  async addRelation(fromEntity: string, toEntity: string, relationType: string): Promise<void> {
     await this.ov.link(
       `viking://agent/graph/entities/${fromEntity}`,
       [`viking://agent/graph/entities/${toEntity}`],
@@ -60,11 +56,7 @@ export class EntityManager {
   }
 
   /** Link an entity to a memory URI */
-  async linkToMemory(
-    entitySlug: string,
-    memoryUri: string,
-    reason: string,
-  ): Promise<void> {
+  async linkToMemory(entitySlug: string, memoryUri: string, reason: string): Promise<void> {
     await this.ov.link(
       `viking://agent/graph/entities/${entitySlug}`,
       [memoryUri],

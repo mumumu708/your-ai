@@ -5,14 +5,14 @@ describe('isAdminUser', () => {
   const originalEnv = process.env.ADMIN_USER_IDS;
 
   beforeEach(() => {
-    delete process.env.ADMIN_USER_IDS;
+    process.env.ADMIN_USER_IDS = undefined;
   });
 
   afterEach(() => {
     if (originalEnv !== undefined) {
       process.env.ADMIN_USER_IDS = originalEnv;
     } else {
-      delete process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = undefined;
     }
   });
 

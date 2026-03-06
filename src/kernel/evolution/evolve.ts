@@ -33,8 +33,9 @@ SUPERSEDE（新替代旧）| SUPPLEMENT（新补充旧）| CONTRADICT（矛盾�
     ],
   });
 
+  const firstBlock = message.content[0];
   const rawRelation =
-    message.content[0].type === 'text' ? message.content[0].text.trim() : 'DUPLICATE';
+    firstBlock && firstBlock.type === 'text' ? firstBlock.text.trim() : 'DUPLICATE';
   const relation = parseRelation(rawRelation);
 
   switch (relation) {

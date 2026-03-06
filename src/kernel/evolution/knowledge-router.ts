@@ -1,10 +1,10 @@
 import type { ConversationMessage } from '../../shared/agents/agent-instance.types';
 import { Logger } from '../../shared/logging/logger';
 import type { AIEOSConfig, ConfigLoader } from '../memory/config-loader';
-import type { OpenVikingClient } from '../memory/openviking/openviking-client';
 import { retrieveMemories } from '../memory/memory-retriever-v2';
 import type { ContextSummary } from '../memory/memory-types';
-import { ConflictResolver } from './conflict-resolver';
+import type { OpenVikingClient } from '../memory/openviking/openviking-client';
+import type { ConflictResolver } from './conflict-resolver';
 import type {
   KnowledgeFragment,
   KnowledgeRouterConfig,
@@ -12,7 +12,7 @@ import type {
   WorkspaceInfo,
 } from './evolution-types';
 import { DEFAULT_ROUTER_CONFIG } from './evolution-types';
-import { TokenBudgetAllocator } from './token-budget-allocator';
+import type { TokenBudgetAllocator } from './token-budget-allocator';
 import type { BudgetRatios } from './token-budget-allocator';
 
 export interface KnowledgeRouterDeps {
@@ -209,10 +209,7 @@ export class KnowledgeRouter {
     };
   }
 
-  private buildSearchQuery(
-    currentMessage: string,
-    recentMessages: ConversationMessage[],
-  ): string {
+  private buildSearchQuery(currentMessage: string, recentMessages: ConversationMessage[]): string {
     const parts = [currentMessage];
 
     const userMessages = recentMessages
@@ -225,17 +222,17 @@ export class KnowledgeRouter {
   }
 
   private assemblePrompt(fragments: KnowledgeFragment[]): string {
-    const sections: Record<string, string[]> = {
-      identity: [],
-      soul: [],
-      user: [],
-      memory: [],
-      session: [],
-      workspace: [],
+    const sections = {
+      identity: [] as string[],
+      soul: [] as string[],
+      user: [] as string[],
+      memory: [] as string[],
+      session: [] as string[],
+      workspace: [] as string[],
     };
 
     for (const fragment of fragments) {
-      const bucket = sections[fragment.source];
+      const bucket = sections[fragment.source as keyof typeof sections];
       if (bucket) {
         bucket.push(fragment.content);
       }
@@ -244,22 +241,22 @@ export class KnowledgeRouter {
     const parts: string[] = [];
 
     if (sections.identity.length > 0) {
-      parts.push('--- Agent Identity ---\n' + sections.identity.join('\n'));
+      parts.push(`--- Agent Identity ---\n${sections.identity.join('\n')}`);
     }
     if (sections.soul.length > 0) {
-      parts.push('--- Agent Soul ---\n' + sections.soul.join('\n'));
+      parts.push(`--- Agent Soul ---\n${sections.soul.join('\n')}`);
     }
     if (sections.user.length > 0) {
-      parts.push('--- User Profile ---\n' + sections.user.join('\n'));
+      parts.push(`--- User Profile ---\n${sections.user.join('\n')}`);
     }
     if (sections.memory.length > 0) {
-      parts.push('--- Relevant Memories ---\n' + sections.memory.join('\n'));
+      parts.push(`--- Relevant Memories ---\n${sections.memory.join('\n')}`);
     }
     if (sections.session.length > 0) {
-      parts.push('--- Session Context ---\n' + sections.session.join('\n'));
+      parts.push(`--- Session Context ---\n${sections.session.join('\n')}`);
     }
     if (sections.workspace.length > 0) {
-      parts.push('--- Workspace ---\n' + sections.workspace.join('\n'));
+      parts.push(`--- Workspace ---\n${sections.workspace.join('\n')}`);
     }
 
     return parts.join('\n\n');

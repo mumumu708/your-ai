@@ -98,10 +98,7 @@ export class TokenBudgetAllocator {
     const pendingBuckets: { key: BucketKey; remaining: KnowledgeFragment[] }[] = [];
 
     for (const key of bucketKeys) {
-      const { selected, remaining, unused } = this.fillBucket(
-        buckets[key],
-        bucketBudgets[key],
-      );
+      const { selected, remaining, unused } = this.fillBucket(buckets[key], bucketBudgets[key]);
       result.push(...selected);
       unusedBudget += unused;
 

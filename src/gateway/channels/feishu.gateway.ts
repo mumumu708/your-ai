@@ -234,17 +234,18 @@ export class FeishuChannel extends BaseChannel {
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        // Use native fetch instead of SDK's axios-based client to avoid
-        // ECONNRESET issues with axios/follow-redirects under Bun
-        const token = await this.client.tokenManager.getCustomTenantAccessToken();
-        const url = `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`;
-        const resp = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}` },
+        const resp = await this.client.im.messageResource.get({
+          path: { message_id: messageId, file_key: fileKey },
+          params: { type: 'file' },
         });
-        if (!resp.ok) {
-          throw new Error(`Feishu API responded with ${resp.status}: ${resp.statusText}`);
+        const chunks: Buffer[] = [];
+        const stream = (
+          resp as { getReadableStream: () => NodeJS.ReadableStream }
+        ).getReadableStream();
+        for await (const chunk of stream) {
+          chunks.push(Buffer.from(chunk as unknown as ArrayBuffer));
         }
-        return Buffer.from(await resp.arrayBuffer());
+        return Buffer.concat(chunks);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         const errorDetail =
@@ -252,7 +253,7 @@ export class FeishuChannel extends BaseChannel {
             ? JSON.stringify(error, Object.getOwnPropertyNames(error as object))
             : String(error);
         if (attempt < MAX_RETRIES) {
-          const delay = Math.pow(2, attempt - 1) * 500; // 500ms, 1000ms
+          const delay = 2 ** (attempt - 1) * 500; // 500ms, 1000ms
           this.logger.warn('飞书文件下载失败，准备重试', {
             messageId,
             fileKey,

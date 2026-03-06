@@ -36,9 +36,19 @@ function parse(expression: string): CronFields {
     throw new Error(`Invalid cron expression: expected 5 fields, got ${parts.length}`);
   }
 
-  const [minutes, hours, daysOfMonth, months, daysOfWeek] = parts.map((part, i) =>
-    parseField(part, FIELD_RANGES[i]),
-  );
+  const parsed = parts.map((part, i) => {
+    const range = FIELD_RANGES[i];
+    if (!range) {
+      throw new Error(`Missing field range for index ${i}`);
+    }
+    return parseField(part, range);
+  });
+
+  const minutes = parsed[0]!;
+  const hours = parsed[1]!;
+  const daysOfMonth = parsed[2]!;
+  const months = parsed[3]!;
+  const daysOfWeek = parsed[4]!;
 
   // Normalize day of week: 7 → 0 (both mean Sunday)
   const normalizedDow = daysOfWeek.map((d) => (d === 7 ? 0 : d));
@@ -55,8 +65,8 @@ function parseField(field: string, range: { min: number; max: number; name: stri
 
   for (const part of field.split(',')) {
     const stepMatch = part.match(/^(.+)\/(\d+)$/);
-    const base = stepMatch ? stepMatch[1] : part;
-    const step = stepMatch ? Number.parseInt(stepMatch[2], 10) : 1;
+    const base = stepMatch ? stepMatch[1]! : part;
+    const step = stepMatch ? Number.parseInt(stepMatch[2]!, 10) : 1;
 
     if (step <= 0) {
       throw new Error(`Invalid step in cron field '${field}': step must be > 0`);
@@ -69,8 +79,10 @@ function parseField(field: string, range: { min: number; max: number; name: stri
       start = range.min;
       end = range.max;
     } else if (base.includes('-')) {
-      const [lo, hi] = base.split('-').map(Number);
-      if (Number.isNaN(lo) || Number.isNaN(hi)) {
+      const rangeParts = base.split('-').map(Number);
+      const lo = rangeParts[0];
+      const hi = rangeParts[1];
+      if (lo == null || hi == null || Number.isNaN(lo) || Number.isNaN(hi)) {
         throw new Error(`Invalid range in cron field '${field}'`);
       }
       start = lo;

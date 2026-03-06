@@ -52,7 +52,7 @@ const NL_RULES: NlRule[] = [
   // --- Interval patterns ---
   {
     patterns: [/每隔?(\d+)分钟/, /every\s+(\d+)\s+minutes?/i],
-    extract: (m) => `*/${m[1]} * * * *`,
+    extract: (m) => `*/${m[1]!} * * * *`,
     description: '每N分钟',
   },
   {
@@ -62,7 +62,7 @@ const NL_RULES: NlRule[] = [
   },
   {
     patterns: [/每隔?(\d+)小?时/, /every\s+(\d+)\s+hours?/i],
-    extract: (m) => `0 */${m[1]} * * *`,
+    extract: (m) => `0 */${m[1]!} * * *`,
     description: '每N小时',
   },
 
@@ -70,7 +70,7 @@ const NL_RULES: NlRule[] = [
   {
     patterns: [new RegExp(`每天${CN_AFTERNOON}(\\d{1,2})${CN_TIME_SEP}(\\d{1,2})?`)],
     extract: (m) => {
-      const hour = Number.parseInt(m[1], 10);
+      const hour = Number.parseInt(m[1]!, 10);
       const adjustedHour = hour < 12 ? hour + 12 : hour;
       return `${m[2] ? Number.parseInt(m[2], 10) : 0} ${adjustedHour} * * *`;
     },
@@ -83,12 +83,12 @@ const NL_RULES: NlRule[] = [
       new RegExp(`每天${CN_MORNING}(\\d{1,2})${CN_TIME_SEP}(\\d{1,2})?`),
       new RegExp(`每日${CN_MORNING}(\\d{1,2})${CN_TIME_SEP}(\\d{1,2})?`),
     ],
-    extract: (m) => `${m[2] ? Number.parseInt(m[2], 10) : 0} ${Number.parseInt(m[1], 10)} * * *`,
+    extract: (m) => `${m[2] ? Number.parseInt(m[2], 10) : 0} ${Number.parseInt(m[1]!, 10)} * * *`,
     description: '每天指定时间',
   },
   {
     patterns: [/every\s+day\s+at\s+(\d{1,2}):(\d{2})/i, /daily\s+at\s+(\d{1,2}):(\d{2})/i],
-    extract: (m) => `${Number.parseInt(m[2], 10)} ${Number.parseInt(m[1], 10)} * * *`,
+    extract: (m) => `${Number.parseInt(m[2]!, 10)} ${Number.parseInt(m[1]!, 10)} * * *`,
     description: '每天指定时间',
   },
 
@@ -100,9 +100,9 @@ const NL_RULES: NlRule[] = [
       ),
     ],
     extract: (m) => {
-      const dow = WEEKDAY_MAP_CN[m[1]] ?? '0';
+      const dow = WEEKDAY_MAP_CN[m[1]!] ?? '0';
       const minute = m[3] ? Number.parseInt(m[3], 10) : 0;
-      return `${minute} ${Number.parseInt(m[2], 10)} * * ${dow}`;
+      return `${minute} ${Number.parseInt(m[2]!, 10)} * * ${dow}`;
     },
     description: '每周某天指定时间',
   },
@@ -111,8 +111,8 @@ const NL_RULES: NlRule[] = [
       /every\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\s+at\s+(\d{1,2}):(\d{2})/i,
     ],
     extract: (m) => {
-      const dow = WEEKDAY_MAP_EN[m[1].toLowerCase()] ?? '0';
-      return `${Number.parseInt(m[3], 10)} ${Number.parseInt(m[2], 10)} * * ${dow}`;
+      const dow = WEEKDAY_MAP_EN[m[1]!.toLowerCase()] ?? '0';
+      return `${Number.parseInt(m[3]!, 10)} ${Number.parseInt(m[2]!, 10)} * * ${dow}`;
     },
     description: '每周某天指定时间',
   },
@@ -122,13 +122,13 @@ const NL_RULES: NlRule[] = [
     patterns: [new RegExp(`(?:每个?)?工作日${CN_MORNING}(\\d{1,2})${CN_TIME_SEP}?(\\d{1,2})?`)],
     extract: (m) => {
       const minute = m[2] ? Number.parseInt(m[2], 10) : 0;
-      return `${minute} ${Number.parseInt(m[1], 10)} * * 1-5`;
+      return `${minute} ${Number.parseInt(m[1]!, 10)} * * 1-5`;
     },
     description: '工作日指定时间',
   },
   {
     patterns: [/weekdays?\s+at\s+(\d{1,2}):(\d{2})/i, /every\s+weekday\s+at\s+(\d{1,2}):(\d{2})/i],
-    extract: (m) => `${Number.parseInt(m[2], 10)} ${Number.parseInt(m[1], 10)} * * 1-5`,
+    extract: (m) => `${Number.parseInt(m[2]!, 10)} ${Number.parseInt(m[1]!, 10)} * * 1-5`,
     description: '工作日指定时间',
   },
 
@@ -136,15 +136,15 @@ const NL_RULES: NlRule[] = [
   {
     patterns: [new RegExp(`每月(\\d{1,2})[号日]${CN_MORNING}(\\d{1,2})${CN_TIME_SEP}?(\\d{1,2})?`)],
     extract: (m) => {
-      const hour = Number.parseInt(m[2], 10);
+      const hour = Number.parseInt(m[2]!, 10);
       const minute = m[3] ? Number.parseInt(m[3], 10) : 0;
-      return `${minute} ${hour} ${Number.parseInt(m[1], 10)} * *`;
+      return `${minute} ${hour} ${Number.parseInt(m[1]!, 10)} * *`;
     },
     description: '每月指定日期和时间',
   },
   {
     patterns: [/每月(\d{1,2})[号日]/],
-    extract: (m) => `0 0 ${Number.parseInt(m[1], 10)} * *`,
+    extract: (m) => `0 0 ${Number.parseInt(m[1]!, 10)} * *`,
     description: '每月指定日期',
   },
   {
