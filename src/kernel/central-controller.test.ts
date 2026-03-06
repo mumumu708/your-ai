@@ -629,4 +629,177 @@ describe('CentralController', () => {
       expect(content).toContain('记住了');
     });
   });
+
+  describe('classifyIntent — harness patterns', () => {
+    test('应该将 /harness 命令分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '/harness 修改代码' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将 harness: 前缀分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: 'harness: fix the bug' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将"修复bug"分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '修复bug' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将"加个功能"分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '加个功能' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将"重构"分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '重构这段代码' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将 "fix the bug" 分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: 'fix the bug' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将 "run tests" 分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: 'run tests' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将 "add a feature" 分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: 'add a feature' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('不应该将"什么是bug"分类为 harness', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '什么是bug' });
+      expect(controller.classifyIntent(message)).toBe('chat');
+    });
+
+    test('不应该将普通对话分类为 harness', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '你好' });
+      expect(controller.classifyIntent(message)).toBe('chat');
+    });
+
+    test('不应该将 /setup 分类为 harness', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '/setup' });
+      expect(controller.classifyIntent(message)).toBe('system');
+    });
+  });
+
+  describe('calculatePriority — harness', () => {
+    test('应该为 harness 任务分配优先级 2', () => {
+      const controller = CentralController.getInstance();
+      expect(controller.calculatePriority('harness')).toBe(2);
+    });
+  });
+
+  describe('handleHarnessTask', () => {
+    test('非管理员发送 harness 消息应降级为 chat', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'feishu:admin_only';
+
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute');
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const session = {
+        id: 'sess_001',
+        userId: 'user_regular',
+        channel: 'web',
+        conversationId: 'conv_001',
+        status: 'active' as const,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        agentConfig: { maxContextTokens: 100000 },
+        messages: [],
+        workspacePath: '/tmp/user-space/user_regular',
+      };
+
+      const task = {
+        id: 'task_001',
+        traceId: 'trace_001',
+        type: 'harness' as const,
+        message: createMockMessage({ userId: 'user_regular', content: '修复bug' }),
+        session,
+        priority: 2,
+        createdAt: Date.now(),
+        metadata: { userId: 'user_regular', channel: 'web', conversationId: 'conv_001' },
+      };
+
+      await controller.orchestrate(task);
+      expect(task.type).toBe('chat');
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        delete process.env.ADMIN_USER_IDS;
+      }
+    });
+
+    test('管理员发送 harness 消息应使用 process.cwd()', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'feishu:admin_user';
+
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute');
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const session = {
+        id: 'sess_002',
+        userId: 'feishu:admin_user',
+        channel: 'feishu',
+        conversationId: 'conv_002',
+        status: 'active' as const,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        agentConfig: { maxContextTokens: 100000 },
+        messages: [],
+        workspacePath: '/tmp/user-space/feishu:admin_user',
+      };
+
+      const task = {
+        id: 'task_002',
+        traceId: 'trace_002',
+        type: 'harness' as const,
+        message: createMockMessage({ userId: 'feishu:admin_user', content: '修复bug' }),
+        session,
+        priority: 2,
+        createdAt: Date.now(),
+        metadata: { userId: 'feishu:admin_user', channel: 'feishu', conversationId: 'conv_002' },
+      };
+
+      await controller.orchestrate(task);
+      expect(task.type).toBe('harness');
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+
+      const callArgs = executeSpy.mock.calls[0][0] as Record<string, unknown>;
+      const context = callArgs.context as Record<string, unknown>;
+      expect(context.workspacePath).toBe(process.cwd());
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        delete process.env.ADMIN_USER_IDS;
+      }
+    });
+  });
 });
