@@ -34,6 +34,7 @@ import { UserConfigLoader } from './memory/user-config-loader';
 import { OnboardingManager } from './onboarding';
 import { FileUploadHandler } from './files/file-upload-handler';
 import type { IChannel } from '../shared/messaging/channel-adapter.types';
+import { isAdminUser } from '../shared/utils/admin';
 
 const SYSTEM_COMMAND_PREFIX = '/';
 
@@ -49,6 +50,29 @@ const SCHEDULE_PATTERNS = [
 ];
 
 const AUTOMATION_PATTERNS = [/自动化/, /批量/, /automate/i, /batch/i, /workflow/i];
+
+const HARNESS_PATTERNS = [
+  // Explicit triggers
+  /^\/harness\b/i,
+  /^harness:/i,
+  // Code modification (CN)
+  /修[复个]?\s*(bug|缺陷|问题)/i,
+  /加[个一]?\s*(功能|特性)/i,
+  /重构/,
+  // Project infrastructure (CN)
+  /跑[一下]*\s*测试/,
+  /运行\s*测试/,
+  /查[看下]*\s*架构/,
+  // Documentation maintenance (CN)
+  /更新[一下]*\s*文档/,
+  // Deployment (CN)
+  /部署/,
+  /重启\s*服务/,
+  // EN patterns
+  /\b(fix|debug|refactor)\s+(the\s+)?(bug|code|issue)/i,
+  /\brun\s+tests?\b/i,
+  /\badd\s+(a\s+)?feature\b/i,
+];
 
 export interface CentralControllerDeps {
   sessionManager?: SessionManager;
@@ -354,10 +378,19 @@ export class CentralController {
         return this.handleAutomationTask(task);
       case 'system':
         return this.handleSystemTask(task);
+      case 'harness':
+        return this.handleHarnessTask(task);
     }
   }
 
   classifyIntent(message: BotMessage): TaskType {
+    // Harness patterns checked first (/harness must not be swallowed by system command prefix)
+    for (const pattern of HARNESS_PATTERNS) {
+      if (pattern.test(message.content)) {
+        return 'harness';
+      }
+    }
+
     if (message.content.startsWith(SYSTEM_COMMAND_PREFIX)) {
       return 'system';
     }
@@ -380,6 +413,7 @@ export class CentralController {
   calculatePriority(taskType: TaskType): number {
     const BASE_PRIORITIES: Record<TaskType, number> = {
       system: 1,
+      harness: 2,
       chat: 5,
       scheduled: 10,
       automation: 15,
@@ -388,6 +422,23 @@ export class CentralController {
   }
 
   private async handleChatTask(task: Task): Promise<TaskResult> {
+    return this.executeChatPipeline(task);
+  }
+
+  private async handleHarnessTask(task: Task): Promise<TaskResult> {
+    if (!isAdminUser(task.message.userId)) {
+      // Non-admin: silently downgrade to chat
+      task.type = 'chat';
+      return this.executeChatPipeline(task);
+    }
+    // Admin: use project root as cwd
+    return this.executeChatPipeline(task, { cwdOverride: process.cwd() });
+  }
+
+  private async executeChatPipeline(
+    task: Task,
+    options?: { cwdOverride?: string },
+  ): Promise<TaskResult> {
     this.logger.info('处理聊天任务', { traceId: task.traceId, taskId: task.id });
 
     const sessionKey = `${task.message.userId}:${task.message.channel}:${task.message.conversationId}`;
@@ -448,6 +499,8 @@ export class CentralController {
       },
     );
 
+    const workspacePath = options?.cwdOverride ?? task.session.workspacePath;
+
     // Execute via AgentRuntime
     const result = await this.agentRuntime.execute({
       agentId: 'default',
@@ -455,7 +508,7 @@ export class CentralController {
         sessionId: task.session.id,
         messages: contextMessages,
         systemPrompt: resolvedContext.systemPrompt,
-        workspacePath: task.session.workspacePath,
+        workspacePath,
         claudeSessionId: task.session.claudeSessionId,
       },
       signal: task.signal,

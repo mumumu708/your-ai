@@ -3,7 +3,7 @@ import type { BotMessage } from '../messaging/bot-message.types';
 import type { WorkingMemory } from '../../kernel/memory/working-memory';
 import type { UserConfigLoader } from '../../kernel/memory/user-config-loader';
 
-export type TaskType = 'chat' | 'scheduled' | 'automation' | 'system';
+export type TaskType = 'chat' | 'scheduled' | 'automation' | 'system' | 'harness';
 
 export interface TaskMetadata {
   userId: string;
