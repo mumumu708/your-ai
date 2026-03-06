@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { Logger } from '../../shared/logging/logger';
 import type { AIEOSConfig } from './config-loader';
 import type { ConfigLoader } from './config-loader';
@@ -24,7 +25,7 @@ export class UserConfigLoader {
     private readonly globalConfigLoader: ConfigLoader,
     workspacePath: string,
   ) {
-    this.localDir = `user-space/${userId}/memory`;
+    this.localDir = join(workspacePath, 'memory');
   }
 
   /** Load all 4 AIEOS config files with per-user priority */
@@ -114,6 +115,10 @@ export class UserConfigLoader {
   /** Invalidate the config cache */
   invalidateCache(): void {
     this.cache = null;
+  }
+
+  getLocalDir(): string {
+    return this.localDir;
   }
 
   /** Load a single file with three-level fallback */

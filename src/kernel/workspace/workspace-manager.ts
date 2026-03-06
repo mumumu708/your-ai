@@ -19,7 +19,7 @@ export interface WorkspaceManagerOptions {
   baseDir?: string;
 }
 
-const DEFAULT_BASE_DIR = 'user-space';
+const DEFAULT_BASE_DIR = process.env.USER_SPACE_ROOT ?? 'user-space';
 
 const CLAUDE_MD_TEMPLATE = `You have just been awakened by your user.
 

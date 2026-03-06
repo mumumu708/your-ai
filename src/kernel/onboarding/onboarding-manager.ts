@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { Logger } from '../../shared/logging/logger';
 import type { LightLLMClient } from '../agents/light-llm-client';
 import type { UserConfigLoader } from '../memory/user-config-loader';
@@ -36,13 +37,15 @@ export class OnboardingManager {
   }
 
   /** Try to restore onboarding state from BOOTSTRAP.md file */
-  async tryRestoreState(userId: string, _userConfigLoader?: UserConfigLoader): Promise<boolean> {
+  async tryRestoreState(userId: string, userConfigLoader?: UserConfigLoader): Promise<boolean> {
     if (this.states.has(userId)) return true;
 
     try {
       // Only check local file — avoid hitting VikingFS for a transient bootstrap file,
       // which causes FileNotFoundError on the openviking server when the file doesn't exist.
-      const localPath = `user-space/${userId}/memory/${BOOTSTRAP_FILENAME}`;
+      const localPath = userConfigLoader
+        ? join(userConfigLoader.getLocalDir(), BOOTSTRAP_FILENAME)
+        : `user-space/${userId}/memory/${BOOTSTRAP_FILENAME}`;
       const file = Bun.file(localPath);
       if (await file.exists()) {
         const content = await file.text();
@@ -208,7 +211,7 @@ IDENTITY.md should contain (use dense, telegraphic style with **bold** paragraph
 
     // Clean up bootstrap state
     this.states.delete(userId);
-    await this.removeBootstrapFile(userId);
+    await this.removeBootstrapFile(userId, userConfigLoader);
 
     return `设置完成！${state.agentName} 已就绪，现在你可以开始对话了。\n\n你可以随时发送 /setup 重新配置。`;
   }
@@ -306,8 +309,10 @@ Never share user data across different user contexts.
   }
 
   /** Remove BOOTSTRAP.md after onboarding completes */
-  private async removeBootstrapFile(userId: string): Promise<void> {
-    const localPath = `user-space/${userId}/memory/${BOOTSTRAP_FILENAME}`;
+  private async removeBootstrapFile(userId: string, userConfigLoader?: UserConfigLoader): Promise<void> {
+    const localPath = userConfigLoader
+      ? join(userConfigLoader.getLocalDir(), BOOTSTRAP_FILENAME)
+      : `user-space/${userId}/memory/${BOOTSTRAP_FILENAME}`;
     try {
       const { unlinkSync } = require('node:fs');
       unlinkSync(localPath);
