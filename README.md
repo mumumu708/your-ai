@@ -54,6 +54,7 @@ skills/                 # 内置 / 自定义技能
 
 - [Bun](https://bun.sh) >= 1.2
 - [PM2](https://pm2.keymetrics.io) (`npm install -g pm2`)
+- [GitHub CLI](https://cli.github.com) (`brew install gh`)
 - [OpenViking Server](./docs/14-openviking-setup.md)
 
 ### 安装

@@ -30,10 +30,12 @@ check:all 通过后，提交前，逐条自检：
 ## 关键命令
 
 - 全量检查: `bun run check:all`（每次改完代码必跑）
+- 文档检查: `bun run check:docs`（提交前必跑）
 - 测试: `bun test`
 - Lint: `bun run lint` / `bun run lint:fix`
 - 格式化: `bun run format`
 - 架构检查: `bun run check:arch`
+- 创建 PR: `gh pr create --base main --head {branch} --title "..." --body "..."`
 
 ## Git 工作流
 
@@ -81,8 +83,36 @@ agent/feat/memory-cache-layer
 1. 确认 `bun run check:all` 通过
 2. 确认 `bun run check:docs` 通过
 3. `git push origin agent/{类型}/{简短描述}`
-4. 告知管理员: 分支名、变更摘要、涉及的模块
-5. 由管理员决定合并方式（merge / squash merge / rebase）
+4. 通过 GitHub CLI 创建 PR：
+
+   ```bash
+   gh pr create \
+     --base main \
+     --head agent/{类型}/{简短描述} \
+     --title "{type}: {简短描述}" \
+     --body "## What / Why
+   {变更说明}
+
+   ## 变更范围
+   - {涉及的模块和文件}
+
+   ## Checklist
+   - [x] bun run check:all 通过
+   - [x] bun run check:docs 通过
+   - [x] 新功能有测试
+   - [ ] 如修改 config/ 下 AIEOS 文件，已评估用户侧影响
+   - [ ] 如发现新陷阱，已更新 .harness/pitfalls.md"
+   ```
+
+5. 告知管理员: PR 链接、变更摘要、涉及的模块
+6. 由管理员 review 后合并（merge / squash merge / rebase）
+
+### PR 规范
+
+- title 格式与 commit message 一致（`feat: xxx` / `fix: xxx`）
+- body 必须包含 What/Why 和 Checklist
+- 如果 PR 包含多个 commit，在 body 中列出每个 commit 的简要说明
+- 如果 PR 涉及 .harness/ 文档更新，在 body 中标注具体更新了哪些文档
 
 ### 禁止事项
 
