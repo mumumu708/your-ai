@@ -29,7 +29,7 @@ describe('createTransformMiddleware', () => {
     await handler(createTestMessage({ content: '  hello world  ' }));
 
     expect(receivedMsg).not.toBeNull();
-    expect(receivedMsg!.content).toBe('hello world');
+    expect(receivedMsg?.content).toBe('hello world');
   });
 
   test('generates message ID if missing', async () => {
@@ -43,8 +43,8 @@ describe('createTransformMiddleware', () => {
     await handler(createTestMessage({ id: '' }));
 
     expect(receivedMsg).not.toBeNull();
-    expect(receivedMsg!.id).toBeTruthy();
-    expect(receivedMsg!.id.startsWith('msg_')).toBe(true);
+    expect(receivedMsg?.id).toBeTruthy();
+    expect(receivedMsg?.id.startsWith('msg_')).toBe(true);
   });
 
   test('preserves existing message ID', async () => {
@@ -57,7 +57,7 @@ describe('createTransformMiddleware', () => {
     const handler = middleware(next);
     await handler(createTestMessage({ id: 'my-id' }));
 
-    expect(receivedMsg!.id).toBe('my-id');
+    expect(receivedMsg?.id).toBe('my-id');
   });
 
   test('ensures timestamp exists', async () => {
@@ -71,7 +71,7 @@ describe('createTransformMiddleware', () => {
     await handler(createTestMessage({ timestamp: 0 }));
 
     expect(receivedMsg).not.toBeNull();
-    expect(receivedMsg!.timestamp).toBeGreaterThan(0);
+    expect(receivedMsg?.timestamp).toBeGreaterThan(0);
   });
 
   test('adds traceId to metadata', async () => {
@@ -85,8 +85,8 @@ describe('createTransformMiddleware', () => {
     await handler(createTestMessage());
 
     expect(receivedMsg).not.toBeNull();
-    expect(receivedMsg!.metadata.traceId).toBeDefined();
-    expect((receivedMsg!.metadata.traceId as string).startsWith('trace_')).toBe(true);
+    expect(receivedMsg?.metadata.traceId).toBeDefined();
+    expect((receivedMsg?.metadata.traceId as string).startsWith('trace_')).toBe(true);
   });
 
   test('preserves existing traceId', async () => {
@@ -99,7 +99,7 @@ describe('createTransformMiddleware', () => {
     const handler = middleware(next);
     await handler(createTestMessage({ metadata: { traceId: 'existing-trace' } }));
 
-    expect(receivedMsg!.metadata.traceId).toBe('existing-trace');
+    expect(receivedMsg?.metadata.traceId).toBe('existing-trace');
   });
 
   test('sanitizes userId - removes special characters', async () => {
@@ -113,7 +113,7 @@ describe('createTransformMiddleware', () => {
     await handler(createTestMessage({ userId: 'user<script>alert(1)</script>' }));
 
     expect(receivedMsg).not.toBeNull();
-    expect(receivedMsg!.userId).toBe('userscriptalert1script');
+    expect(receivedMsg?.userId).toBe('userscriptalert1script');
   });
 
   test('preserves clean userId', async () => {
@@ -126,7 +126,7 @@ describe('createTransformMiddleware', () => {
     const handler = middleware(next);
     await handler(createTestMessage({ userId: 'user_123-abc.xyz' }));
 
-    expect(receivedMsg!.userId).toBe('user_123-abc.xyz');
+    expect(receivedMsg?.userId).toBe('user_123-abc.xyz');
   });
 
   test('calls next handler', async () => {

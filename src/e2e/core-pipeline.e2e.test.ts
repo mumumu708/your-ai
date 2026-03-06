@@ -11,6 +11,7 @@
  * 飞书：FEISHU_APP_ID=xxx FEISHU_APP_SECRET=xxx ~/.bun/bin/bun test src/e2e/
  */
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from 'bun:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { ChannelManager } from '../gateway/channel-manager';
 import { WebChannel } from '../gateway/channels/web.gateway';
@@ -76,7 +77,10 @@ async function connectWs(port: number, userId: string): Promise<WebSocket> {
 }
 
 /** Wait for the next WS message */
-function nextWsMessage(ws: WebSocket, timeoutMs = CLAUDE_TIMEOUT): Promise<Record<string, unknown>> {
+function nextWsMessage(
+  ws: WebSocket,
+  timeoutMs = CLAUDE_TIMEOUT,
+): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('WS message timeout')), timeoutMs);
     ws.onmessage = (e) => {
@@ -121,6 +125,24 @@ describe('全链路 E2E 测试', () => {
       ...createMockOVDeps(),
     });
 
+    // Pre-create SOUL.md for E2E test users to bypass onboarding flow
+    const userSpaceBase = process.env.USER_SPACE_ROOT ?? 'user-space';
+    const e2eUsers = [
+      'e2e_user',
+      'e2e_http_user',
+      'e2e_schedule_user',
+      'e2e_ws_complex',
+      'e2e_ws_simple',
+      'e2e_ws_multi',
+      'e2e_isolation_A',
+      'e2e_isolation_B',
+    ];
+    for (const userId of e2eUsers) {
+      const memDir = `${userSpaceBase}/${userId}/memory`;
+      mkdirSync(memDir, { recursive: true });
+      writeFileSync(`${memDir}/SOUL.md`, '# Test SOUL\nBe helpful.\n');
+    }
+
     const router = new MessageRouter(controller);
     channelManager = new ChannelManager(router);
 
@@ -138,8 +160,8 @@ describe('全链路 E2E 测试', () => {
       const { FeishuChannel } = await import('../gateway/channels/feishu.gateway');
       await channelManager.registerChannel(
         new FeishuChannel({
-          appId: process.env.FEISHU_APP_ID!,
-          appSecret: process.env.FEISHU_APP_SECRET!,
+          appId: process.env.FEISHU_APP_ID ?? '',
+          appSecret: process.env.FEISHU_APP_SECRET ?? '',
         }),
       );
     }
@@ -323,33 +345,29 @@ describe('全链路 E2E 测试', () => {
       CLAUDE_TIMEOUT,
     );
 
-    test(
-      'WS 多轮对话应该维持会话上下文',
-      async () => {
-        const ws = await connectWs(WS_PORT, 'e2e_ws_multi');
-        try {
-          // Round 1
-          const p1 = nextWsMessage(ws);
-          ws.send(JSON.stringify({ content: '请记住这个数字：42' }));
-          const r1 = await p1;
-          expect(r1.type).toBe('message');
-          expect(typeof (r1.data as Record<string, unknown>).text).toBe('string');
+    test('WS 多轮对话应该维持会话上下文', async () => {
+      const ws = await connectWs(WS_PORT, 'e2e_ws_multi');
+      try {
+        // Round 1
+        const p1 = nextWsMessage(ws);
+        ws.send(JSON.stringify({ content: '请记住这个数字：42' }));
+        const r1 = await p1;
+        expect(r1.type).toBe('message');
+        expect(typeof (r1.data as Record<string, unknown>).text).toBe('string');
 
-          // Round 2 — references context from round 1
-          const p2 = nextWsMessage(ws);
-          ws.send(JSON.stringify({ content: '继续上面的话题，我刚才说的数字是什么？' }));
-          const r2 = await p2;
-          expect(r2.type).toBe('message');
+        // Round 2 — references context from round 1
+        const p2 = nextWsMessage(ws);
+        ws.send(JSON.stringify({ content: '继续上面的话题，我刚才说的数字是什么？' }));
+        const r2 = await p2;
+        expect(r2.type).toBe('message');
 
-          const text2 = (r2.data as Record<string, unknown>).text as string;
-          expect(typeof text2).toBe('string');
-          expect(text2.length).toBeGreaterThan(0);
-        } finally {
-          ws.close();
-        }
-      },
-      60_000,
-    );
+        const text2 = (r2.data as Record<string, unknown>).text as string;
+        expect(typeof text2).toBe('string');
+        expect(text2.length).toBeGreaterThan(0);
+      } finally {
+        ws.close();
+      }
+    }, 60_000);
   });
 
   // =========================================================================

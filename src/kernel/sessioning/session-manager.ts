@@ -6,7 +6,10 @@ import type { ContextSummary, SessionSummary } from '../memory/memory-types';
 import { SessionMemoryExtractor } from '../memory/session-memory-extractor';
 import { WorkingMemory } from '../memory/working-memory';
 
-export type SessionCloseCallback = (summary: SessionSummary, sessionId: string) => void | Promise<void>;
+export type SessionCloseCallback = (
+  summary: SessionSummary,
+  sessionId: string,
+) => void | Promise<void>;
 
 export class SessionManager {
   private readonly logger = new Logger('SessionManager');
@@ -75,9 +78,10 @@ export class SessionManager {
    * Get context-aware messages with summaries from WorkingMemory.
    * Returns compressed summaries of older messages + recent messages.
    */
-  getContextMessages(
-    sessionKey: string,
-  ): { summaries: ContextSummary[]; messages: ConversationMessage[] } {
+  getContextMessages(sessionKey: string): {
+    summaries: ContextSummary[];
+    messages: ConversationMessage[];
+  } {
     const session = this.findSessionByKey(sessionKey);
     if (!session) return { summaries: [], messages: [] };
 

@@ -4,7 +4,7 @@
  * MCP config, and directory structure — the full context Claude Code needs.
  */
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { WorkspaceManager } from './workspace-manager';
 

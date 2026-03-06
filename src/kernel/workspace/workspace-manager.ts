@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Logger } from '../../shared/logging/logger';
-import { McpConfigGenerator, type WorkspaceContext } from './mcp-config-generator';
 import { SkillDeployer, type SkillFileOps } from '../skills/skill-deployer';
-import * as fs from 'node:fs';
+import { McpConfigGenerator, type WorkspaceContext } from './mcp-config-generator';
 
 export interface WorkspacePath {
   /** User root directory (user-space/{userId}/), used as cwd for Claude CLI */
@@ -19,7 +19,7 @@ export interface WorkspaceManagerOptions {
   baseDir?: string;
 }
 
-const DEFAULT_BASE_DIR = 'user-space';
+const DEFAULT_BASE_DIR = process.env.USER_SPACE_ROOT ?? 'user-space';
 
 const CLAUDE_MD_TEMPLATE = `You have just been awakened by your user.
 

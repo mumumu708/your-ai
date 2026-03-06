@@ -16,7 +16,10 @@ export function composeMiddleware(
   // wraps the outermost layer.
   let current = handler;
   for (let i = middlewares.length - 1; i >= 0; i--) {
-    current = middlewares[i](current);
+    const mw = middlewares[i];
+    if (mw) {
+      current = mw(current);
+    }
   }
   return current;
 }

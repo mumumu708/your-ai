@@ -6,12 +6,7 @@ export type MessageMiddleware = (next: MessageHandler) => MessageHandler;
 
 // ── Auth context ──────────────────────────────────────────────────────────
 
-export type AuthMethod =
-  | 'feishu_signature'
-  | 'telegram_bot'
-  | 'jwt'
-  | 'api_key'
-  | 'dev_bypass';
+export type AuthMethod = 'feishu_signature' | 'telegram_bot' | 'jwt' | 'api_key' | 'dev_bypass';
 
 export interface AuthContext {
   authenticated: boolean;

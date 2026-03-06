@@ -220,7 +220,11 @@ export class RateLimiter {
 
     const cutoff = now - windowMs;
     // Remove timestamps older than the window
-    while (window.timestamps.length > 0 && window.timestamps[0] <= cutoff) {
+    while (
+      window.timestamps.length > 0 &&
+      window.timestamps[0] !== undefined &&
+      window.timestamps[0] <= cutoff
+    ) {
       window.timestamps.shift();
     }
 
@@ -235,7 +239,7 @@ export class RateLimiter {
     now: number,
   ): number {
     if (!window || window.timestamps.length === 0) return 0;
-    const oldest = window.timestamps[0];
+    const oldest = window.timestamps[0] ?? 0;
     return Math.max(0, oldest + rule.windowMs - now);
   }
 }

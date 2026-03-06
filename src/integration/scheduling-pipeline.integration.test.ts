@@ -11,8 +11,8 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
 import type { AgentBridgeResult, ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
 import type { LightLLMClient } from '../kernel/agents/light-llm-client';
 import { CentralController } from '../kernel/central-controller';
-import { Scheduler } from '../kernel/scheduling/scheduler';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
+import { Scheduler } from '../kernel/scheduling/scheduler';
 import type { BotMessage } from '../shared/messaging/bot-message.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 
@@ -52,7 +52,7 @@ function createMockClaudeBridge(response = 'Claude says hi'): ClaudeAgentBridge 
   } as unknown as ClaudeAgentBridge;
 }
 
-function createMockLightLLM(response = 'Light says hi'): LightLLMClient {
+function _createMockLightLLM(response = 'Light says hi'): LightLLMClient {
   return {
     complete: mock(async () => ({
       content: response,
@@ -159,7 +159,7 @@ describe('定时调度管道集成测试', () => {
       // 手动将 nextRunAt 设为过去时间以立即触发
       const job = scheduler.getJob(jobId);
       expect(job).toBeDefined();
-      job!.nextRunAt = Date.now() - 1000;
+      if (job) job.nextRunAt = Date.now() - 1000;
 
       // start 会调用 scheduleNextRun，发现 delay <= 0 立即执行
       scheduler.start();
@@ -168,8 +168,8 @@ describe('定时调度管道集成测试', () => {
       await new Promise((r) => setTimeout(r, 100));
 
       expect(executorFn).toHaveBeenCalledTimes(1);
-      expect(job!.executionCount).toBe(1);
-      expect(job!.lastResult?.success).toBe(true);
+      expect(job?.executionCount).toBe(1);
+      expect(job?.lastResult?.success).toBe(true);
     });
 
     test('executor 失败时 Job 应该记录错误结果但保持 active', async () => {
@@ -186,8 +186,9 @@ describe('定时调度管道集成测试', () => {
         description: '会失败的任务',
       });
 
-      const job = scheduler.getJob(jobId)!;
-      job.nextRunAt = Date.now() - 1000;
+      const job = scheduler.getJob(jobId);
+      expect(job).toBeDefined();
+      if (job) job.nextRunAt = Date.now() - 1000;
 
       scheduler.start();
       await new Promise((r) => setTimeout(r, 100));

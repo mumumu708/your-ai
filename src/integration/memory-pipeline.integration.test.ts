@@ -8,14 +8,22 @@
  * 同时测试会话过期自动触发记忆提取的场景。
  */
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
-import type { ConversationMessage } from '../shared/agents/agent-instance.types';
 import type { AgentBridgeResult, ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
 import { CentralController } from '../kernel/central-controller';
 import type { CentralControllerDeps } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
-import { SessionMemoryExtractor } from '../kernel/memory/session-memory-extractor';
+import type { EvolutionScheduler } from '../kernel/evolution/evolution-scheduler';
+import type { KnowledgeRouter } from '../kernel/evolution/knowledge-router';
+import type { PostResponseAnalyzer } from '../kernel/evolution/post-response-analyzer';
+import type { ConfigLoader } from '../kernel/memory/config-loader';
+import type { ContextManager } from '../kernel/memory/context-manager';
+import type { EntityManager } from '../kernel/memory/graph/entity-manager';
 import type { SessionSummary } from '../kernel/memory/memory-types';
+import type { OpenVikingClient } from '../kernel/memory/openviking/openviking-client';
+import type { SessionMemoryExtractor } from '../kernel/memory/session-memory-extractor';
 import { SessionManager } from '../kernel/sessioning/session-manager';
+import type { LessonsLearnedUpdater } from '../lessons/lessons-updater';
+import type { ConversationMessage } from '../shared/agents/agent-instance.types';
 import type { BotMessage } from '../shared/messaging/bot-message.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 
@@ -66,28 +74,28 @@ function createMockOVDeps(): Partial<CentralControllerDeps> {
         conflictsResolved: [],
         retrievedMemories: [],
       }),
-    } as any,
+    } as unknown as KnowledgeRouter,
     postResponseAnalyzer: {
       analyzeExchange: async () => null,
-    } as any,
+    } as unknown as PostResponseAnalyzer,
     ovClient: {
       addMessage: async () => {},
       commit: async () => ({ memories_extracted: 0 }),
-    } as any,
+    } as unknown as OpenVikingClient,
     contextManager: {
       checkAndFlush: async () => null,
-    } as any,
+    } as unknown as ContextManager,
     configLoader: {
       loadAll: async () => ({ soul: '', identity: 'Test', user: '', agents: '' }),
       invalidateCache: () => {},
-    } as any,
+    } as unknown as ConfigLoader,
     lessonsUpdater: {
       addLesson: async () => true,
-    } as any,
+    } as unknown as LessonsLearnedUpdater,
     evolutionScheduler: {
       schedulePostCommit: () => {},
-    } as any,
-    entityManager: {} as any,
+    } as unknown as EvolutionScheduler,
+    entityManager: {} as unknown as EntityManager,
   };
 }
 
@@ -143,12 +151,12 @@ describe('会话记忆管道集成测试', () => {
       const summary = await sessionManager.closeSession(sessionKey);
 
       expect(summary).not.toBeNull();
-      expect(summary!.sessionId).toBe(session.id);
-      expect(summary!.userId).toBe('user_mem');
-      expect(summary!.messageCount).toBe(4);
-      expect(summary!.keywords.length).toBeGreaterThan(0);
-      expect(summary!.startedAt).toBe(now);
-      expect(summary!.endedAt).toBe(now + 3000);
+      expect(summary?.sessionId).toBe(session.id);
+      expect(summary?.userId).toBe('user_mem');
+      expect(summary?.messageCount).toBe(4);
+      expect(summary?.keywords.length).toBeGreaterThan(0);
+      expect(summary?.startedAt).toBe(now);
+      expect(summary?.endedAt).toBe(now + 3000);
     });
 
     test('会话消息中的行动项和偏好应该被提取', async () => {
@@ -182,9 +190,9 @@ describe('会话记忆管道集成测试', () => {
 
       expect(summary).not.toBeNull();
       // '帮我创建一个登录页面' 匹配 ACTION_ITEM_PATTERNS
-      expect(summary!.actionItems.length).toBeGreaterThan(0);
+      expect(summary?.actionItems.length).toBeGreaterThan(0);
       // '我喜欢使用 Tailwind CSS' 和 '不要使用 class 组件' 匹配 PREFERENCE_PATTERNS
-      expect(summary!.preferences.length).toBeGreaterThan(0);
+      expect(summary?.preferences.length).toBeGreaterThan(0);
     });
   });
 
@@ -196,7 +204,7 @@ describe('会话记忆管道集成测试', () => {
       const sessionManager = new SessionManager();
 
       // 设置 onSessionClose 回调 — simulates CentralController's behavior
-      sessionManager.setOnSessionClose(async (summary: SessionSummary, sessionId: string) => {
+      sessionManager.setOnSessionClose(async (_summary: SessionSummary, sessionId: string) => {
         commitCalledWith = sessionId;
       });
 
@@ -280,10 +288,10 @@ describe('会话记忆管道集成测试', () => {
   describe('CentralController → 会话过期 → 记忆提取', () => {
     test('会话过期后新消息应该触发旧会话关闭并提取记忆', async () => {
       const sessionManager = new SessionManager({ sessionTimeoutMs: 50 });
-      let closedSummary: SessionSummary | null = null;
+      let _closedSummary: SessionSummary | null = null;
 
       sessionManager.setOnSessionClose(async (summary: SessionSummary) => {
-        closedSummary = summary;
+        _closedSummary = summary;
       });
 
       const controller = CentralController.getInstance({
@@ -310,20 +318,22 @@ describe('会话记忆管道集成测试', () => {
       );
 
       // 旧会话应已关闭
-      expect(session!.status).toBe('closed');
+      expect(session?.status).toBe('closed');
       const newSession = sessionManager.getSessionByKey(sessionKey);
       expect(newSession).toBeDefined();
-      expect(newSession!.id).not.toBe(session!.id);
+      expect(newSession?.id).not.toBe(session?.id);
     });
 
     test('LLM 增强提取函数应该在设置后被调用', async () => {
-      const llmExtractFn = mock(async (prompt: string) => {
+      const llmExtractFn = mock(async (_prompt: string) => {
         return '用户讨论了 React 组件开发，偏好 TypeScript 和函数组件';
       });
 
       const sessionManager = new SessionManager();
       // memoryExtractor 是 readonly 内联初始化，通过类型断言访问并设置 llmExtract
-      (sessionManager as unknown as { memoryExtractor: SessionMemoryExtractor }).memoryExtractor.setLlmExtract(llmExtractFn);
+      (
+        sessionManager as unknown as { memoryExtractor: SessionMemoryExtractor }
+      ).memoryExtractor.setLlmExtract(llmExtractFn);
 
       await sessionManager.resolveSession('user_mem', 'web', 'conv_llm');
       const sessionKey = 'user_mem:web:conv_llm';
@@ -347,7 +357,7 @@ describe('会话记忆管道集成测试', () => {
       expect(summary).not.toBeNull();
       expect(llmExtractFn).toHaveBeenCalledTimes(1);
       // LLM 返回的摘要应被使用
-      expect(summary!.summary).toContain('React');
+      expect(summary?.summary).toContain('React');
     });
   });
 });

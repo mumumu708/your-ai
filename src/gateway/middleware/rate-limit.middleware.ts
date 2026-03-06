@@ -1,8 +1,8 @@
+import { RateLimiter } from '../../kernel/security/rate-limiter';
 import { ERROR_CODES } from '../../shared/errors/error-codes';
 import { YourBotError } from '../../shared/errors/yourbot-error';
 import { Logger } from '../../shared/logging/logger';
 import type { BotMessage, MessageHandler } from '../../shared/messaging';
-import { RateLimiter } from '../../kernel/security/rate-limiter';
 import type { MessageMiddleware, RateLimitMiddlewareConfig } from './middleware.types';
 
 const logger = new Logger('RateLimitMiddleware');
@@ -94,11 +94,8 @@ export function createApiRateLimitMiddleware(config?: RateLimitMiddlewareConfig)
     if (!result.allowed) {
       const retryAfter = Math.ceil(result.resetMs / 1000);
       c.header('Retry-After', String(retryAfter));
-      logger.warn('API 限流拒绝', { apiKey: apiKey.slice(0, 8) + '...', retryAfter });
-      return c.json(
-        { success: false, error: 'Rate limit exceeded', retryAfter },
-        429,
-      );
+      logger.warn('API 限流拒绝', { apiKey: `${apiKey.slice(0, 8)}...`, retryAfter });
+      return c.json({ success: false, error: 'Rate limit exceeded', retryAfter }, 429);
     }
 
     return next();

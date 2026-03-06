@@ -132,7 +132,7 @@ export class ToolCallMonitor {
    */
   extractServerId(fullToolName: string): string {
     const match = fullToolName.match(/^mcp__(.+?)__(.+)$/);
-    return match ? match[1] : 'unknown';
+    return match?.[1] ?? 'unknown';
   }
 
   /**

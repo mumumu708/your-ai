@@ -3,20 +3,20 @@ import { ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
 import { LightLLMClient } from '../kernel/agents/light-llm-client';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
+import { WorkspaceManager } from '../kernel/workspace';
 import { Logger } from '../shared/logging/logger';
 import type { ChannelType } from '../shared/messaging';
 import { isValidBotMessage } from '../shared/utils/validators';
-import { WorkspaceManager } from '../kernel/workspace';
 import { ChannelManager } from './channel-manager';
 import { FeishuChannel } from './channels/feishu.gateway';
 import { TelegramChannel } from './channels/telegram.gateway';
 import { WebChannel } from './channels/web.gateway';
 import { MessageRouter } from './message-router';
 import {
-  createAuthMiddleware,
   createApiAuthMiddleware,
-  createRateLimitMiddleware,
   createApiRateLimitMiddleware,
+  createAuthMiddleware,
+  createRateLimitMiddleware,
   createTransformMiddleware,
   createWebSocketAuthHandler,
 } from './middleware';
@@ -74,8 +74,8 @@ const middlewarePipeline = [
 const channelManager = new ChannelManager(router, middlewarePipeline);
 
 // Wire channelResolver now that channelManager exists
-controller.setChannelResolver(
-  (channelType: string) => channelManager.getChannel(channelType as ChannelType),
+controller.setChannelResolver((channelType: string) =>
+  channelManager.getChannel(channelType as ChannelType),
 );
 
 // Wire response dispatcher: routes responses back through channels
@@ -194,9 +194,9 @@ async function registerChannels(): Promise<void> {
     } catch (error) {
       logger.error('Web 通道注册失败', {
         error: error instanceof Error ? error.message : String(error),
-    });
+      });
+    }
   }
-}
 }
 
 // --- Graceful shutdown ---

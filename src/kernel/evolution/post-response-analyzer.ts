@@ -1,8 +1,8 @@
+import { detectErrorSignal } from '../../lessons/error-detector';
+import { type LlmCallFn, extractLesson } from '../../lessons/lesson-extractor';
+import type { LessonsLearnedUpdater } from '../../lessons/lessons-updater';
 import type { ConversationMessage } from '../../shared/agents/agent-instance.types';
 import { Logger } from '../../shared/logging/logger';
-import { detectErrorSignal } from '../../lessons/error-detector';
-import { extractLesson, type LlmCallFn } from '../../lessons/lesson-extractor';
-import type { LessonsLearnedUpdater } from '../../lessons/lessons-updater';
 import type { UserConfigLoader } from '../memory/user-config-loader';
 
 const ANALYSIS_TIMEOUT_MS = 3000;

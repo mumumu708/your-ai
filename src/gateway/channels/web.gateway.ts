@@ -22,7 +22,7 @@ export class WebChannel extends BaseChannel {
   readonly type: ChannelType = 'web';
   readonly name = 'web';
 
-  private server: Server | null = null;
+  private server: Server<WebSocketData> | null = null;
   private readonly config: WebChannelConfig;
   private readonly connections: Map<string, ServerWebSocket<WebSocketData>> = new Map();
 
@@ -130,7 +130,10 @@ export class WebChannel extends BaseChannel {
       userId: (data.userId as string) ?? 'unknown',
       userName: (data.userName as string) ?? 'Web User',
       conversationId: (data.conversationId as string) ?? generateId('wconv'),
-      content: contentType === 'file' ? `[文件: ${(data.fileName as string) ?? 'unknown'}]` : ((data.content as string) ?? ''),
+      content:
+        contentType === 'file'
+          ? `[文件: ${(data.fileName as string) ?? 'unknown'}]`
+          : ((data.content as string) ?? ''),
       contentType,
       timestamp: (data.timestamp as number) ?? Date.now(),
       metadata,

@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { Logger } from '../../shared/logging/logger';
 import type { AIEOSConfig } from './config-loader';
 import type { ConfigLoader } from './config-loader';
@@ -24,7 +25,7 @@ export class UserConfigLoader {
     private readonly globalConfigLoader: ConfigLoader,
     workspacePath: string,
   ) {
-    this.localDir = `user-space/${userId}/memory`;
+    this.localDir = join(workspacePath, 'memory');
   }
 
   /** Load all 4 AIEOS config files with per-user priority */
@@ -38,9 +39,7 @@ export class UserConfigLoader {
     // noisy server-side FileNotFoundError for missing files
     let remoteFiles: Set<string>;
     try {
-      const entries = await this.ov.ls(
-        `${VIKING_USER_CONFIG_URI}/${this.userId}/config`,
-      );
+      const entries = await this.ov.ls(`${VIKING_USER_CONFIG_URI}/${this.userId}/config`);
       remoteFiles = new Set(entries.map((e) => e.name));
     } catch {
       remoteFiles = new Set();
@@ -75,10 +74,7 @@ export class UserConfigLoader {
 
     // Sync to VikingFS
     try {
-      await this.ov.write(
-        `${VIKING_USER_CONFIG_URI}/${this.userId}/config/${filename}`,
-        content,
-      );
+      await this.ov.write(`${VIKING_USER_CONFIG_URI}/${this.userId}/config/${filename}`, content);
     } catch (err) {
       this.logger.warn('VikingFS 同步用户配置失败', {
         userId: this.userId,
@@ -102,9 +98,7 @@ export class UserConfigLoader {
 
     // Check VikingFS via ls to avoid noisy server errors on missing files
     try {
-      const entries = await this.ov.ls(
-        `${VIKING_USER_CONFIG_URI}/${this.userId}/config`,
-      );
+      const entries = await this.ov.ls(`${VIKING_USER_CONFIG_URI}/${this.userId}/config`);
       return entries.some((e) => e.name === filename);
     } catch {
       return false;
@@ -116,11 +110,12 @@ export class UserConfigLoader {
     this.cache = null;
   }
 
+  getLocalDir(): string {
+    return this.localDir;
+  }
+
   /** Load a single file with three-level fallback */
-  private async loadFile(
-    filename: string,
-    remoteFiles?: Set<string>,
-  ): Promise<string> {
+  private async loadFile(filename: string, remoteFiles?: Set<string>): Promise<string> {
     const localPath = `${this.localDir}/${filename}`;
 
     // Level 1: user-space local file

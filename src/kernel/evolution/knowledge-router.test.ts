@@ -16,7 +16,7 @@ function createMockConfigLoader(overrides?: Partial<Record<string, string>>): Co
     invalidateCache: () => {},
     getLessonsLearned: async () => '',
     updateUserProfile: async () => {},
-  } as any;
+  } as unknown as ConfigLoader;
 }
 
 function createMockOVClient(): OpenVikingClient {
@@ -25,7 +25,7 @@ function createMockOVClient(): OpenVikingClient {
     search: async () => [],
     read: async () => '',
     abstract: async () => '',
-  } as any;
+  } as unknown as OpenVikingClient;
 }
 
 describe('KnowledgeRouter', () => {
@@ -72,12 +72,18 @@ describe('KnowledgeRouter', () => {
   test('complex 任务应该检索记忆', async () => {
     const ovClient = {
       find: async () => [
-        { uri: 'viking://test', content: 'User prefers TypeScript for all projects', abstract: '', score: 0.9, match_reason: '' },
+        {
+          uri: 'viking://test',
+          content: 'User prefers TypeScript for all projects',
+          abstract: '',
+          score: 0.9,
+          match_reason: '',
+        },
       ],
       search: async () => [],
-      read: async (uri: string) => 'User prefers TypeScript for all projects',
+      read: async (_uri: string) => 'User prefers TypeScript for all projects',
       abstract: async () => 'TypeScript preference',
-    } as any;
+    } as unknown as OpenVikingClient;
 
     const conflictResolver = new ConflictResolver();
     const allocator = new TokenBudgetAllocator();
@@ -88,7 +94,12 @@ describe('KnowledgeRouter', () => {
       tokenBudgetAllocator: allocator,
     });
 
-    const result = await routerWithMemory.buildContext('user1', 'Help me with TypeScript', [], 'complex');
+    const result = await routerWithMemory.buildContext(
+      'user1',
+      'Help me with TypeScript',
+      [],
+      'complex',
+    );
 
     expect(result.systemPrompt).toContain('Relevant Memories');
     logSpy.mockRestore();
@@ -98,12 +109,12 @@ describe('KnowledgeRouter', () => {
     // Spy on ov.find to capture the query
     let capturedQuery = '';
     const ovClient = {
-      find: async (opts: any) => {
+      find: async (opts: { query: string }) => {
         capturedQuery = opts.query;
         return [];
       },
       search: async () => [],
-    } as any;
+    } as unknown as OpenVikingClient;
 
     const conflictResolver = new ConflictResolver();
     const allocator = new TokenBudgetAllocator();

@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { RateLimiter } from '../../kernel/security/rate-limiter';
 import { YourBotError } from '../../shared/errors/yourbot-error';
 import type { BotMessage, MessageHandler } from '../../shared/messaging';
-import { RateLimiter } from '../../kernel/security/rate-limiter';
 import {
-  createRateLimitMiddleware,
   createApiRateLimitMiddleware,
+  createRateLimitMiddleware,
   getRateLimiter,
   setRateLimiter,
 } from './rate-limit.middleware';
@@ -100,7 +100,7 @@ describe('createRateLimitMiddleware', () => {
     await handler(createTestMessage());
 
     expect(receivedMsg).not.toBeNull();
-    const rl = receivedMsg!.metadata.rateLimit as { remaining: number; resetMs: number };
+    const rl = receivedMsg?.metadata.rateLimit as { remaining: number; resetMs: number };
     expect(typeof rl.remaining).toBe('number');
     expect(rl.remaining).toBeLessThanOrEqual(3);
   });
@@ -128,7 +128,7 @@ describe('createApiRateLimitMiddleware', () => {
       header: (name: string, value: string) => {
         responseHeaders[name] = value;
       },
-      json: (data: unknown, status?: number) => ({ data, status } as unknown as Response),
+      json: (data: unknown, status?: number) => ({ data, status }) as unknown as Response,
       responseHeaders,
     };
   }

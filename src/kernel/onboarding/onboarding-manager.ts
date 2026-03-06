@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { Logger } from '../../shared/logging/logger';
 import type { LightLLMClient } from '../agents/light-llm-client';
 import type { UserConfigLoader } from '../memory/user-config-loader';
@@ -14,6 +15,7 @@ export interface OnboardingState {
 }
 
 const BOOTSTRAP_FILENAME = 'BOOTSTRAP.md';
+const USER_SPACE_BASE = process.env.USER_SPACE_ROOT ?? 'user-space';
 
 /**
  * Multi-turn onboarding dialog state machine.
@@ -36,13 +38,15 @@ export class OnboardingManager {
   }
 
   /** Try to restore onboarding state from BOOTSTRAP.md file */
-  async tryRestoreState(userId: string, _userConfigLoader?: UserConfigLoader): Promise<boolean> {
+  async tryRestoreState(userId: string, userConfigLoader?: UserConfigLoader): Promise<boolean> {
     if (this.states.has(userId)) return true;
 
     try {
       // Only check local file — avoid hitting VikingFS for a transient bootstrap file,
       // which causes FileNotFoundError on the openviking server when the file doesn't exist.
-      const localPath = `user-space/${userId}/memory/${BOOTSTRAP_FILENAME}`;
+      const localPath = userConfigLoader
+        ? join(userConfigLoader.getLocalDir(), BOOTSTRAP_FILENAME)
+        : `${USER_SPACE_BASE}/${userId}/memory/${BOOTSTRAP_FILENAME}`;
       const file = Bun.file(localPath);
       if (await file.exists()) {
         const content = await file.text();
@@ -186,7 +190,9 @@ IDENTITY.md should contain (use dense, telegraphic style with **bold** paragraph
           soulContent = await this.generateWithTranslation(this.generateSoulTemplate(state));
         }
         if (!identityContent) {
-          identityContent = await this.generateWithTranslation(this.generateIdentityTemplate(state));
+          identityContent = await this.generateWithTranslation(
+            this.generateIdentityTemplate(state),
+          );
         }
       } catch (err) {
         this.logger.warn('LLM 生成配置失败，使用模板', {
@@ -208,7 +214,7 @@ IDENTITY.md should contain (use dense, telegraphic style with **bold** paragraph
 
     // Clean up bootstrap state
     this.states.delete(userId);
-    await this.removeBootstrapFile(userId);
+    await this.removeBootstrapFile(userId, userConfigLoader);
 
     return `设置完成！${state.agentName} 已就绪，现在你可以开始对话了。\n\n你可以随时发送 /setup 重新配置。`;
   }
@@ -261,7 +267,7 @@ Never share user data across different user contexts.
   /** Strip markdown code fences from LLM output before JSON parsing */
   private extractJSON(content: string): string {
     const match = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-    return match ? match[1].trim() : content.trim();
+    return match?.[1]?.trim() ?? content.trim();
   }
 
   /** Translate template content to English via LLM, fallback to original if unavailable */
@@ -306,8 +312,13 @@ Never share user data across different user contexts.
   }
 
   /** Remove BOOTSTRAP.md after onboarding completes */
-  private async removeBootstrapFile(userId: string): Promise<void> {
-    const localPath = `user-space/${userId}/memory/${BOOTSTRAP_FILENAME}`;
+  private async removeBootstrapFile(
+    userId: string,
+    userConfigLoader?: UserConfigLoader,
+  ): Promise<void> {
+    const localPath = userConfigLoader
+      ? join(userConfigLoader.getLocalDir(), BOOTSTRAP_FILENAME)
+      : `${USER_SPACE_BASE}/${userId}/memory/${BOOTSTRAP_FILENAME}`;
     try {
       const { unlinkSync } = require('node:fs');
       unlinkSync(localPath);

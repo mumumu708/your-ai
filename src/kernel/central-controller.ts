@@ -1,39 +1,37 @@
+import { LessonsLearnedUpdater } from '../lessons/lessons-updater';
 import { ERROR_CODES } from '../shared/errors/error-codes';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import { Logger } from '../shared/logging/logger';
 import type { BotMessage } from '../shared/messaging/bot-message.types';
+import type { IChannel } from '../shared/messaging/channel-adapter.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import type { TaskResult } from '../shared/tasking/task-result.types';
 import type { Task, TaskType } from '../shared/tasking/task.types';
+import { isAdminUser } from '../shared/utils/admin';
 import { generateTaskId, generateTraceId } from '../shared/utils/crypto';
 import { AgentRuntime } from './agents/agent-runtime';
 import type { ClaudeAgentBridge } from './agents/claude-agent-bridge';
 import type { LightLLMClient } from './agents/light-llm-client';
 import { TaskClassifier } from './classifier/task-classifier';
+import { ConflictResolver } from './evolution/conflict-resolver';
+import { EvolutionScheduler } from './evolution/evolution-scheduler';
+import { KnowledgeRouter } from './evolution/knowledge-router';
+import { PostResponseAnalyzer } from './evolution/post-response-analyzer';
+import { TokenBudgetAllocator } from './evolution/token-budget-allocator';
+import { FileUploadHandler } from './files/file-upload-handler';
+import { ConfigLoader } from './memory/config-loader';
+import { ContextManager } from './memory/context-manager';
+import { EntityManager } from './memory/graph/entity-manager';
+import { OpenVikingClient } from './memory/openviking/openviking-client';
+import { UserConfigLoader } from './memory/user-config-loader';
+import { OnboardingManager } from './onboarding';
 import { nlToCron } from './scheduling/nl-to-cron';
 import { Scheduler } from './scheduling/scheduler';
 import { SessionManager } from './sessioning/session-manager';
 import { StreamHandler } from './streaming/stream-handler';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
 import { TaskQueue } from './tasking/task-queue';
-import { OpenVikingClient } from './memory/openviking/openviking-client';
-import { ConfigLoader } from './memory/config-loader';
-import { retrieveMemories } from './memory/memory-retriever-v2';
-import { ContextManager } from './memory/context-manager';
-import { KnowledgeRouter } from './evolution/knowledge-router';
-import { ConflictResolver } from './evolution/conflict-resolver';
-import { TokenBudgetAllocator } from './evolution/token-budget-allocator';
-import { EvolutionScheduler } from './evolution/evolution-scheduler';
-import { PostResponseAnalyzer } from './evolution/post-response-analyzer';
-import { LessonsLearnedUpdater } from '../lessons/lessons-updater';
-import { detectErrorSignal } from '../lessons/error-detector';
-import { extractLesson } from '../lessons/lesson-extractor';
-import { EntityManager } from './memory/graph/entity-manager';
 import { WorkspaceManager } from './workspace';
-import { UserConfigLoader } from './memory/user-config-loader';
-import { OnboardingManager } from './onboarding';
-import { FileUploadHandler } from './files/file-upload-handler';
-import type { IChannel } from '../shared/messaging/channel-adapter.types';
 
 const SYSTEM_COMMAND_PREFIX = '/';
 
@@ -49,6 +47,29 @@ const SCHEDULE_PATTERNS = [
 ];
 
 const AUTOMATION_PATTERNS = [/自动化/, /批量/, /automate/i, /batch/i, /workflow/i];
+
+const HARNESS_PATTERNS = [
+  // Explicit triggers
+  /^\/harness\b/i,
+  /^harness:/i,
+  // Code modification (CN)
+  /修[复个]?\s*(bug|缺陷|问题)/i,
+  /加[个一]?\s*(功能|特性)/i,
+  /重构/,
+  // Project infrastructure (CN)
+  /跑[一下]*\s*测试/,
+  /运行\s*测试/,
+  /查[看下]*\s*架构/,
+  // Documentation maintenance (CN)
+  /更新[一下]*\s*文档/,
+  // Deployment (CN)
+  /部署/,
+  /重启\s*服务/,
+  // EN patterns
+  /\b(fix|debug|refactor)\s+(the\s+)?(bug|code|issue)/i,
+  /\brun\s+tests?\b/i,
+  /\badd\s+(a\s+)?feature\b/i,
+];
 
 export interface CentralControllerDeps {
   sessionManager?: SessionManager;
@@ -121,8 +142,7 @@ export class CentralController {
 
     // OpenViking client — connects to OpenViking Server
     const ovUrl = process.env.OPENVIKING_URL ?? 'http://localhost:1933';
-    this.ovClient =
-      deps?.ovClient ?? new OpenVikingClient({ baseUrl: ovUrl });
+    this.ovClient = deps?.ovClient ?? new OpenVikingClient({ baseUrl: ovUrl });
 
     // ConfigLoader — loads AIEOS files (local-first, VikingFS fallback)
     this.configLoader = deps?.configLoader ?? new ConfigLoader(this.ovClient);
@@ -131,8 +151,7 @@ export class CentralController {
     this.contextManager = deps?.contextManager ?? new ContextManager(this.ovClient);
 
     // Evolution modules
-    this.evolutionScheduler =
-      deps?.evolutionScheduler ?? new EvolutionScheduler(this.ovClient);
+    this.evolutionScheduler = deps?.evolutionScheduler ?? new EvolutionScheduler(this.ovClient);
     this.lessonsUpdater =
       deps?.lessonsUpdater ?? new LessonsLearnedUpdater(this.ovClient, this.configLoader);
     this.entityManager = deps?.entityManager ?? new EntityManager(this.ovClient);
@@ -354,10 +373,19 @@ export class CentralController {
         return this.handleAutomationTask(task);
       case 'system':
         return this.handleSystemTask(task);
+      case 'harness':
+        return this.handleHarnessTask(task);
     }
   }
 
   classifyIntent(message: BotMessage): TaskType {
+    // Harness patterns checked first (/harness must not be swallowed by system command prefix)
+    for (const pattern of HARNESS_PATTERNS) {
+      if (pattern.test(message.content)) {
+        return 'harness';
+      }
+    }
+
     if (message.content.startsWith(SYSTEM_COMMAND_PREFIX)) {
       return 'system';
     }
@@ -380,6 +408,7 @@ export class CentralController {
   calculatePriority(taskType: TaskType): number {
     const BASE_PRIORITIES: Record<TaskType, number> = {
       system: 1,
+      harness: 2,
       chat: 5,
       scheduled: 10,
       automation: 15,
@@ -388,6 +417,23 @@ export class CentralController {
   }
 
   private async handleChatTask(task: Task): Promise<TaskResult> {
+    return this.executeChatPipeline(task);
+  }
+
+  private async handleHarnessTask(task: Task): Promise<TaskResult> {
+    if (!isAdminUser(task.message.userId)) {
+      // Non-admin: silently downgrade to chat
+      task.type = 'chat';
+      return this.executeChatPipeline(task);
+    }
+    // Admin: use project root as cwd
+    return this.executeChatPipeline(task, { cwdOverride: process.cwd() });
+  }
+
+  private async executeChatPipeline(
+    task: Task,
+    options?: { cwdOverride?: string },
+  ): Promise<TaskResult> {
     this.logger.info('处理聊天任务', { traceId: task.traceId, taskId: task.id });
 
     const sessionKey = `${task.message.userId}:${task.message.channel}:${task.message.conversationId}`;
@@ -429,10 +475,7 @@ export class CentralController {
       (sum, m) => sum + Math.ceil(m.content.length / 4),
       0,
     );
-    const anchor = await this.contextManager.checkAndFlush(
-      task.session.id,
-      estimatedTokens,
-    );
+    const anchor = await this.contextManager.checkAndFlush(task.session.id, estimatedTokens);
 
     // Build knowledge-routed system prompt
     const resolvedContext = await this.knowledgeRouter.buildContext(
@@ -448,6 +491,8 @@ export class CentralController {
       },
     );
 
+    const workspacePath = options?.cwdOverride ?? task.session.workspacePath;
+
     // Execute via AgentRuntime
     const result = await this.agentRuntime.execute({
       agentId: 'default',
@@ -455,7 +500,7 @@ export class CentralController {
         sessionId: task.session.id,
         messages: contextMessages,
         systemPrompt: resolvedContext.systemPrompt,
-        workspacePath: task.session.workspacePath,
+        workspacePath,
         claudeSessionId: task.session.claudeSessionId,
       },
       signal: task.signal,
@@ -483,7 +528,7 @@ export class CentralController {
       task.session.userConfigLoader,
     );
     if (feedbackText) {
-      responseContent += '\n\n---\n' + feedbackText;
+      responseContent += `\n\n---\n${feedbackText}`;
     }
 
     // Sync assistant message to OpenViking session

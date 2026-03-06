@@ -1,7 +1,9 @@
 import { Logger } from '../shared/logging/logger';
-import type { ConfigLoader } from '../kernel/memory/config-loader';
-import type { OpenVikingClient } from '../kernel/memory/openviking/openviking-client';
-import type { UserConfigLoader } from '../kernel/memory/user-config-loader';
+import type {
+  IConfigLoader,
+  IOpenVikingClient,
+  IUserConfigLoader,
+} from '../shared/memory/memory.interfaces';
 import type { ExtractedLesson } from './lesson-extractor';
 
 const MAX_PER_CATEGORY = 20;
@@ -25,12 +27,12 @@ export class LessonsLearnedUpdater {
   private readonly logger = new Logger('LessonsLearnedUpdater');
 
   constructor(
-    private readonly ov: OpenVikingClient,
-    private readonly configLoader: ConfigLoader,
+    private readonly ov: IOpenVikingClient,
+    private readonly configLoader: IConfigLoader,
   ) {}
 
   /** Add a new lesson to SOUL.md */
-  async addLesson(lesson: ExtractedLesson, userConfigLoader?: UserConfigLoader): Promise<boolean> {
+  async addLesson(lesson: ExtractedLesson, userConfigLoader?: IUserConfigLoader): Promise<boolean> {
     // Prefer user workspace; fall back to global config
     const config = userConfigLoader
       ? await userConfigLoader.loadAll()
@@ -46,7 +48,7 @@ export class LessonsLearnedUpdater {
     }
 
     // Add new entry
-    const date = new Date().toISOString().split('T')[0];
+    const date = new Date().toISOString().split('T')[0] ?? '';
     entries.push({ date, text: lesson.lesson, category: lesson.category });
 
     // Enforce capacity limits
@@ -103,7 +105,7 @@ export class LessonsLearnedUpdater {
 
       // Lesson entry: - [2025-01-15] lesson text
       const match = /^-\s*\[(\d{4}-\d{2}-\d{2})\]\s*(.+)$/.exec(trimmed);
-      if (match) {
+      if (match?.[1] && match[2]) {
         entries.push({
           date: match[1],
           text: match[2],

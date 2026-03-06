@@ -8,10 +8,7 @@ const logger = new Logger('EvolutionReflect');
  * Reflect operation: loads same-category memory abstracts,
  * uses Claude to extract high-level insights, writes to semantic/.
  */
-export async function reflect(
-  ov: OpenVikingClient,
-  category: string,
-): Promise<void> {
+export async function reflect(ov: OpenVikingClient, category: string): Promise<void> {
   const memories = await ov.find({
     query: `所有 ${category} 类记忆`,
     target_uri: `viking://user/memories/${category}`,
@@ -20,9 +17,7 @@ export async function reflect(
 
   if (memories.length < 5) return;
 
-  const abstracts = await Promise.all(
-    memories.map((m) => ov.abstract(m.uri)),
-  );
+  const abstracts = await Promise.all(memories.map((m) => ov.abstract(m.uri)));
 
   const claude = new Anthropic();
   const message = await claude.messages.create({
@@ -39,8 +34,9 @@ ${abstracts.map((a, i) => `${i + 1}. ${a}`).join('\n')}`,
     ],
   });
 
-  const text = message.content[0].type === 'text' ? message.content[0].text : '';
-  const insights = text.split('\n').filter((line) => line.startsWith('- '));
+  const firstBlock = message.content[0];
+  const text = firstBlock && firstBlock.type === 'text' ? firstBlock.text : '';
+  const insights = text.split('\n').filter((line: string) => line.startsWith('- '));
 
   for (const insight of insights) {
     const content = insight.replace(/^- 洞察:\s*/, '');

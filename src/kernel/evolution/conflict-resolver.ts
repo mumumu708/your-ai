@@ -1,8 +1,4 @@
-import type {
-  ConflictResolution,
-  KnowledgeFragment,
-  RuleClassification,
-} from './evolution-types';
+import type { ConflictResolution, KnowledgeFragment, RuleClassification } from './evolution-types';
 
 interface ConflictPair {
   a: RegExp;
@@ -18,7 +14,8 @@ const CONFLICT_PAIRS: ConflictPair[] = [
 
 const SAFETY_KEYWORDS = /安全|危险|禁止|不允许|不可以|safety|dangerous|forbidden|never|prohibited/i;
 const COMPLIANCE_KEYWORDS = /合规|法律|法规|政策|compliance|legal|regulation|policy/i;
-const STYLE_KEYWORDS = /风格|语气|格式|简洁|详细|正式|随意|style|tone|format|concise|verbose|formal|casual/i;
+const STYLE_KEYWORDS =
+  /风格|语气|格式|简洁|详细|正式|随意|style|tone|format|concise|verbose|formal|casual/i;
 const PREFERENCE_KEYWORDS = /偏好|喜欢|习惯|prefer|like|always|usually|want/i;
 
 // Default source priorities
@@ -65,17 +62,30 @@ export class ConflictResolver {
       (aClass === 'safety' || aClass === 'compliance') &&
       (a.source === 'soul' || a.source === 'identity')
     ) {
-      return { winner: a, loser: b, reason: `Safety/compliance rule from ${a.source} takes precedence` };
+      return {
+        winner: a,
+        loser: b,
+        reason: `Safety/compliance rule from ${a.source} takes precedence`,
+      };
     }
     if (
       (bClass === 'safety' || bClass === 'compliance') &&
       (b.source === 'soul' || b.source === 'identity')
     ) {
-      return { winner: b, loser: a, reason: `Safety/compliance rule from ${b.source} takes precedence` };
+      return {
+        winner: b,
+        loser: a,
+        reason: `Safety/compliance rule from ${b.source} takes precedence`,
+      };
     }
 
     // Style/preference rules: USER wins over SOUL
-    if (aClass === 'style' || aClass === 'preference' || bClass === 'style' || bClass === 'preference') {
+    if (
+      aClass === 'style' ||
+      aClass === 'preference' ||
+      bClass === 'style' ||
+      bClass === 'preference'
+    ) {
       if (a.source === 'user' && b.source === 'soul') {
         return { winner: a, loser: b, reason: 'User style/preference overrides soul' };
       }
@@ -112,8 +122,8 @@ export class ConflictResolver {
     // Check all pairs for conflicts
     for (let i = 0; i < fragments.length; i++) {
       for (let j = i + 1; j < fragments.length; j++) {
-        const a = fragments[i];
-        const b = fragments[j];
+        const a = fragments[i]!;
+        const b = fragments[j]!;
 
         if (excluded.has(a) || excluded.has(b)) continue;
 

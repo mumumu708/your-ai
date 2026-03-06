@@ -1,11 +1,11 @@
 import type {
+  FileEntry,
+  FindOptions,
+  FindResponse,
+  FindResult,
   OVConfig,
   OVResponse,
-  FindOptions,
-  FindResult,
-  FindResponse,
   OVSession,
-  FileEntry,
   Relation,
 } from './types';
 
@@ -87,7 +87,7 @@ export class OpenVikingClient {
           throw err;
         }
         if (attempt < retries) {
-          await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 200));
+          await new Promise((r) => setTimeout(r, 2 ** attempt * 200));
         }
       }
     }
@@ -97,10 +97,7 @@ export class OpenVikingClient {
 
   // ─── Core request for non-OVResponse endpoints ────────────
 
-  private async requestRaw<T>(
-    method: string,
-    path: string,
-  ): Promise<T> {
+  private async requestRaw<T>(method: string, path: string): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const res = await fetch(url, { method, headers: this.headers });
     return (await res.json()) as T;
@@ -206,11 +203,7 @@ export class OpenVikingClient {
       limit: options.limit ?? 10,
       score_threshold: options.score_threshold,
     });
-    return [
-      ...(resp.memories ?? []),
-      ...(resp.resources ?? []),
-      ...(resp.skills ?? []),
-    ];
+    return [...(resp.memories ?? []), ...(resp.resources ?? []), ...(resp.skills ?? [])];
   }
 
   async search(options: FindOptions): Promise<FindResult[]> {
@@ -219,17 +212,10 @@ export class OpenVikingClient {
       target_uri: options.target_uri ?? 'viking://',
       limit: options.limit ?? 10,
     });
-    return [
-      ...(resp.memories ?? []),
-      ...(resp.resources ?? []),
-      ...(resp.skills ?? []),
-    ];
+    return [...(resp.memories ?? []), ...(resp.resources ?? []), ...(resp.skills ?? [])];
   }
 
-  async grep(
-    pattern: string,
-    scope?: string,
-  ): Promise<{ uri: string; matches: string[] }[]> {
+  async grep(pattern: string, scope?: string): Promise<{ uri: string; matches: string[] }[]> {
     return this.request('POST', '/api/v1/search/grep', {
       pattern,
       target_uri: scope ?? 'viking://',

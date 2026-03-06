@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import type { LessonsLearnedUpdater } from '../lessons/lessons-updater';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import type { BotMessage } from '../shared/messaging/bot-message.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import { AgentRuntime } from './agents/agent-runtime';
 import { CentralController } from './central-controller';
 import type { CentralControllerDeps } from './central-controller';
+import type { EvolutionScheduler } from './evolution/evolution-scheduler';
+import type { KnowledgeRouter } from './evolution/knowledge-router';
+import type { PostResponseAnalyzer } from './evolution/post-response-analyzer';
+import type { ConfigLoader } from './memory/config-loader';
+import type { ContextManager } from './memory/context-manager';
+import type { EntityManager } from './memory/graph/entity-manager';
+import type { OpenVikingClient } from './memory/openviking/openviking-client';
 import { Scheduler } from './scheduling/scheduler';
 import { SessionManager } from './sessioning/session-manager';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
@@ -36,17 +44,17 @@ function createMockOVDeps(): Partial<CentralControllerDeps> {
         conflictsResolved: [],
         retrievedMemories: [],
       }),
-    } as any,
+    } as unknown as KnowledgeRouter,
     postResponseAnalyzer: {
       analyzeExchange: async () => null,
-    } as any,
+    } as unknown as PostResponseAnalyzer,
     ovClient: {
       addMessage: async () => {},
       commit: async () => ({ memories_extracted: 0 }),
-    } as any,
+    } as unknown as OpenVikingClient,
     contextManager: {
       checkAndFlush: async () => null,
-    } as any,
+    } as unknown as ContextManager,
     configLoader: {
       loadAll: async () => ({
         soul: 'Be helpful',
@@ -55,14 +63,14 @@ function createMockOVDeps(): Partial<CentralControllerDeps> {
         agents: '',
       }),
       invalidateCache: () => {},
-    } as any,
+    } as unknown as ConfigLoader,
     lessonsUpdater: {
       addLesson: async () => true,
-    } as any,
+    } as unknown as LessonsLearnedUpdater,
     evolutionScheduler: {
       schedulePostCommit: () => {},
-    } as any,
-    entityManager: {} as any,
+    } as unknown as EvolutionScheduler,
+    entityManager: {} as unknown as EntityManager,
   };
 }
 
@@ -524,7 +532,7 @@ describe('CentralController', () => {
       const callArgs = executeSpy.mock.calls[0][0];
       expect(callArgs.context.systemPrompt).toBeDefined();
       expect(callArgs.context.systemPrompt).not.toBeUndefined();
-      expect(callArgs.context.systemPrompt!.length).toBeGreaterThan(0);
+      expect(callArgs.context.systemPrompt?.length).toBeGreaterThan(0);
     });
 
     test('session 关闭后应该触发 OV commit', async () => {
@@ -545,7 +553,7 @@ describe('CentralController', () => {
           commitCalledWith = sessionId;
           return { memories_extracted: 1 };
         },
-      } as any;
+      } as unknown as OpenVikingClient;
 
       const controller = CentralController.getInstance({
         sessionManager,
@@ -574,16 +582,13 @@ describe('CentralController', () => {
 
       // Mock analyzer to return confirmation when correction keywords are present
       const mockAnalyzer = {
-        analyzeExchange: async (
-          _userId: string,
-          userMsg: string,
-        ) => {
+        analyzeExchange: async (_userId: string, userMsg: string) => {
           if (userMsg.includes('不对') || userMsg.includes('错了')) {
             return '我记住了：用户要求详细解释';
           }
           return null;
         },
-      } as any;
+      } as unknown as PostResponseAnalyzer;
 
       spyOn(agentRuntime, 'execute').mockResolvedValue({
         content: '这是简短回答',
@@ -627,6 +632,179 @@ describe('CentralController', () => {
 
       const content = (result.data as Record<string, unknown>).content as string;
       expect(content).toContain('记住了');
+    });
+  });
+
+  describe('classifyIntent — harness patterns', () => {
+    test('应该将 /harness 命令分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '/harness 修改代码' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将 harness: 前缀分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: 'harness: fix the bug' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将"修复bug"分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '修复bug' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将"加个功能"分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '加个功能' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将"重构"分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '重构这段代码' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将 "fix the bug" 分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: 'fix the bug' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将 "run tests" 分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: 'run tests' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('应该将 "add a feature" 分类为 harness 任务', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: 'add a feature' });
+      expect(controller.classifyIntent(message)).toBe('harness');
+    });
+
+    test('不应该将"什么是bug"分类为 harness', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '什么是bug' });
+      expect(controller.classifyIntent(message)).toBe('chat');
+    });
+
+    test('不应该将普通对话分类为 harness', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '你好' });
+      expect(controller.classifyIntent(message)).toBe('chat');
+    });
+
+    test('不应该将 /setup 分类为 harness', () => {
+      const controller = CentralController.getInstance();
+      const message = createMockMessage({ content: '/setup' });
+      expect(controller.classifyIntent(message)).toBe('system');
+    });
+  });
+
+  describe('calculatePriority — harness', () => {
+    test('应该为 harness 任务分配优先级 2', () => {
+      const controller = CentralController.getInstance();
+      expect(controller.calculatePriority('harness')).toBe(2);
+    });
+  });
+
+  describe('handleHarnessTask', () => {
+    test('非管理员发送 harness 消息应降级为 chat', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'feishu:admin_only';
+
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute');
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const session = {
+        id: 'sess_001',
+        userId: 'user_regular',
+        channel: 'web',
+        conversationId: 'conv_001',
+        status: 'active' as const,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        agentConfig: { maxContextTokens: 100000 },
+        messages: [],
+        workspacePath: '/tmp/user-space/user_regular',
+      };
+
+      const task = {
+        id: 'task_001',
+        traceId: 'trace_001',
+        type: 'harness' as const,
+        message: createMockMessage({ userId: 'user_regular', content: '修复bug' }),
+        session,
+        priority: 2,
+        createdAt: Date.now(),
+        metadata: { userId: 'user_regular', channel: 'web', conversationId: 'conv_001' },
+      };
+
+      await controller.orchestrate(task);
+      expect(task.type).toBe('chat');
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        process.env.ADMIN_USER_IDS = undefined;
+      }
+    });
+
+    test('管理员发送 harness 消息应使用 process.cwd()', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'feishu:admin_user';
+
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute');
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const session = {
+        id: 'sess_002',
+        userId: 'feishu:admin_user',
+        channel: 'feishu',
+        conversationId: 'conv_002',
+        status: 'active' as const,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        agentConfig: { maxContextTokens: 100000 },
+        messages: [],
+        workspacePath: '/tmp/user-space/feishu:admin_user',
+      };
+
+      const task = {
+        id: 'task_002',
+        traceId: 'trace_002',
+        type: 'harness' as const,
+        message: createMockMessage({ userId: 'feishu:admin_user', content: '修复bug' }),
+        session,
+        priority: 2,
+        createdAt: Date.now(),
+        metadata: { userId: 'feishu:admin_user', channel: 'feishu', conversationId: 'conv_002' },
+      };
+
+      await controller.orchestrate(task);
+      expect(task.type).toBe('harness');
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+
+      const callArgs = executeSpy.mock.calls[0][0] as Record<string, unknown>;
+      const context = callArgs.context as Record<string, unknown>;
+      expect(context.workspacePath).toBe(process.cwd());
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        process.env.ADMIN_USER_IDS = undefined;
+      }
     });
   });
 });

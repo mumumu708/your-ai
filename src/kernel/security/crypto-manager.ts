@@ -69,7 +69,13 @@ export class CryptoManager {
   async deriveKey(userId: string): Promise<CryptoKey> {
     const masterBytes = this.getMasterKey();
 
-    const baseKey = await crypto.subtle.importKey('raw', masterBytes, 'HKDF', false, ['deriveKey']);
+    const baseKey = await crypto.subtle.importKey(
+      'raw',
+      new Uint8Array(masterBytes),
+      'HKDF',
+      false,
+      ['deriveKey'],
+    );
 
     const encoder = new TextEncoder();
     const salt = encoder.encode('yourbot-v1');
@@ -121,7 +127,11 @@ export class CryptoManager {
     combined.set(ciphertext);
     combined.set(tag, ciphertext.length);
 
-    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, combined);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: new Uint8Array(iv) },
+      key,
+      new Uint8Array(combined),
+    );
 
     return new TextDecoder().decode(decrypted);
   }

@@ -1,9 +1,7 @@
 import type { ConversationMessage } from '../agents/agent-instance.types';
 import type { BotMessage } from '../messaging/bot-message.types';
-import type { WorkingMemory } from '../../kernel/memory/working-memory';
-import type { UserConfigLoader } from '../../kernel/memory/user-config-loader';
 
-export type TaskType = 'chat' | 'scheduled' | 'automation' | 'system';
+export type TaskType = 'chat' | 'scheduled' | 'automation' | 'system' | 'harness';
 
 export interface TaskMetadata {
   userId: string;
@@ -26,9 +24,12 @@ export interface Session {
   messages: ConversationMessage[];
   workspacePath?: string;
   hasRecentToolUse?: boolean;
-  workingMemory?: WorkingMemory;
+  // Opaque kernel types — kernel code casts to concrete types when needed
+  // biome-ignore lint/suspicious/noExplicitAny: opaque kernel type stored on session
+  workingMemory?: any;
   claudeSessionId?: string;
-  userConfigLoader?: UserConfigLoader;
+  // biome-ignore lint/suspicious/noExplicitAny: opaque kernel type stored on session
+  userConfigLoader?: any;
 }
 
 export interface Task {

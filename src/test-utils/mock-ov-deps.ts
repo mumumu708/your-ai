@@ -3,6 +3,14 @@
  * Prevents CentralController from making real HTTP calls to OpenViking.
  */
 import type { CentralControllerDeps } from '../kernel/central-controller';
+import type { EvolutionScheduler } from '../kernel/evolution/evolution-scheduler';
+import type { KnowledgeRouter } from '../kernel/evolution/knowledge-router';
+import type { PostResponseAnalyzer } from '../kernel/evolution/post-response-analyzer';
+import type { ConfigLoader } from '../kernel/memory/config-loader';
+import type { ContextManager } from '../kernel/memory/context-manager';
+import type { EntityManager } from '../kernel/memory/graph/entity-manager';
+import type { OpenVikingClient } from '../kernel/memory/openviking/openviking-client';
+import type { LessonsLearnedUpdater } from '../lessons/lessons-updater';
 
 export function createMockOVDeps(): Partial<CentralControllerDeps> {
   return {
@@ -14,17 +22,17 @@ export function createMockOVDeps(): Partial<CentralControllerDeps> {
         conflictsResolved: [],
         retrievedMemories: [],
       }),
-    } as any,
+    } as unknown as KnowledgeRouter,
     postResponseAnalyzer: {
       analyzeExchange: async () => null,
-    } as any,
+    } as unknown as PostResponseAnalyzer,
     ovClient: {
       addMessage: async () => {},
       commit: async () => ({ memories_extracted: 0 }),
-    } as any,
+    } as unknown as OpenVikingClient,
     contextManager: {
       checkAndFlush: async () => null,
-    } as any,
+    } as unknown as ContextManager,
     configLoader: {
       loadAll: async () => ({
         soul: 'Be helpful',
@@ -33,13 +41,13 @@ export function createMockOVDeps(): Partial<CentralControllerDeps> {
         agents: '',
       }),
       invalidateCache: () => {},
-    } as any,
+    } as unknown as ConfigLoader,
     lessonsUpdater: {
       addLesson: async () => true,
-    } as any,
+    } as unknown as LessonsLearnedUpdater,
     evolutionScheduler: {
       schedulePostCommit: () => {},
-    } as any,
-    entityManager: {} as any,
+    } as unknown as EvolutionScheduler,
+    entityManager: {} as unknown as EntityManager,
   };
 }
