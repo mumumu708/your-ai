@@ -142,7 +142,7 @@ if (isHarnessTask) {
 | --------------- | --------------------------------------------------------------------------------- |
 | 无交互确认      | 复杂任务先输出 plan，管理员确认后逐步执行                                         |
 | 无 subagent     | Agent 自主运行 bash 命令（check:all、git 等），不需要 subagent                    |
-| 上下文窗口有限  | CLAUDE.md 做目录（~80行），深层文档按需引用                                       |
+| 上下文窗口有限  | CLAUDE.md 控制在 ~140 行，深层文档按需引用                                        |
 | 无 /memory 命令 | Harness 文档版本化在 git 中；SOUL.md/IDENTITY.md 通过 --append-system-prompt 注入 |
 
 ---
@@ -153,7 +153,7 @@ if (isHarnessTask) {
 
 ```
           ┌──────────────────────────────────────┐
-          │      CLAUDE.md（目录入口，~80 行）      │
+          │      CLAUDE.md（入口，~140 行）          │
           │   harness 任务 cwd = 项目根 → 自动加载  │
           │   其他任务 cwd = user-space → 不加载    │
           └──────────────┬───────────────────────┘
@@ -189,6 +189,8 @@ Phase 6 (第 9-10 周)  质量门控与垃圾回收
 ## 2. Phase 0：基础设施变更（第 1 周）
 
 > 目标：完成 user-space 迁移、管理员识别和 TaskClassifier 扩展，为后续所有 Phase 扫清障碍。
+
+**环境前提**：服务器上需安装 [GitHub CLI](https://cli.github.com/)（`gh`）并完成认证（`gh auth login`），Agent 通过它创建 PR。
 
 ### 2.1 user-space 迁移
 
@@ -281,7 +283,7 @@ Phase 6 (第 9-10 周)  质量门控与垃圾回收
 
 ### 3.1 新建 CLAUDE.md（项目根目录）
 
-~80 行的目录文件。管理员的 claude subprocess 在项目根执行时自动加载：
+~140 行的目录+纪律文件。管理员的 claude subprocess 在项目根执行时自动加载：
 
 ```markdown
 # CLAUDE.md — Your-AI 工程指引
@@ -316,16 +318,94 @@ check:all 通过后，提交前，逐条自检：
 ## 关键命令
 
 - 全量检查: `bun run check:all`（每次改完代码必跑）
+- 文档检查: `bun run check:docs`（提交前必跑）
 - 测试: `bun test`
 - Lint: `bun run lint` / `bun run lint:fix`
 - 格式化: `bun run format`
 - 架构检查: `bun run check:arch`
+- 创建 PR: `gh pr create --base main --head {branch} --title "..." --body "..."`
 
 ## Git 工作流
 
-- 开始工程任务前: `git checkout -b agent/{简短描述}`
-- commit 遵循 Conventional Commits（feat: / fix: / refactor: / docs:）
-- 完成后告知管理员分支名，由管理员决定合并
+### 开始前
+
+1. `git status` 检查工作区是否干净
+2. 如有未提交更改: `git stash` 暂存（可能是其他任务的残留）
+3. `git checkout main && git pull origin main` 确保基于最新代码
+4. `git checkout -b agent/{类型}/{简短描述}`
+
+### 分支命名
+
+- `agent/feat/memory-cache-layer` — 新功能
+- `agent/fix/telegram-timeout` — Bug 修复
+- `agent/refactor/memory-retriever` — 重构
+- `agent/docs/update-architecture` — 纯文档更新
+
+### 提交规范（Conventional Commits）
+```
+
+feat: 添加 memory 缓存层
+fix: 修复 Telegram 通道超时问题
+refactor: 重构 memory-retriever 查询逻辑
+docs: 更新 architecture.md 中 memory 模块描述
+test: 补充 cache-layer 单元测试
+chore: 更新 doc-source-map.json
+
+```
+- 每个逻辑单元一次 commit（不要把所有改动堆在一个 commit 里）
+- 代码变更和对应的 .harness/ 文档更新放在同一个 commit 中
+- commit message 用中文或英文均可，但同一分支内保持一致
+
+### 多步任务的提交策略
+```
+
+agent/feat/memory-cache-layer
+├── commit 1: feat: 添加 cache-layer.ts 接口和实现
+├── commit 2: feat: 集成缓存到 memory-retriever
+├── commit 3: test: 补充 cache-layer 单元测试
+└── commit 4: docs: 更新 architecture.md 和 doc-source-map
+
+````
+
+### 完成后
+1. 确认 `bun run check:all` 通过
+2. 确认 `bun run check:docs` 通过
+3. `git push origin agent/{类型}/{简短描述}`
+4. 通过 GitHub CLI 创建 PR：
+   ```bash
+   gh pr create \
+     --base main \
+     --head agent/{类型}/{简短描述} \
+     --title "{type}: {简短描述}" \
+     --body "## What / Why
+   {变更说明}
+
+   ## 变更范围
+   - {涉及的模块和文件}
+
+   ## Checklist
+   - [x] bun run check:all 通过
+   - [x] bun run check:docs 通过
+   - [x] 新功能有测试
+   - [ ] 如修改 config/ 下 AIEOS 文件，已评估用户侧影响
+   - [ ] 如发现新陷阱，已更新 .harness/pitfalls.md"
+````
+
+5. 告知管理员: PR 链接、变更摘要、涉及的模块
+6. 由管理员 review 后合并（merge / squash merge / rebase）
+
+### PR 规范
+
+- title 格式与 commit message 一致（`feat: xxx` / `fix: xxx`）
+- body 必须包含 What/Why 和 Checklist
+- 如果 PR 包含多个 commit，在 body 中列出每个 commit 的简要说明
+- 如果 PR 涉及 .harness/ 文档更新，在 body 中标注具体更新了哪些文档
+
+### 禁止事项
+
+- 不要直接在 main 分支上修改
+- 不要 force push
+- 不要修改不属于当前任务的文件（除非是发现的 bug，记入 pitfalls 后另开分支修复）
 
 ## 架构概览
 
@@ -373,24 +453,27 @@ check:all 通过后，提交前，逐条自检：
 - 复杂任务（涉及 3+ 文件）先输出 plan，等管理员确认后逐步执行
 - 每步完成后自动跑 check:all，通过后执行文档自检 checklist，最后 check:docs
 - 代码 + 文档一起提交，不要分开
+
 ```
 
 ### 3.2 .harness/ 目录结构
 
 ```
+
 .harness/
-├── architecture.md          # 架构地图 + 分层规则 + 模块依赖图 + 消息流路径
-├── conventions.md           # 编码约定（命名、错误处理、类型、日志等）
-├── pitfalls.md              # Agent 常见陷阱库（初始 5 条，Agent 记录 + 管理员审核）
-├── testing.md               # 测试约定和基础设施
-├── glossary.md              # 术语表（AIEOS、UserSpace 等概念）
-├── doc-source-map.json      # 文档→源码映射（新鲜度检查用）
+├── architecture.md # 架构地图 + 分层规则 + 模块依赖图 + 消息流路径
+├── conventions.md # 编码约定（命名、错误处理、类型、日志等）
+├── pitfalls.md # Agent 常见陷阱库（初始 5 条，Agent 记录 + 管理员审核）
+├── testing.md # 测试约定和基础设施
+├── glossary.md # 术语表（AIEOS、UserSpace 等概念）
+├── doc-source-map.json # 文档→源码映射（新鲜度检查用）
 └── design-docs/
-    ├── TEMPLATE.md
-    ├── 001-layered-arch.md
-    ├── 002-aieos-protocol.md
-    ├── 003-harness-system.md
-    └── 004-user-space-migration.md
+├── TEMPLATE.md
+├── 001-layered-arch.md
+├── 002-aieos-protocol.md
+├── 003-harness-system.md
+└── 004-user-space-migration.md
+
 ```
 
 ### 3.3 architecture.md 核心内容
@@ -398,60 +481,64 @@ check:all 通过后，提交前，逐条自检：
 **分层架构图**：
 
 ```
+
 ┌─────────────────────────────────────────┐
-│  Gateway (src/gateway/)                 │
-│  HTTP/WS 服务 / 通道管理 / 中间件        │
+│ Gateway (src/gateway/) │
+│ HTTP/WS 服务 / 通道管理 / 中间件 │
 ├─────────────────────────────────────────┤
-│  Kernel (src/kernel/)                   │
-│  agents/ memory/ evolution/ classifier/ │
-│  skills/ scheduling/ streaming/         │
-│  编排: central-controller.ts             │
+│ Kernel (src/kernel/) │
+│ agents/ memory/ evolution/ classifier/ │
+│ skills/ scheduling/ streaming/ │
+│ 编排: central-controller.ts │
 ├─────────────────────────────────────────┤
-│  Shared (src/shared/)                   │
-│  types/ utils/ logging/ 纯函数+类型      │
+│ Shared (src/shared/) │
+│ types/ utils/ logging/ 纯函数+类型 │
 ├─────────────────────────────────────────┤
-│  UserSpace (外部: $USER_SPACE_ROOT)     │  ← 已迁移到项目外
-│  每用户: AIEOS 协议 + 记忆数据            │
+│ UserSpace (外部: $USER_SPACE_ROOT) │ ← 已迁移到项目外
+│ 每用户: AIEOS 协议 + 记忆数据 │
 ├─────────────────────────────────────────┤
-│  Infra (infra/ + mcp-servers/)          │
-│  OpenViking / MCP Servers / PM2         │
+│ Infra (infra/ + mcp-servers/) │
+│ OpenViking / MCP Servers / PM2 │
 └─────────────────────────────────────────┘
+
 ```
 
 **消息流路径**：
 
 ```
-User → Channel → Middleware(auth/rate-limit)
-  → MessageRouter → OnboardingCheck → TaskClassifier
 
-  TaskClassifier 结果:
-  ├── chat/scheduled/automation/system
-  │     → cwd = user-space(所有用户一致)
-  │     → KnowledgeRouter → AgentRuntime → Response
-  │
-  └── harness
-        ├── isAdmin? → cwd = 项目根(加载 CLAUDE.md)
-        │               → AgentRuntime(工程模式) → Response
-        └── !isAdmin → 降级 chat → 同上
+User → Channel → Middleware(auth/rate-limit)
+→ MessageRouter → OnboardingCheck → TaskClassifier
+
+TaskClassifier 结果:
+├── chat/scheduled/automation/system
+│ → cwd = user-space(所有用户一致)
+│ → KnowledgeRouter → AgentRuntime → Response
+│
+└── harness
+├── isAdmin? → cwd = 项目根(加载 CLAUDE.md)
+│ → AgentRuntime(工程模式) → Response
+└── !isAdmin → 降级 chat → 同上
+
 ```
 
 ### 3.4 pitfalls.md 初始内容
 
-| 编号  | 陷阱                                   | 修复指令                                  |
-| ----- | -------------------------------------- | ----------------------------------------- |
-| P-001 | 在 shared/ 引入有状态逻辑              | 移至 kernel/ 对应子模块                   |
-| P-002 | MCP Server 直接 import kernel 内部模块 | 必须通过 stdio 隔离                       |
-| P-003 | 外部调用缺少 async 超时                | 所有 LLM/API 调用设超时                   |
-| P-004 | 修改 config/ 未考虑用户侧影响          | 评估 AIEOS 文件复制链路                   |
-| P-005 | 测试直接依赖外部服务                   | 用 test-utils/ 统一 mock                  |
-| P-006 | user-space 路径硬编码                  | 必须通过 USER_SPACE_ROOT                  |
-| P-007 | 代码改了但未更新 .harness/ 文档        | 提交前执行文档自检 checklist + check:docs |
+| 编号 | 陷阱 | 修复指令 |
+|------|------|---------|
+| P-001 | 在 shared/ 引入有状态逻辑 | 移至 kernel/ 对应子模块 |
+| P-002 | MCP Server 直接 import kernel 内部模块 | 必须通过 stdio 隔离 |
+| P-003 | 外部调用缺少 async 超时 | 所有 LLM/API 调用设超时 |
+| P-004 | 修改 config/ 未考虑用户侧影响 | 评估 AIEOS 文件复制链路 |
+| P-005 | 测试直接依赖外部服务 | 用 test-utils/ 统一 mock |
+| P-006 | user-space 路径硬编码 | 必须通过 USER_SPACE_ROOT |
+| P-007 | 代码改了但未更新 .harness/ 文档 | 提交前执行文档自检 checklist + check:docs |
 
 **纪律**：Agent 发现新陷阱 → 追加到此文件 → 随代码一起提交 → 管理员 review 时审核。
 
 ### 3.5 Phase 1 验收标准
 
-- [ ] CLAUDE.md 存在于项目根，≤ 80 行
+- [ ] CLAUDE.md 存在于项目根，≤ 140 行
 - [ ] .harness/ 目录结构完整
 - [ ] pitfalls.md ≥ 5 条
 - [ ] 管理员发送工程消息（如"查看项目架构"），触发 harness 模式，获得基于 .harness/ 的回答
@@ -467,11 +554,13 @@ User → Channel → Middleware(auth/rate-limit)
 ### 4.1 核心设计：反馈循环在本地闭合
 
 ```
+
 Agent 改代码
-  → 自动运行 bun run check:all
-  → 不通过？→ 自行修复 → 重新运行 → 循环直到通过
-  → 全部通过 → 告知管理员"已完成，所有检查通过"
-```
+→ 自动运行 bun run check:all
+→ 不通过？→ 自行修复 → 重新运行 → 循环直到通过
+→ 全部通过 → 告知管理员"已完成，所有检查通过"
+
+````
 
 **Agent 不需要等管理员说"跑下测试"——改完代码就跑是它的本职工作。** 这通过 CLAUDE.md 中的"核心工作纪律"实现（见 Phase 1 的 CLAUDE.md 内容）。
 
@@ -502,7 +591,7 @@ jobs:
       - run: bun test
       - run: bun run check:arch
       - run: bun run check:all
-```
+````
 
 CI 结果通过 GitHub 通知或飞书/TG webhook 推送给管理员。Agent 不依赖 CI——它在本地已经跑过了。
 
@@ -764,14 +853,16 @@ AI: [执行第 1 步，创建文件]
 
 AI: [执行第 2 步...]
     [自动运行 bun run check:all]
-    ...全部完成，已提交到分支 agent/memory-cache。
+    ...全部完成。已推送分支并创建 PR：
+    https://github.com/mumumu708/your-ai/pull/42
+    变更: 新增 memory 缓存层，涉及 4 个文件，含测试和文档更新。
 ```
 
 **CLAUDE.md 中的编排指令**（已包含在 Phase 1 的 CLAUDE.md 内容中）：
 
 - 涉及 3+ 文件变更 → 先输出 plan
 - 每步完成后自动跑 check:all
-- 全部完成后告知管理员分支名
+- 全部完成后 push + 创建 PR + 告知管理员 PR 链接
 
 **exec-plans/ 目录保留**但简化为仅存放模板，供 Agent 参考格式。未来如果需要多 Agent 协作分配任务，再引入持久化的 JSON exec-plan。
 
@@ -786,7 +877,7 @@ AI: [执行第 2 步...]
 
 **并行隔离**（通过 CLAUDE.md 中的 Git 工作流实现）：
 
-- 每个任务在独立 git 分支工作（`agent/{简短描述}`）
+- 每个任务在独立 git 分支工作（`agent/{类型}/{简短描述}`）
 - 不同任务应涉及不同模块
 - 完成后推送分支，管理员审查合并
 
