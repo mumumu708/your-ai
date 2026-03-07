@@ -11,6 +11,7 @@
 │  message-router.ts — 统一消息路由，分发到 CentralController     │
 │  channel-manager.ts— 通道注册与生命周期管理                      │
 │  channels/         — Feishu/Telegram/Web 通道实现              │
+│    feishu-cardkit-client.ts — 飞书 CardKit 流式卡片 API 封装   │
 │    adapters/       — 各通道的流式输出适配器                      │
 │  middleware/       — auth · rate-limit · transform 中间件      │
 ├─────────────────────────────────────────────────────────────┤
@@ -113,7 +114,10 @@ User → Channel (Feishu/Telegram/Web)
         │                        ├── simple → LightLLM (DeepSeek/Qwen/OpenAI)
         │                        └── complex → ClaudeAgentBridge (claude CLI)
         │                    → PostResponseAnalyzer (纠错→经验)
-        │                    → StreamHandler → Channel 输出
+        │                    → StreamHandler → ChannelStreamAdapter
+        │                        ├── Feishu → CardKitClient (流式卡片)
+        │                        ├── Telegram → editMessage
+        │                        └── Web → WebSocket push
         │
         ├── 'scheduled'  → handleScheduledTask()
         │                    → nlToCron() + scheduler.register(channel)
