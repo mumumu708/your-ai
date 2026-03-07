@@ -82,7 +82,11 @@ export interface CentralControllerDeps {
   lightLLM?: LightLLMClient;
   streamHandler?: StreamHandler;
   streamCallback?: (userId: string, event: StreamEvent) => void;
-  streamAdapterFactory?: (userId: string, channel: string) => ChannelStreamAdapter[];
+  streamAdapterFactory?: (
+    userId: string,
+    channel: string,
+    conversationId: string,
+  ) => ChannelStreamAdapter[];
   ovClient?: OpenVikingClient;
   configLoader?: ConfigLoader;
   contextManager?: ContextManager;
@@ -107,9 +111,10 @@ export class CentralController {
   private readonly activeRequests: Map<string, AbortController> = new Map();
   private readonly streamHandler: StreamHandler;
   private readonly streamCallback?: (userId: string, event: StreamEvent) => void;
-  private readonly streamAdapterFactory?: (
+  private streamAdapterFactory?: (
     userId: string,
     channel: string,
+    conversationId: string,
   ) => ChannelStreamAdapter[];
   private readonly ovClient: OpenVikingClient;
   private readonly configLoader: ConfigLoader;
@@ -471,7 +476,11 @@ export class CentralController {
     let streamCallback: ((event: StreamEvent) => void) | undefined;
     let streamResultPromise: Promise<unknown> | undefined;
 
-    const adapters = this.streamAdapterFactory?.(task.message.userId, task.message.channel);
+    const adapters = this.streamAdapterFactory?.(
+      task.message.userId,
+      task.message.channel,
+      task.message.conversationId,
+    );
 
     if (adapters && adapters.length > 0) {
       const stream = this.streamHandler.createStreamCallback(adapters);
@@ -569,6 +578,7 @@ export class CentralController {
         tokenUsage: result.tokenUsage,
         complexity: result.complexity,
         channel: result.channel,
+        ...(adapters && adapters.length > 0 ? { streamed: true } : {}),
       },
       completedAt: Date.now(),
     };
@@ -708,6 +718,13 @@ export class CentralController {
   /** Set channel resolver (called after ChannelManager is created) */
   setChannelResolver(resolver: (channelType: string) => IChannel | undefined): void {
     this.channelResolver = resolver;
+  }
+
+  /** Set stream adapter factory (called after channel registration) */
+  setStreamAdapterFactory(
+    factory: (userId: string, channel: string, conversationId: string) => ChannelStreamAdapter[],
+  ): void {
+    this.streamAdapterFactory = factory;
   }
 
   /**
