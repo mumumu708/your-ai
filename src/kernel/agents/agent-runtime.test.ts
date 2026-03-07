@@ -191,6 +191,26 @@ describe('AgentRuntime', () => {
     });
   });
 
+  describe('forceComplex (harness 模式)', () => {
+    test('forceComplex 应绕过分类器直接走 Claude', async () => {
+      const mockBridge = createMockClaudeBridge();
+      const executeSpy = spyOn(mockBridge, 'execute');
+
+      const runtime = new AgentRuntime({
+        classifier: createMockClassifier('simple'), // Would normally go to LightLLM
+        claudeBridge: mockBridge,
+        lightLLM: createMockLightLLM(),
+      });
+
+      const result = await runtime.execute(createParams({ forceComplex: true }));
+
+      expect(result.complexity).toBe('complex');
+      expect(result.channel).toBe('agent_sdk');
+      expect(result.content).toBe('Claude response');
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('EnhancedAgentResult 字段', () => {
     test('应该包含 complexity、channel 和 classificationCostUsd', async () => {
       const runtime = new AgentRuntime({

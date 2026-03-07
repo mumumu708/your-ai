@@ -10,18 +10,18 @@
  * 运行：~/.bun/bin/bun test src/e2e/
  * 飞书：FEISHU_APP_ID=xxx FEISHU_APP_SECRET=xxx ~/.bun/bin/bun test src/e2e/
  */
-import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { ChannelManager } from '../gateway/channel-manager';
 import { WebChannel } from '../gateway/channels/web.gateway';
 import { MessageRouter } from '../gateway/message-router';
 import type { ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
-import type { LightLLMClient } from '../kernel/agents/light-llm-client';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
 import type { ChannelType } from '../shared/messaging';
 import { isValidBotMessage } from '../shared/utils/validators';
+import { createMockLightLLM } from '../test-utils/mock-light-llm';
 import { createMockOVDeps } from '../test-utils/mock-ov-deps';
 
 // --- Config ---
@@ -29,23 +29,6 @@ import { createMockOVDeps } from '../test-utils/mock-ov-deps';
 const HTTP_PORT = 18900;
 const WS_PORT = 18901;
 const CLAUDE_TIMEOUT = 60_000;
-
-// --- Helpers ---
-
-function createMockLightLLM(response = 'mock light response'): LightLLMClient {
-  return {
-    complete: mock(async () => ({
-      content: response,
-      model: 'deepseek-chat',
-      usage: { promptTokens: 5, completionTokens: 3, totalCost: 0.0001 },
-    })),
-    stream: mock(async function* () {
-      yield { content: response, done: false };
-      yield { content: '', done: true };
-    }),
-    getDefaultModel: () => 'deepseek-chat',
-  } as unknown as LightLLMClient;
-}
 
 function makeBotMessage(overrides: Record<string, unknown> = {}) {
   return {

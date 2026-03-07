@@ -9,11 +9,11 @@ import { ChannelManager } from '../gateway/channel-manager';
 import { WebChannel } from '../gateway/channels/web.gateway';
 import { MessageRouter } from '../gateway/message-router';
 import type { AgentBridgeResult, ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
-import type { LightLLMClient } from '../kernel/agents/light-llm-client';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
 import type { ChannelType } from '../shared/messaging';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
+import { createMockLightLLM } from '../test-utils/mock-light-llm';
 import { createMockOVDeps } from '../test-utils/mock-ov-deps';
 
 const WS_PORT = 19877;
@@ -35,21 +35,6 @@ function createMockClaudeBridge(response = 'mock response'): ClaudeAgentBridge {
     estimateCost: () => 0.001,
     getActiveSessions: () => 0,
   } as unknown as ClaudeAgentBridge;
-}
-
-function createMockLightLLM(response = 'light response'): LightLLMClient {
-  return {
-    complete: mock(async () => ({
-      content: response,
-      model: 'deepseek-chat',
-      usage: { promptTokens: 5, completionTokens: 3, totalCost: 0.0001 },
-    })),
-    stream: mock(async function* () {
-      yield { content: response, done: false };
-      yield { content: '', done: true };
-    }),
-    getDefaultModel: () => 'deepseek-chat',
-  } as unknown as LightLLMClient;
 }
 
 /** Helper: connect WS, consume initial 'connected' message */

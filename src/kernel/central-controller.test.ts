@@ -799,6 +799,54 @@ describe('CentralController', () => {
       const callArgs = executeSpy.mock.calls[0][0] as Record<string, unknown>;
       const context = callArgs.context as Record<string, unknown>;
       expect(context.workspacePath).toBe(process.cwd());
+      // Harness tasks must force complex (Claude) path
+      expect(callArgs.forceComplex).toBe(true);
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        process.env.ADMIN_USER_IDS = undefined;
+      }
+    });
+
+    test('非管理员降级后不应 forceComplex', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'feishu:admin_only';
+
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute');
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const session = {
+        id: 'sess_003',
+        userId: 'user_regular',
+        channel: 'web',
+        conversationId: 'conv_003',
+        status: 'active' as const,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        agentConfig: { maxContextTokens: 100000 },
+        messages: [],
+        workspacePath: '/tmp/user-space/user_regular',
+      };
+
+      const task = {
+        id: 'task_003',
+        traceId: 'trace_003',
+        type: 'harness' as const,
+        message: createMockMessage({ userId: 'user_regular', content: '修复bug' }),
+        session,
+        priority: 2,
+        createdAt: Date.now(),
+        metadata: { userId: 'user_regular', channel: 'web', conversationId: 'conv_003' },
+      };
+
+      await controller.orchestrate(task);
+      const callArgs = executeSpy.mock.calls[0][0] as Record<string, unknown>;
+      expect(callArgs.forceComplex).toBeUndefined();
 
       if (originalEnv !== undefined) {
         process.env.ADMIN_USER_IDS = originalEnv;

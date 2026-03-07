@@ -8,7 +8,9 @@
         "src/kernel/central-controller.ts",
         "src/kernel/agents/agent-runtime.ts",
         "src/kernel/classifier/task-classifier.ts",
-        "src/kernel/evolution/knowledge-router.ts"
+        "src/kernel/evolution/knowledge-router.ts",
+        "src/kernel/sessioning/session-serializer.ts",
+        "src/kernel/sessioning/harness-mutex.ts"
       ],
       "description": "架构概览"
     },
@@ -27,6 +29,7 @@
       "doc": ".harness/testing.md",
       "sources": [
         "src/test-utils/mock-ov-deps.ts",
+        "src/test-utils/mock-light-llm.ts",
         "package.json"
       ],
       "description": "测试约定"

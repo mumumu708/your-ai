@@ -35,6 +35,11 @@ export class AgentRuntime {
       sessionId: params.context.sessionId,
     });
 
+    // Harness tasks must always use Claude (tool access required)
+    if (params.forceComplex) {
+      return this.executeComplex(params);
+    }
+
     // If no classifier, default to complex path
     if (!this.classifier) {
       return this.executeComplex(params);

@@ -44,6 +44,8 @@ export interface AgentExecuteParams {
   context: ConversationContext;
   signal?: AbortSignal;
   streamCallback?: (event: StreamEvent) => void;
+  /** Force complex (Claude) path, bypassing complexity classification. Used for harness tasks. */
+  forceComplex?: boolean;
 }
 
 export interface AgentResult {

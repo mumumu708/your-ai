@@ -9,7 +9,6 @@
  */
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { AgentBridgeResult, ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
-import type { LightLLMClient } from '../kernel/agents/light-llm-client';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
 import { TaskQueue } from '../kernel/tasking/task-queue';
@@ -51,21 +50,6 @@ function createMockClaudeBridge(response = 'Claude says hi'): ClaudeAgentBridge 
     estimateCost: () => 0.001,
     getActiveSessions: () => 0,
   } as unknown as ClaudeAgentBridge;
-}
-
-function _createMockLightLLM(response = 'Light says hi'): LightLLMClient {
-  return {
-    complete: mock(async () => ({
-      content: response,
-      model: 'deepseek-chat',
-      usage: { promptTokens: 5, completionTokens: 3, totalCost: 0.0001 },
-    })),
-    stream: mock(async function* () {
-      yield { content: response, done: false };
-      yield { content: '', done: true };
-    }),
-    getDefaultModel: () => 'deepseek-chat',
-  } as unknown as LightLLMClient;
 }
 
 // ── Tests ─────────────────────────────────────────────────
