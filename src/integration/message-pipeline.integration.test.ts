@@ -10,13 +10,13 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
 import { MessageRouter } from '../gateway/message-router';
 import { AgentRuntime } from '../kernel/agents/agent-runtime';
 import type { AgentBridgeResult, ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
-import type { LightLLMClient } from '../kernel/agents/light-llm-client';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
 import { SessionManager } from '../kernel/sessioning/session-manager';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import type { BotMessage, BotResponse, ChannelType } from '../shared/messaging';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
+import { createMockLightLLM } from '../test-utils/mock-light-llm';
 import { createMockOVDeps } from '../test-utils/mock-ov-deps';
 
 // ── Test helpers ──────────────────────────────────────────
@@ -53,21 +53,6 @@ function createMockClaudeBridge(response = 'Claude says hi'): ClaudeAgentBridge 
     estimateCost: () => 0.001,
     getActiveSessions: () => 0,
   } as unknown as ClaudeAgentBridge;
-}
-
-function createMockLightLLM(response = 'Light says hi'): LightLLMClient {
-  return {
-    complete: mock(async () => ({
-      content: response,
-      model: 'deepseek-chat',
-      usage: { promptTokens: 5, completionTokens: 3, totalCost: 0.0001 },
-    })),
-    stream: mock(async function* () {
-      yield { content: response, done: false };
-      yield { content: '', done: true };
-    }),
-    getDefaultModel: () => 'deepseek-chat',
-  } as unknown as LightLLMClient;
 }
 
 // ── Tests ─────────────────────────────────────────────────
