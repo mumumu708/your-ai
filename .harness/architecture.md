@@ -43,7 +43,7 @@
 │    error-to-rule-pipeline.ts — 错误→规则管道                    │
 │  onboarding/           — 新用户引导（多步对话状态机）              │
 │  sessioning/           — 会话管理 · 消息序列化 · Harness 互斥锁    │
-│  scheduling/           — 定时任务（NL→Cron 解析 + 调度器）       │
+│  scheduling/           — 定时任务（NL→Cron 解析 + 调度器 + JobStore 持久化）│
 │  skills/               — 技能管理与部署                          │
 │  workspace/            — 用户工作空间初始化 + MCP 配置            │
 │  streaming/            — 流式输出处理                            │
@@ -116,6 +116,10 @@ User → Channel (Feishu/Telegram/Web)
         │                    → StreamHandler → Channel 输出
         │
         ├── 'scheduled'  → handleScheduledTask()
+        │                    → nlToCron() + scheduler.register(channel)
+        │                    → JobStore 持久化到 data/scheduler/jobs.json
+        │                    → 定时触发 → executor → executeChatPipeline()
+        │                    → channel.sendMessage() 推送结果
         ├── 'automation' → handleAutomationTask()
         └── 'system'     → handleSystemTask()
 ```

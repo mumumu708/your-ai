@@ -10,7 +10,9 @@
         "src/kernel/classifier/task-classifier.ts",
         "src/kernel/evolution/knowledge-router.ts",
         "src/kernel/sessioning/session-serializer.ts",
-        "src/kernel/sessioning/harness-mutex.ts"
+        "src/kernel/sessioning/harness-mutex.ts",
+        "src/kernel/scheduling/scheduler.ts",
+        "src/kernel/scheduling/job-store.ts"
       ],
       "description": "架构概览"
     },

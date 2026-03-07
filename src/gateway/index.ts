@@ -78,6 +78,13 @@ controller.setChannelResolver((channelType: string) =>
   channelManager.getChannel(channelType as ChannelType),
 );
 
+// Initialize scheduler (loads persisted jobs, wires executor, starts timers)
+controller.initScheduler().catch((error) => {
+  logger.error('Scheduler 初始化失败', {
+    error: error instanceof Error ? error.message : String(error),
+  });
+});
+
 // Wire response dispatcher: routes responses back through channels
 router.setResponseDispatcher(async (channel: ChannelType, userId: string, content) => {
   const ch = channelManager.getChannel(channel);
@@ -204,6 +211,7 @@ async function registerChannels(): Promise<void> {
 function setupGracefulShutdown(): void {
   const shutdown = async (signal: string) => {
     logger.info(`收到 ${signal} 信号，正在关闭...`);
+    controller.stopScheduler();
     await channelManager.shutdownAll();
     CentralController.resetInstance();
     logger.info('所有通道已关闭，进程退出');
