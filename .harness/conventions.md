@@ -89,3 +89,10 @@ static resetInstance(): void  // 仅用于测试
 - 所有 I/O 操作使用 async/await
 - 子进程使用 `Bun.spawn()` + stream 处理
 - 非关键操作（如 OpenViking 同步）失败时 try/catch 静默忽略，不阻塞主流程
+
+## 并发安全
+
+- 同一会话的消息通过 `SessionSerializer` 串行化，key 为 `${userId}:${channel}:${conversationId}`
+- 不同会话可并行处理，互不阻塞
+- Harness 任务额外通过 `HarnessMutex` 全局互斥，防止并发操作 git 工作目录
+- 序列化器和互斥锁均采用 waiter-queue + 超时模式，`try/finally` 保证锁释放
