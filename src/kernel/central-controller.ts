@@ -27,7 +27,7 @@ import { UserConfigLoader } from './memory/user-config-loader';
 import { OnboardingManager } from './onboarding';
 import { nlToCron } from './scheduling/nl-to-cron';
 import { Scheduler } from './scheduling/scheduler';
-import { SessionManager } from './sessioning/session-manager';
+import { HarnessMutex, SessionManager, SessionSerializer } from './sessioning';
 import { StreamHandler } from './streaming/stream-handler';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
 import { TaskQueue } from './tasking/task-queue';
@@ -92,6 +92,8 @@ export interface CentralControllerDeps {
   postResponseAnalyzer?: PostResponseAnalyzer;
   workspaceManager?: WorkspaceManager;
   channelResolver?: (channelType: string) => IChannel | undefined;
+  sessionSerializer?: SessionSerializer;
+  harnessMutex?: HarnessMutex;
 }
 
 export class CentralController {
@@ -118,6 +120,8 @@ export class CentralController {
   private readonly entityManager: EntityManager;
   private readonly workspaceManager: WorkspaceManager;
   private readonly onboardingManager: OnboardingManager;
+  private readonly sessionSerializer: SessionSerializer;
+  private readonly harnessMutex: HarnessMutex;
   private readonly fileUploadHandler: FileUploadHandler;
   private channelResolver?: (channelType: string) => IChannel | undefined;
 
@@ -185,6 +189,8 @@ export class CentralController {
       });
 
     this.workspaceManager = deps?.workspaceManager ?? new WorkspaceManager();
+    this.sessionSerializer = deps?.sessionSerializer ?? new SessionSerializer();
+    this.harnessMutex = deps?.harnessMutex ?? new HarnessMutex();
 
     // OnboardingManager — guides new users through setup
     this.onboardingManager = new OnboardingManager(deps?.lightLLM ?? null);
@@ -337,7 +343,15 @@ export class CentralController {
       task.signal = abortController.signal;
 
       try {
-        const result = await this.orchestrate(task);
+        const sessionKey = `${message.userId}:${message.channel}:${message.conversationId}`;
+        let result: TaskResult;
+        if (taskType === 'harness') {
+          result = await this.harnessMutex.run(() =>
+            this.sessionSerializer.run(sessionKey, () => this.orchestrate(task)),
+          );
+        } else {
+          result = await this.sessionSerializer.run(sessionKey, () => this.orchestrate(task));
+        }
         return result;
       } finally {
         this.activeRequests.delete(task.id);
