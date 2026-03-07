@@ -461,7 +461,7 @@ describe('CentralController', () => {
 
       const controller = CentralController.getInstance({
         agentRuntime,
-        streamAdapterFactory: () => [mockAdapter],
+        streamAdapterFactory: (_u, _c, _conv) => [mockAdapter],
         ...createMockOVDeps(),
       });
 

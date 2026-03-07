@@ -73,8 +73,9 @@ abstract class BaseChannel implements IChannel
 | 消息发送 | `im.message.create` API |
 | 消息更新 | `im.message.patch` API |
 | 文件下载 | 原生 fetch + 3 次指数退避重试 (500ms/1s) |
-| 流式输出 | 300ms 节流，累积文本 → 创建/更新卡片消息 |
+| 流式输出 | CardKit 流式卡片 API（打字机效果），100ms 节流 |
 | 完成时按钮 | 复制 / 重新生成 / 继续追问 |
+| CardKit 封装 | FeishuCardKitClient 封装 cardkit.v1 API |
 
 ### Telegram 通道 (TelegramChannel)
 
@@ -152,7 +153,7 @@ interface ChannelStreamAdapter {
 
 | 适配器 | 节流间隔 | 策略 |
 |--------|---------|------|
-| FeishuStreamAdapter | 300ms | 累积文本 → 创建/更新卡片 |
+| FeishuStreamAdapter | 100ms | CardKit 流式卡片 → 打字机效果 |
 | TelegramStreamAdapter | 2000ms | 累积文本 → 发送/编辑消息 |
 | WebStreamAdapter | 0ms | 实时 WebSocket 推送 |
 
@@ -187,8 +188,11 @@ interface StreamEvent {
 2. **抽象基类** — BaseChannel 统一接口，各通道继承实现
 3. **中间件组合** — 可插拔，顺序可配置
 4. **飞书长连接** — 使用 WSClient 而非 Webhook，减少网络配置
-5. **节流策略差异化** — 飞书 300ms、Telegram 2000ms、Web 实时
+5. **节流策略差异化** — 飞书 100ms（CardKit 流式模式无 QPS 限制）、Telegram 2000ms、Web 实时
 6. **Fire-and-forget 消息处理** — 飞书 handler 不阻塞 SDK
+7. **流式卡片 (CardKit)** — 飞书使用 CardKit API 实现打字机效果：创建流式卡片实体 → 发送卡片消息 → streamUpdateText 增量更新 → closeStreamingMode → addActionButtons
+8. **防重复响应** — 流式适配器完成后设置 `data.streamed = true`，MessageRouter 据此跳过 responseDispatcher 二次发送
+9. **streamAdapterFactory 注入** — 在 gateway/index.ts 通道注册后通过 `controller.setStreamAdapterFactory()` 注入，工厂签名接受 `(userId, channel, conversationId)`
 
 ## 文件清单
 
@@ -201,6 +205,7 @@ interface StreamEvent {
 | src/gateway/channels/feishu.gateway.ts | 飞书实现 |
 | src/gateway/channels/telegram.gateway.ts | Telegram 实现 |
 | src/gateway/channels/web.gateway.ts | Web/WebSocket 实现 |
+| src/gateway/channels/feishu-cardkit-client.ts | 飞书 CardKit 流式卡片 API 封装 |
 | src/gateway/channels/adapters/*.ts | 流式输出适配器 |
 | src/gateway/middleware/pipeline.ts | 中间件组合器 |
 | src/gateway/middleware/auth.middleware.ts | 认证中间件 |

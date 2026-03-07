@@ -107,7 +107,7 @@ describe('流式管道集成测试', () => {
     const controller = CentralController.getInstance({
       claudeBridge,
       classifier: new TaskClassifier(null),
-      streamAdapterFactory: () => [adapter],
+      streamAdapterFactory: (_u, _c, _conv) => [adapter],
       ...createMockOVDeps(),
     });
 
@@ -129,7 +129,7 @@ describe('流式管道集成测试', () => {
     const controller = CentralController.getInstance({
       claudeBridge,
       classifier: new TaskClassifier(null),
-      streamAdapterFactory: () => [adapter1, adapter2],
+      streamAdapterFactory: (_u, _c, _conv) => [adapter1, adapter2],
       ...createMockOVDeps(),
     });
 
@@ -167,7 +167,7 @@ describe('流式管道集成测试', () => {
     const controller = CentralController.getInstance({
       claudeBridge,
       classifier: new TaskClassifier(null),
-      streamAdapterFactory: () => [adapter],
+      streamAdapterFactory: (_u, _c, _conv) => [adapter],
       ...createMockOVDeps(),
     });
 
@@ -203,7 +203,7 @@ describe('流式管道集成测试', () => {
     const controller = CentralController.getInstance({
       claudeBridge,
       classifier: new TaskClassifier(null),
-      streamAdapterFactory: () => [adapter],
+      streamAdapterFactory: (_u, _c, _conv) => [adapter],
       ...createMockOVDeps(),
     });
 

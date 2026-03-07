@@ -34,6 +34,11 @@ export class FeishuChannel extends BaseChannel {
     return this.connected;
   }
 
+  /** Expose the Lark client for CardKit API usage */
+  getClient(): lark.Client {
+    return this.client;
+  }
+
   async initialize(): Promise<void> {
     this.logger.info('飞书通道初始化', { appId: this.config.appId });
 

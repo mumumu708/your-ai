@@ -8,6 +8,8 @@ import { Logger } from '../shared/logging/logger';
 import type { ChannelType } from '../shared/messaging';
 import { isValidBotMessage } from '../shared/utils/validators';
 import { ChannelManager } from './channel-manager';
+import { FeishuStreamAdapter } from './channels/adapters/feishu-stream-adapter';
+import { FeishuCardKitClient } from './channels/feishu-cardkit-client';
 import { FeishuChannel } from './channels/feishu.gateway';
 import { TelegramChannel } from './channels/telegram.gateway';
 import { WebChannel } from './channels/web.gateway';
@@ -345,11 +347,38 @@ logger.info('LLM 配置', {
   lightLLM: lightLLM ? 'enabled' : 'disabled',
 });
 
-registerChannels().catch((error) => {
-  logger.error('通道注册异常', {
-    error: error instanceof Error ? error.message : String(error),
+registerChannels()
+  .then(() => {
+    // Inject streamAdapterFactory after channels are registered
+    const feishuChannel = channelManager.getChannel('feishu') as FeishuChannel | undefined;
+    if (feishuChannel) {
+      const cardKitClient = new FeishuCardKitClient(feishuChannel.getClient());
+      controller.setStreamAdapterFactory((userId, channel, conversationId) => {
+        if (channel === 'feishu') {
+          return [
+            new FeishuStreamAdapter(conversationId, {
+              createStreamingCard: (text) => cardKitClient.createStreamingCard(text),
+              sendCardMessage: (chatId, cardId) => cardKitClient.sendCardMessage(chatId, cardId),
+              streamUpdateText: (cardId, elemId, text, seq) =>
+                cardKitClient.streamUpdateText(cardId, elemId, text, seq),
+              closeStreamingMode: (cardId, seq) => cardKitClient.closeStreamingMode(cardId, seq),
+              addActionButtons: (cardId, afterId, btns, seq) =>
+                cardKitClient.addActionButtons(cardId, afterId, btns, seq),
+              sendTextMessage: (_chatId, text) =>
+                feishuChannel.sendMessage(userId, { type: 'text', text }),
+            }),
+          ];
+        }
+        return [];
+      });
+      logger.info('飞书 CardKit 流式适配器已注入');
+    }
+  })
+  .catch((error) => {
+    logger.error('通道注册异常', {
+      error: error instanceof Error ? error.message : String(error),
+    });
   });
-});
 setupGracefulShutdown();
 
 export { channelManager, router };

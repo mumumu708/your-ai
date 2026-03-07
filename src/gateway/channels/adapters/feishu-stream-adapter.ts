@@ -5,13 +5,25 @@ import type {
 import { Logger } from '../../../shared/logging/logger';
 
 export interface FeishuStreamDeps {
-  createStreamCard(chatId: string, text: string): Promise<string>;
-  updateCard(
-    messageId: string,
-    text: string,
-    options?: { showActions?: boolean; actions?: string[] },
+  createStreamingCard(initialText: string): Promise<string>;
+  sendCardMessage(chatId: string, cardId: string): Promise<string>;
+  streamUpdateText(
+    cardId: string,
+    elementId: string,
+    fullText: string,
+    sequence: number,
   ): Promise<void>;
+  closeStreamingMode(cardId: string, sequence: number): Promise<void>;
+  addActionButtons(
+    cardId: string,
+    afterElementId: string,
+    buttons: string[],
+    sequence: number,
+  ): Promise<void>;
+  sendTextMessage(chatId: string, text: string): Promise<void>;
 }
+
+const CONTENT_ELEMENT_ID = 'md_content';
 
 export class FeishuStreamAdapter implements ChannelStreamAdapter {
   readonly channelType = 'feishu';
@@ -21,13 +33,15 @@ export class FeishuStreamAdapter implements ChannelStreamAdapter {
   private readonly deps: FeishuStreamDeps;
   private readonly throttleMs: number;
 
-  private cardMessageId?: string;
+  private cardId?: string;
   private accumulatedText = '';
   private updateCount = 0;
   private lastUpdateTime = 0;
   private pendingUpdate: ReturnType<typeof setTimeout> | null = null;
+  private sequenceCounter = 0;
+  private fallbackMode = false;
 
-  constructor(chatId: string, deps: FeishuStreamDeps, throttleMs = 300) {
+  constructor(chatId: string, deps: FeishuStreamDeps, throttleMs = 100) {
     this.chatId = chatId;
     this.deps = deps;
     this.throttleMs = throttleMs;
@@ -35,13 +49,27 @@ export class FeishuStreamAdapter implements ChannelStreamAdapter {
 
   async onStreamStart(_messageId: string): Promise<void> {
     this.accumulatedText = '';
-    this.cardMessageId = undefined;
+    this.cardId = undefined;
     this.updateCount = 0;
     this.lastUpdateTime = 0;
+    this.sequenceCounter = 0;
+    this.fallbackMode = false;
+
+    try {
+      this.cardId = await this.deps.createStreamingCard('思考中...');
+      await this.deps.sendCardMessage(this.chatId, this.cardId);
+    } catch (err) {
+      this.logger.warn('CardKit 创建失败，降级为文本模式', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      this.fallbackMode = true;
+    }
   }
 
   async sendChunk(text: string, _protocol: StreamProtocol): Promise<void> {
     this.accumulatedText += text;
+
+    if (this.fallbackMode) return;
 
     const now = Date.now();
     const timeSinceLastUpdate = now - this.lastUpdateTime;
@@ -49,7 +77,6 @@ export class FeishuStreamAdapter implements ChannelStreamAdapter {
     if (timeSinceLastUpdate >= this.throttleMs) {
       await this.flushUpdate();
     } else if (!this.pendingUpdate) {
-      // Schedule a deferred update
       const delay = this.throttleMs - timeSinceLastUpdate;
       this.pendingUpdate = setTimeout(() => {
         this.pendingUpdate = null;
@@ -61,7 +88,6 @@ export class FeishuStreamAdapter implements ChannelStreamAdapter {
   }
 
   async sendDone(finalText: string, _protocol: StreamProtocol): Promise<void> {
-    // Cancel any pending throttled update
     if (this.pendingUpdate) {
       clearTimeout(this.pendingUpdate);
       this.pendingUpdate = null;
@@ -69,21 +95,37 @@ export class FeishuStreamAdapter implements ChannelStreamAdapter {
 
     this.accumulatedText = finalText;
 
-    if (!this.cardMessageId) {
-      this.cardMessageId = await this.deps.createStreamCard(this.chatId, finalText);
-    }
-
-    const cardId = this.cardMessageId;
-    if (!cardId) {
-      this.logger.warn('飞书流式完成但无卡片ID', { chatId: this.chatId });
+    if (this.fallbackMode) {
+      await this.deps.sendTextMessage(this.chatId, finalText);
       return;
     }
 
-    // Send final card with action buttons
-    await this.deps.updateCard(cardId, finalText, {
-      showActions: true,
-      actions: ['复制', '重新生成', '继续追问'],
-    });
+    if (!this.cardId) {
+      await this.deps.sendTextMessage(this.chatId, finalText);
+      return;
+    }
+
+    // Final text update
+    this.sequenceCounter++;
+    await this.deps.streamUpdateText(
+      this.cardId,
+      CONTENT_ELEMENT_ID,
+      finalText,
+      this.sequenceCounter,
+    );
+
+    // Close streaming mode
+    this.sequenceCounter++;
+    await this.deps.closeStreamingMode(this.cardId, this.sequenceCounter);
+
+    // Add action buttons
+    this.sequenceCounter++;
+    await this.deps.addActionButtons(
+      this.cardId,
+      CONTENT_ELEMENT_ID,
+      ['复制', '重新生成', '继续追问'],
+      this.sequenceCounter,
+    );
 
     this.logger.info('飞书流式完成', {
       chatId: this.chatId,
@@ -102,23 +144,36 @@ export class FeishuStreamAdapter implements ChannelStreamAdapter {
       ? `${this.accumulatedText}\n\n[错误: ${error}]`
       : `[错误: ${error}]`;
 
-    if (this.cardMessageId) {
-      await this.deps.updateCard(this.cardMessageId, errorText);
-    } else {
-      await this.deps.createStreamCard(this.chatId, errorText);
+    if (this.fallbackMode || !this.cardId) {
+      await this.deps.sendTextMessage(this.chatId, errorText);
+      return;
     }
+
+    // Update card with error text then close streaming
+    this.sequenceCounter++;
+    await this.deps.streamUpdateText(
+      this.cardId,
+      CONTENT_ELEMENT_ID,
+      errorText,
+      this.sequenceCounter,
+    );
+
+    this.sequenceCounter++;
+    await this.deps.closeStreamingMode(this.cardId, this.sequenceCounter);
   }
 
   private async flushUpdate(): Promise<void> {
-    if (!this.accumulatedText) return;
+    if (!this.accumulatedText || !this.cardId) return;
 
     this.updateCount++;
     this.lastUpdateTime = Date.now();
+    this.sequenceCounter++;
 
-    if (!this.cardMessageId) {
-      this.cardMessageId = await this.deps.createStreamCard(this.chatId, this.accumulatedText);
-    } else {
-      await this.deps.updateCard(this.cardMessageId, this.accumulatedText);
-    }
+    await this.deps.streamUpdateText(
+      this.cardId,
+      CONTENT_ELEMENT_ID,
+      this.accumulatedText,
+      this.sequenceCounter,
+    );
   }
 }
