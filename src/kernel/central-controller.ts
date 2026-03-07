@@ -426,13 +426,13 @@ export class CentralController {
       task.type = 'chat';
       return this.executeChatPipeline(task);
     }
-    // Admin: use project root as cwd
-    return this.executeChatPipeline(task, { cwdOverride: process.cwd() });
+    // Admin: use project root as cwd, force Claude path for tool access
+    return this.executeChatPipeline(task, { cwdOverride: process.cwd(), forceComplex: true });
   }
 
   private async executeChatPipeline(
     task: Task,
-    options?: { cwdOverride?: string },
+    options?: { cwdOverride?: string; forceComplex?: boolean },
   ): Promise<TaskResult> {
     this.logger.info('处理聊天任务', { traceId: task.traceId, taskId: task.id });
 
@@ -505,6 +505,7 @@ export class CentralController {
       },
       signal: task.signal,
       streamCallback,
+      forceComplex: options?.forceComplex,
     });
 
     if (streamResultPromise) {

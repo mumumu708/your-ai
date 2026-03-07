@@ -20,7 +20,9 @@ src/
 ├── e2e/                             ← 端到端测试
 │   └── core-pipeline.e2e.test.ts
 └── test-utils/                      ← 测试工具
-    └── mock-ov-deps.ts              ← 共享 mock（OpenViking 等外部依赖）
+    ├── index.ts                     ← 统一导出
+    ├── mock-ov-deps.ts              ← 共享 mock（OpenViking 等外部依赖）
+    └── mock-light-llm.ts            ← 共享 mock（LightLLMClient）
 ```
 
 ## 命名规范
@@ -35,12 +37,17 @@ src/
 
 ### 外部依赖 Mock
 
-使用 `src/test-utils/mock-ov-deps.ts` 提供 CentralController 的外部依赖 mock：
+使用 `src/test-utils/` 提供共享 mock：
+
+**`mock-ov-deps.ts`** — CentralController 的外部依赖：
 - `knowledgeRouter` — 返回固定 systemPrompt
 - `ovClient` — 静默成功
 - `contextManager` — 返回 null
 - `configLoader` — 返回固定 AIEOS 配置
 - `postResponseAnalyzer` — 返回 null
+
+**`mock-light-llm.ts`** — LightLLMClient mock：
+- `createMockLightLLM(response?)` — 返回带 complete/stream 的 mock 客户端
 
 ### 单例重置
 

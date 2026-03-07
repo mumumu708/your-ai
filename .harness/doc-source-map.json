@@ -27,6 +27,7 @@
       "doc": ".harness/testing.md",
       "sources": [
         "src/test-utils/mock-ov-deps.ts",
+        "src/test-utils/mock-light-llm.ts",
         "package.json"
       ],
       "description": "测试约定"
