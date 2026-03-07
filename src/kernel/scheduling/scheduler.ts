@@ -1,7 +1,9 @@
 import { Logger } from '../../shared/logging/logger';
+import type { ChannelType } from '../../shared/messaging';
 import type { TaskResult } from '../../shared/tasking/task-result.types';
 import { generateId } from '../../shared/utils/crypto';
 import { CronParser } from './cron-parser';
+import type { JobStore } from './job-store';
 
 // --- Types ---
 
@@ -10,6 +12,7 @@ export interface ScheduleConfig {
   taskTemplate: Record<string, unknown>;
   userId: string;
   description?: string;
+  channel?: ChannelType;
 }
 
 export type JobStatus = 'active' | 'paused' | 'cancelled';
@@ -20,6 +23,7 @@ export interface ScheduledJob {
   taskTemplate: Record<string, unknown>;
   userId: string;
   description: string;
+  channel: ChannelType;
   status: JobStatus;
   nextRunAt: number;
   createdAt: number;
@@ -36,8 +40,13 @@ export class Scheduler {
   private readonly logger = new Logger('Scheduler');
   private readonly jobs = new Map<string, ScheduledJob>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly store: JobStore | null;
   private executor: JobExecutor | null = null;
   private running = false;
+
+  constructor(store?: JobStore) {
+    this.store = store ?? null;
+  }
 
   /**
    * Set the executor callback for when jobs trigger.
@@ -60,6 +69,7 @@ export class Scheduler {
       taskTemplate: config.taskTemplate,
       userId: config.userId,
       description: config.description ?? '',
+      channel: config.channel ?? 'api',
       status: 'active',
       nextRunAt,
       createdAt: Date.now(),
@@ -68,6 +78,7 @@ export class Scheduler {
     };
 
     this.jobs.set(jobId, job);
+    this.persistJobs();
     this.logger.info('Job 已注册', { jobId, cron: config.cronExpression, nextRunAt });
 
     if (this.running) {
@@ -117,6 +128,7 @@ export class Scheduler {
       clearTimeout(timer);
       this.timers.delete(jobId);
     }
+    this.persistJobs();
     this.logger.info('Job 已暂停', { jobId });
     return true;
   }
@@ -133,6 +145,7 @@ export class Scheduler {
     if (this.running) {
       this.scheduleNextRun(job);
     }
+    this.persistJobs();
     this.logger.info('Job 已恢复', { jobId });
     return true;
   }
@@ -150,6 +163,7 @@ export class Scheduler {
       clearTimeout(timer);
       this.timers.delete(jobId);
     }
+    this.persistJobs();
     this.logger.info('Job 已取消', { jobId });
     return true;
   }
@@ -178,6 +192,26 @@ export class Scheduler {
 
   isRunning(): boolean {
     return this.running;
+  }
+
+  /**
+   * Load jobs from persistent store into memory.
+   */
+  async loadJobs(): Promise<void> {
+    if (!this.store) return;
+    const jobs = this.store.load();
+    for (const job of jobs) {
+      this.jobs.set(job.id, job);
+    }
+    this.logger.info('Jobs 已加载', { count: jobs.length });
+  }
+
+  /**
+   * Persist current jobs to store (filters out cancelled).
+   */
+  persistJobs(): void {
+    if (!this.store) return;
+    this.store.save(Array.from(this.jobs.values()));
   }
 
   // --- Private ---
@@ -231,6 +265,8 @@ export class Scheduler {
         completedAt: Date.now(),
       };
     }
+
+    this.persistJobs();
 
     // Schedule next run if still active
     if (job.status === 'active' && this.running) {

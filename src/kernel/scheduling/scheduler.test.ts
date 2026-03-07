@@ -76,8 +76,30 @@ describe('Scheduler', () => {
       expect(job?.status).toBe('active');
       expect(job?.executionCount).toBe(0);
       expect(job?.description).toBe('Morning reminder');
+      expect(job?.channel).toBe('api');
       expect(job?.nextRunAt).toBeGreaterThan(Date.now());
       expect(job?.lastResult).toBeNull();
+    });
+
+    test('channel 应该默认为 api', async () => {
+      const jobId = await scheduler.register({
+        cronExpression: '0 9 * * *',
+        taskTemplate: {},
+        userId: 'user_001',
+      });
+
+      expect(scheduler.getJob(jobId)?.channel).toBe('api');
+    });
+
+    test('应该接受显式传入的 channel', async () => {
+      const jobId = await scheduler.register({
+        cronExpression: '0 9 * * *',
+        taskTemplate: {},
+        userId: 'user_001',
+        channel: 'feishu',
+      });
+
+      expect(scheduler.getJob(jobId)?.channel).toBe('feishu');
     });
   });
 
