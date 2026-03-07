@@ -41,9 +41,16 @@ export class MessageRouter {
 
         // Dispatch response back to the originating channel
         if (result && this.responseDispatcher) {
-          const content = this.extractContent(result);
-          if (content) {
-            await this.responseDispatcher(message.channel, message.userId, content);
+          const data = result.data as Record<string, unknown> | undefined;
+          if (data?.streamed) {
+            this.logger.info('响应已通过流式通道发送，跳过二次分发', {
+              messageId: message.id,
+            });
+          } else {
+            const content = this.extractContent(result);
+            if (content) {
+              await this.responseDispatcher(message.channel, message.userId, content);
+            }
           }
         }
       } catch (error) {
