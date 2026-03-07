@@ -25,6 +25,7 @@ import { EntityManager } from './memory/graph/entity-manager';
 import { OpenVikingClient } from './memory/openviking/openviking-client';
 import { UserConfigLoader } from './memory/user-config-loader';
 import { OnboardingManager } from './onboarding';
+import { JobStore } from './scheduling/job-store';
 import { nlToCron } from './scheduling/nl-to-cron';
 import { Scheduler } from './scheduling/scheduler';
 import { HarnessMutex, SessionManager, SessionSerializer } from './sessioning';
@@ -127,7 +128,7 @@ export class CentralController {
 
   private constructor(deps?: CentralControllerDeps) {
     this.sessionManager = deps?.sessionManager ?? new SessionManager();
-    this.scheduler = deps?.scheduler ?? new Scheduler();
+    this.scheduler = deps?.scheduler ?? new Scheduler(new JobStore());
     this.taskQueue = deps?.taskQueue ?? new TaskQueue();
     this.logger = new Logger('CentralController');
     this.streamHandler = deps?.streamHandler ?? new StreamHandler();
@@ -580,9 +581,14 @@ export class CentralController {
 
     const jobId = await this.scheduler.register({
       cronExpression: nlResult.cron ?? '',
-      taskTemplate: { messageContent: task.message.content },
+      taskTemplate: {
+        messageContent: task.message.content,
+        userName: task.message.userName,
+        conversationId: task.message.conversationId,
+      },
       userId: task.message.userId,
       description: task.message.content,
+      channel: task.message.channel,
     });
 
     return {
@@ -702,5 +708,105 @@ export class CentralController {
   /** Set channel resolver (called after ChannelManager is created) */
   setChannelResolver(resolver: (channelType: string) => IChannel | undefined): void {
     this.channelResolver = resolver;
+  }
+
+  /**
+   * Initialize the scheduler: load persisted jobs, wire executor, start timers.
+   * Must be called after setChannelResolver().
+   */
+  async initScheduler(): Promise<void> {
+    await this.scheduler.loadJobs();
+
+    this.scheduler.setExecutor(async (job) => {
+      const content = (job.taskTemplate.messageContent as string) ?? job.description;
+      const userName = (job.taskTemplate.userName as string) ?? 'scheduler';
+      const conversationId = (job.taskTemplate.conversationId as string) ?? `sched_${job.id}`;
+
+      const message: BotMessage = {
+        id: generateTaskId(),
+        channel: job.channel,
+        userId: job.userId,
+        userName,
+        conversationId,
+        content,
+        contentType: 'text',
+        timestamp: Date.now(),
+        metadata: { isScheduledExecution: true, jobId: job.id },
+      };
+
+      const session = await this.sessionManager.resolveSession(
+        message.userId,
+        message.channel,
+        message.conversationId,
+      );
+
+      // Ensure workspace + config loader
+      if (!session.workspacePath) {
+        const paths = this.workspaceManager.initializeWithMcp({
+          userId: message.userId,
+          tenantId: 'default',
+          workspaceDir: '',
+          userPermissions: ['*'],
+          tenantConfig: {},
+        });
+        session.workspacePath = paths.absolutePath;
+      }
+      if (!session.userConfigLoader) {
+        session.userConfigLoader = new UserConfigLoader(
+          message.userId,
+          this.ovClient,
+          this.configLoader,
+          session.workspacePath!,
+        );
+      }
+
+      const task: Task = {
+        id: generateTaskId(),
+        traceId: generateTraceId(),
+        type: 'chat',
+        message,
+        session,
+        priority: this.calculatePriority('chat'),
+        createdAt: Date.now(),
+        metadata: {
+          userId: message.userId,
+          channel: message.channel,
+          conversationId: message.conversationId,
+          isScheduledExecution: true,
+        },
+      };
+
+      const result = await this.executeChatPipeline(task);
+
+      // Push reply to user via channel
+      const responseText = (result.data as Record<string, unknown>)?.content as string | undefined;
+      if (responseText && this.channelResolver) {
+        const ch = this.channelResolver(job.channel);
+        if (ch) {
+          try {
+            await ch.sendMessage(job.userId, { type: 'text', text: responseText });
+          } catch (err) {
+            this.logger.error('定时任务推送失败', {
+              jobId: job.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      }
+
+      return result;
+    });
+
+    this.scheduler.start();
+    this.logger.info('Scheduler 已初始化并启动');
+  }
+
+  /**
+   * Stop the scheduler and persist jobs.
+   */
+  stopScheduler(): void {
+    this.scheduler.stop();
+    this.scheduler.persistJobs();
+    this.logger.info('Scheduler 已停止并持久化');
   }
 }
