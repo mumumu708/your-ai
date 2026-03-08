@@ -32,7 +32,8 @@
       "sources": [
         "src/test-utils/mock-ov-deps.ts",
         "src/test-utils/mock-light-llm.ts",
-        "package.json"
+        "package.json",
+        "scripts/check-coverage.ts"
       ],
       "description": "测试约定"
     },
