@@ -5,6 +5,9 @@
  *   AgentRuntime.streamCallback → StreamHandler.createStreamCallback → adapters → 客户端
  */
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AgentRuntime } from '../kernel/agents/agent-runtime';
 import type { AgentBridgeResult, ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
 import { CentralController } from '../kernel/central-controller';
@@ -14,6 +17,8 @@ import type { ChannelStreamAdapter, StreamProtocol } from '../kernel/streaming/s
 import type { BotMessage } from '../shared/messaging';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import { createMockOVDeps } from '../test-utils/mock-ov-deps';
+
+const TEST_USER_SPACE = join(tmpdir(), 'your-ai-test-stream');
 
 // ── Helpers ───────────────────────────────────────────────
 
@@ -89,12 +94,18 @@ describe('流式管道集成测试', () => {
 
   beforeEach(() => {
     CentralController.resetInstance();
+    process.env.USER_SPACE_ROOT = TEST_USER_SPACE;
+    // Ensure SOUL.md exists so onboarding is skipped
+    const memDir = join(TEST_USER_SPACE, 'user_stream', 'memory');
+    mkdirSync(memDir, { recursive: true });
+    writeFileSync(join(memDir, 'SOUL.md'), 'Test Agent', 'utf-8');
     logSpy = spyOn(console, 'log').mockImplementation(() => {});
     errorSpy = spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
     CentralController.resetInstance();
+    process.env.USER_SPACE_ROOT = undefined;
     logSpy.mockRestore();
     errorSpy.mockRestore();
   });

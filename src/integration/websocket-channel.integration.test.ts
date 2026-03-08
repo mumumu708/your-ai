@@ -5,6 +5,9 @@
  *   WebSocket Client → WebChannel → MessageRouter → CentralController → AgentRuntime → 响应回推 WS
  */
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ChannelManager } from '../gateway/channel-manager';
 import { WebChannel } from '../gateway/channels/web.gateway';
 import { MessageRouter } from '../gateway/message-router';
@@ -15,6 +18,8 @@ import type { ChannelType } from '../shared/messaging';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import { createMockLightLLM } from '../test-utils/mock-light-llm';
 import { createMockOVDeps } from '../test-utils/mock-ov-deps';
+
+const TEST_USER_SPACE = join(tmpdir(), 'your-ai-test-ws');
 
 const WS_PORT = 19877;
 
@@ -70,6 +75,13 @@ describe('WebSocket 通道集成测试', () => {
 
   beforeEach(() => {
     CentralController.resetInstance();
+    process.env.USER_SPACE_ROOT = TEST_USER_SPACE;
+    // Ensure SOUL.md exists for all test users so onboarding is skipped
+    for (const uid of ['ws_user_1', 'ws_user_2', 'multi_user_1', 'multi_user_2', 'ws_err_user']) {
+      const memDir = join(TEST_USER_SPACE, uid, 'memory');
+      mkdirSync(memDir, { recursive: true });
+      writeFileSync(join(memDir, 'SOUL.md'), 'Test Agent', 'utf-8');
+    }
     logSpy = spyOn(console, 'log').mockImplementation(() => {});
     errorSpy = spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -77,6 +89,7 @@ describe('WebSocket 通道集成测试', () => {
   afterEach(async () => {
     await channelManager?.shutdownAll();
     CentralController.resetInstance();
+    process.env.USER_SPACE_ROOT = undefined;
     logSpy.mockRestore();
     errorSpy.mockRestore();
   });

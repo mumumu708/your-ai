@@ -49,8 +49,10 @@ function createMockOps(): {
   return { ops, files, dirs };
 }
 
+const TEST_USER_SPACE = '/tmp/test-user-space';
+
 describe('FileManager', () => {
-  const BASE = '/user-space/user_001/workspace';
+  const BASE = `${TEST_USER_SPACE}/user_001/workspace`;
 
   describe('path security', () => {
     test('should resolve normal paths within workspace', () => {
