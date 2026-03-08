@@ -11,6 +11,7 @@ export interface IChannel {
   sendStreamChunk(userId: string, chunk: StreamEvent): Promise<void>;
   onMessage(handler: MessageHandler): void;
   downloadFile?(messageId: string, fileKey: string): Promise<Buffer>;
+  createGroupChat?(userId: string, name: string): Promise<string>;
 }
 
 export interface LayerHealth {
