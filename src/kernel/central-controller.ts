@@ -7,7 +7,7 @@ import type { BotMessage } from '../shared/messaging/bot-message.types';
 import type { IChannel } from '../shared/messaging/channel-adapter.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import type { TaskResult } from '../shared/tasking/task-result.types';
-import type { Task, TaskType } from '../shared/tasking/task.types';
+import type { Session, Task, TaskType } from '../shared/tasking/task.types';
 import { isAdminUser } from '../shared/utils/admin';
 import { generateTaskId, generateTraceId } from '../shared/utils/crypto';
 import { AgentRuntime } from './agents/agent-runtime';
@@ -309,6 +309,13 @@ export class CentralController {
         };
       }
 
+      // --- Harness end detection ---
+      const HARNESS_END_PATTERN = /^(结束(任务)?|\/end)\s*$/i;
+      if (session.harnessWorktreeSlotId && HARNESS_END_PATTERN.test(message.content.trim())) {
+        const sessionKey = `${message.userId}:${message.channel}:${message.conversationId}`;
+        return this.handleHarnessEnd(message, session, sessionKey);
+      }
+
       // --- Harness follow-up detection ---
       // If session already has a bound worktree, force harness classification
       let classifyResult: UnifiedClassifyResult;
@@ -475,6 +482,7 @@ export class CentralController {
     const slot = await this.worktreePool.acquire(task.id, branchName);
     session.harnessWorktreeSlotId = slot.id;
     session.harnessWorktreePath = slot.worktreePath;
+    session.harnessBranch = slot.branch;
 
     this.logger.info('Harness 首次消息分配 worktree', {
       taskId: task.id,
@@ -486,6 +494,40 @@ export class CentralController {
       cwdOverride: slot.worktreePath,
       forceComplex: true,
     });
+  }
+
+  private async handleHarnessEnd(
+    message: BotMessage,
+    session: Session,
+    sessionKey: string,
+  ): Promise<TaskResult> {
+    const branch = session.harnessBranch ?? '(unknown)';
+    const messageCount = session.messages.length;
+    const durationMs = Date.now() - session.createdAt;
+    const durationMin = Math.round(durationMs / 60000);
+
+    const summary = [
+      '🏁 Harness 任务结束',
+      `- 分支: \`${branch}\``,
+      `- 消息数: ${messageCount}`,
+      `- 时长: ${durationMin} 分钟`,
+    ].join('\n');
+
+    this.logger.info('Harness 任务结束', {
+      sessionKey,
+      branch,
+      messageCount,
+      durationMin,
+    });
+
+    await this.sessionManager.closeSession(sessionKey);
+
+    return {
+      success: true,
+      taskId: generateTaskId(),
+      data: { content: summary, channel: message.channel },
+      completedAt: Date.now(),
+    };
   }
 
   /**
