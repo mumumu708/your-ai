@@ -8,6 +8,7 @@ function createMockOV(): OpenVikingClient {
     tryRead: mock(async () => null),
     write: mock(async () => {}),
     ls: mock(async () => []),
+    mkdir: mock(async () => {}),
   } as unknown as OpenVikingClient;
 }
 
@@ -105,6 +106,77 @@ describe('UserConfigLoader', () => {
     await loader.loadAll(true);
     // Should fall back to global without calling tryRead
     expect(ov.tryRead).not.toHaveBeenCalled();
+  });
+
+  test('calls mkdir to ensure remote config dir exists', async () => {
+    await loader.loadAll(true);
+    expect(ov.mkdir).toHaveBeenCalledWith('viking://user/user1/config');
+  });
+
+  test('calls mkdir only once across multiple loadAll calls', async () => {
+    await loader.loadAll(true);
+    await loader.loadAll(true);
+    expect(ov.mkdir).toHaveBeenCalledTimes(1);
+  });
+
+  test('handles mkdir failure gracefully', async () => {
+    (ov.mkdir as ReturnType<typeof mock>).mockRejectedValue(new Error('server down'));
+    const config = await loader.loadAll(true);
+    expect(config).toHaveProperty('soul');
+  });
+
+  test('syncs local config files to VikingFS when remote dir is empty', async () => {
+    bunFileSpy.mockRestore();
+    bunFileSpy = spyOn(Bun, 'file').mockImplementation(
+      () =>
+        ({
+          exists: async () => true,
+          text: async () => '# Synced Content',
+        }) as unknown as ReturnType<typeof Bun.file>,
+    );
+
+    await loader.loadAll(true);
+    // 4 config files synced
+    expect(ov.write).toHaveBeenCalledTimes(4);
+    expect(ov.write).toHaveBeenCalledWith('viking://user/user1/config/SOUL.md', '# Synced Content');
+  });
+
+  test('skips sync for files already on VikingFS', async () => {
+    // Remote already has SOUL.md and IDENTITY.md
+    // First ls call is from ensureRemoteDir, returns remote files
+    // Second ls call is from loadAll pre-check
+    (ov.ls as ReturnType<typeof mock>).mockResolvedValue([
+      { name: 'SOUL.md', uri: 'v://u', type: 'file' },
+      { name: 'IDENTITY.md', uri: 'v://u', type: 'file' },
+    ]);
+    bunFileSpy.mockRestore();
+    bunFileSpy = spyOn(Bun, 'file').mockImplementation(
+      () =>
+        ({
+          exists: async () => true,
+          text: async () => '# Content',
+        }) as unknown as ReturnType<typeof Bun.file>,
+    );
+
+    await loader.loadAll(true);
+    // Only USER.md and AGENTS.md should be synced (2 missing remotely)
+    expect(ov.write).toHaveBeenCalledTimes(2);
+  });
+
+  test('skips sync when mkdir fails', async () => {
+    (ov.mkdir as ReturnType<typeof mock>).mockRejectedValue(new Error('down'));
+    bunFileSpy.mockRestore();
+    bunFileSpy = spyOn(Bun, 'file').mockImplementation(
+      () =>
+        ({
+          exists: async () => true,
+          text: async () => '# Content',
+        }) as unknown as ReturnType<typeof Bun.file>,
+    );
+
+    await loader.loadAll(true);
+    // No write should happen since mkdir failed
+    expect(ov.write).not.toHaveBeenCalled();
   });
 
   test('handles ls failure gracefully', async () => {

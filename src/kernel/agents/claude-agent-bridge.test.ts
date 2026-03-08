@@ -73,6 +73,24 @@ function makeResultEvent(
   });
 }
 
+function makeToolUseEvent(name: string, id: string, input: unknown): string {
+  return JSON.stringify({
+    type: 'assistant',
+    message: {
+      content: [{ type: 'tool_use', name, id, input }],
+    },
+  });
+}
+
+function makeToolResultEvent(toolUseId: string, content: string): string {
+  return JSON.stringify({
+    type: 'user',
+    message: {
+      content: [{ type: 'tool_result', tool_use_id: toolUseId, content }],
+    },
+  });
+}
+
 describe('ClaudeAgentBridge', () => {
   let logSpy: ReturnType<typeof spyOn>;
   let errorSpy: ReturnType<typeof spyOn>;
@@ -389,6 +407,93 @@ describe('ClaudeAgentBridge', () => {
       });
 
       expect(result.toolsUsed).toContain('Read');
+    });
+
+    test('tool_use 块应该通过 onStream 发送 tool_use 事件', async () => {
+      const events = [
+        makeInitEvent(),
+        makeToolUseEvent('Bash', 'toolu_001', { command: 'ls -la' }),
+        makeAssistantEvent('done'),
+        makeResultEvent('done'),
+      ];
+
+      spawnSpy = spyOn(Bun, 'spawn').mockReturnValue(mockSpawn(events) as never);
+
+      const bridge = new ClaudeAgentBridge();
+      const streamEvents: StreamEvent[] = [];
+
+      await bridge.execute({
+        sessionId: 's1',
+        messages: [{ role: 'user', content: 'hello' }],
+        onStream: (event) => streamEvents.push(event),
+      });
+
+      const toolUseEvents = streamEvents.filter((e) => e.type === 'tool_use');
+      expect(toolUseEvents).toHaveLength(1);
+      expect(toolUseEvents[0]).toEqual({
+        type: 'tool_use',
+        toolName: 'Bash',
+        toolInput: { command: 'ls -la' },
+      });
+    });
+
+    test('tool_result 应该通过 onStream 发送 tool_result 事件', async () => {
+      const events = [
+        makeInitEvent(),
+        makeToolUseEvent('Bash', 'toolu_001', { command: 'echo hi' }),
+        makeToolResultEvent('toolu_001', 'hi\n'),
+        makeAssistantEvent('done'),
+        makeResultEvent('done'),
+      ];
+
+      spawnSpy = spyOn(Bun, 'spawn').mockReturnValue(mockSpawn(events) as never);
+
+      const bridge = new ClaudeAgentBridge();
+      const streamEvents: StreamEvent[] = [];
+
+      await bridge.execute({
+        sessionId: 's1',
+        messages: [{ role: 'user', content: 'hello' }],
+        onStream: (event) => streamEvents.push(event),
+      });
+
+      const toolResultEvents = streamEvents.filter((e) => e.type === 'tool_result');
+      expect(toolResultEvents).toHaveLength(1);
+      expect(toolResultEvents[0]).toEqual({
+        type: 'tool_result',
+        toolName: 'Bash',
+        text: 'hi\n',
+      });
+    });
+
+    test('tool_use_id 映射应能跨事件正确解析工具名', async () => {
+      const events = [
+        makeInitEvent(),
+        makeToolUseEvent('Read', 'toolu_aaa', { file_path: '/tmp/x' }),
+        makeToolResultEvent('toolu_aaa', 'file content'),
+        makeToolUseEvent('Bash', 'toolu_bbb', { command: 'pwd' }),
+        makeToolResultEvent('toolu_bbb', '/home'),
+        makeAssistantEvent('ok'),
+        makeResultEvent('ok'),
+      ];
+
+      spawnSpy = spyOn(Bun, 'spawn').mockReturnValue(mockSpawn(events) as never);
+
+      const bridge = new ClaudeAgentBridge();
+      const streamEvents: StreamEvent[] = [];
+
+      await bridge.execute({
+        sessionId: 's1',
+        messages: [{ role: 'user', content: 'hello' }],
+        onStream: (event) => streamEvents.push(event),
+      });
+
+      const toolResults = streamEvents.filter((e) => e.type === 'tool_result');
+      expect(toolResults).toHaveLength(2);
+      expect(toolResults[0].toolName).toBe('Read');
+      expect(toolResults[0].text).toBe('file content');
+      expect(toolResults[1].toolName).toBe('Bash');
+      expect(toolResults[1].text).toBe('/home');
     });
   });
 

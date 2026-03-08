@@ -18,6 +18,7 @@ export class UserConfigLoader {
   private lastLoad = 0;
   private readonly cacheTTL = 60_000; // 1 minute
   private readonly localDir: string;
+  private dirEnsured = false;
 
   constructor(
     private readonly userId: string,
@@ -35,8 +36,11 @@ export class UserConfigLoader {
       return this.cache;
     }
 
-    // Pre-check which user config files exist on VikingFS to avoid
-    // noisy server-side FileNotFoundError for missing files
+    // Ensure the user's config directory exists to avoid noisy
+    // server-side FileNotFoundError on ls/read calls
+    await this.ensureRemoteDir();
+
+    // Pre-check which user config files exist on VikingFS
     let remoteFiles: Set<string>;
     try {
       const entries = await this.ov.ls(`${VIKING_USER_CONFIG_URI}/${this.userId}/config`);
@@ -72,7 +76,8 @@ export class UserConfigLoader {
 
     await Bun.write(localPath, content);
 
-    // Sync to VikingFS
+    // Sync to VikingFS (ensure dir exists first)
+    await this.ensureRemoteDir();
     try {
       await this.ov.write(`${VIKING_USER_CONFIG_URI}/${this.userId}/config/${filename}`, content);
     } catch (err) {
@@ -96,7 +101,8 @@ export class UserConfigLoader {
       // fall through
     }
 
-    // Check VikingFS via ls to avoid noisy server errors on missing files
+    // Check VikingFS via ls (ensureRemoteDir avoids noisy server errors)
+    await this.ensureRemoteDir();
     try {
       const entries = await this.ov.ls(`${VIKING_USER_CONFIG_URI}/${this.userId}/config`);
       return entries.some((e) => e.name === filename);
@@ -112,6 +118,45 @@ export class UserConfigLoader {
 
   getLocalDir(): string {
     return this.localDir;
+  }
+
+  private static readonly CONFIG_FILES = ['SOUL.md', 'IDENTITY.md', 'USER.md', 'AGENTS.md'];
+
+  /** Ensure the user's remote config directory exists and sync local files (once per instance) */
+  private async ensureRemoteDir(): Promise<void> {
+    if (this.dirEnsured) return;
+    this.dirEnsured = true;
+
+    const remoteDir = `${VIKING_USER_CONFIG_URI}/${this.userId}/config`;
+    try {
+      await this.ov.mkdir(remoteDir);
+    } catch {
+      // directory may already exist or server unavailable
+      return;
+    }
+
+    // Sync local config files that are missing on VikingFS
+    let remoteFiles: Set<string>;
+    try {
+      const entries = await this.ov.ls(remoteDir);
+      remoteFiles = new Set(entries.map((e) => e.name));
+    } catch {
+      remoteFiles = new Set();
+    }
+
+    for (const filename of UserConfigLoader.CONFIG_FILES) {
+      if (remoteFiles.has(filename)) continue;
+      try {
+        const file = Bun.file(`${this.localDir}/${filename}`);
+        if (await file.exists()) {
+          const content = await file.text();
+          await this.ov.write(`${remoteDir}/${filename}`, content);
+          this.logger.debug('本地配置已同步到 VikingFS', { userId: this.userId, filename });
+        }
+      } catch {
+        // best-effort sync
+      }
+    }
   }
 
   /** Load a single file with three-level fallback */
