@@ -137,8 +137,41 @@ describe('StreamHandler', () => {
 
       await handler.processStream(source, [adapter]);
 
-      const toolChunk = adapter.chunks.find((c) => c.includes('工具调用'));
+      const toolChunk = adapter.chunks.find((c) => c.includes('🔧'));
       expect(toolChunk).toBeDefined();
+      expect(toolChunk).toContain('search');
+    });
+
+    test('tool_use 应该提取关键参数作为提示', async () => {
+      const handler = new StreamHandler({
+        buffer: { flushIntervalMs: 0, maxBufferSize: 1 },
+      });
+      const adapter = createMockAdapter();
+
+      const source = createStreamSource([
+        { type: 'tool_use', toolName: 'Read', toolInput: { file_path: '/src/index.ts' } },
+        { type: 'tool_use', toolName: 'Bash', toolInput: { command: 'bun test' } },
+        {
+          type: 'tool_use',
+          toolName: 'Grep',
+          toolInput: { pattern: 'TODO', path: '/src' },
+        },
+        { type: 'tool_use', toolName: 'unknown_tool', toolInput: { foo: 'bar' } },
+        { type: 'done' },
+      ]);
+
+      await handler.processStream(source, [adapter]);
+
+      const toolChunks = adapter.chunks.filter((c) => c.includes('🔧'));
+      expect(toolChunks).toHaveLength(4);
+      // Read → shows file_path
+      expect(toolChunks[0]).toContain('/src/index.ts');
+      // Bash → shows command
+      expect(toolChunks[1]).toContain('bun test');
+      // Grep → shows pattern
+      expect(toolChunks[2]).toContain('TODO');
+      // unknown_tool → no hint, falls back to generic format
+      expect(toolChunks[3]).toContain('调用 unknown_tool');
     });
 
     test('应该处理 tool_result 事件', async () => {
@@ -154,7 +187,7 @@ describe('StreamHandler', () => {
 
       await handler.processStream(source, [adapter]);
 
-      expect(adapter.chunks.some((c) => c.includes('Found 3 results'))).toBe(true);
+      expect(adapter.chunks.some((c) => c.includes('✅ 完成'))).toBe(true);
     });
 
     test('协议应该包含递增的 sequenceNumber', async () => {

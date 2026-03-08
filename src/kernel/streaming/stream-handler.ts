@@ -76,12 +76,11 @@ export class StreamHandler {
               toolName: event.toolName,
               toolInput: JSON.stringify(event.toolInput),
             });
-            await this.distributeToAdapters(
-              adapters,
-              'chunk',
-              `[工具调用: ${event.toolName}]`,
-              toolProtocol,
-            );
+            const hint = this.extractToolHint(event.toolName, event.toolInput);
+            const label = hint
+              ? `\n> 🔧 ${event.toolName}：${hint}\n`
+              : `\n> 🔧 调用 ${event.toolName} ...\n`;
+            await this.distributeToAdapters(adapters, 'chunk', label, toolProtocol);
             break;
           }
 
@@ -91,7 +90,7 @@ export class StreamHandler {
               toolName: event.toolName,
               toolResult: event.text,
             });
-            await this.distributeToAdapters(adapters, 'chunk', event.text ?? '', resultProtocol);
+            await this.distributeToAdapters(adapters, 'chunk', '> ✅ 完成\n\n', resultProtocol);
             break;
           }
 
@@ -209,6 +208,65 @@ export class StreamHandler {
     protocol: StreamProtocol,
   ): Promise<void> {
     await Promise.allSettled(adapters.map((a) => a.sendChunk(text, protocol)));
+  }
+
+  /**
+   * Extract a short hint from toolInput for display.
+   * Returns null if no meaningful hint can be extracted.
+   */
+  private extractToolHint(toolName?: string, toolInput?: unknown): string | null {
+    if (!toolInput || typeof toolInput !== 'object') return null;
+    const input = toolInput as Record<string, unknown>;
+    const MAX_HINT = 60;
+    const truncate = (s: string): string => (s.length > MAX_HINT ? `${s.slice(0, MAX_HINT)}…` : s);
+
+    // File operation tools
+    if (input.file_path && typeof input.file_path === 'string') {
+      return truncate(input.file_path);
+    }
+    // Bash / shell commands
+    if (input.command && typeof input.command === 'string') {
+      return truncate(input.command);
+    }
+    // Search tools (Grep / search_for_pattern)
+    if (input.pattern && typeof input.pattern === 'string') {
+      return truncate(input.pattern);
+    }
+    if (input.substring_pattern && typeof input.substring_pattern === 'string') {
+      return truncate(input.substring_pattern);
+    }
+    // Glob
+    if (input.glob && typeof input.glob === 'string') {
+      return truncate(input.glob);
+    }
+    // Skill
+    if (input.skill && typeof input.skill === 'string') {
+      return input.skill;
+    }
+    // WebSearch
+    if (input.query && typeof input.query === 'string') {
+      return truncate(input.query);
+    }
+    // WebFetch
+    if (input.url && typeof input.url === 'string') {
+      return truncate(input.url);
+    }
+    // MCP / serena tools — relative_path or name_path
+    if (input.relative_path && typeof input.relative_path === 'string') {
+      return truncate(input.relative_path);
+    }
+    if (input.name_path_pattern && typeof input.name_path_pattern === 'string') {
+      return truncate(input.name_path_pattern);
+    }
+    if (input.name_path && typeof input.name_path === 'string') {
+      return truncate(input.name_path);
+    }
+    // Agent tool
+    if (toolName === 'Agent' && input.description && typeof input.description === 'string') {
+      return truncate(input.description);
+    }
+
+    return null;
   }
 
   private buildProtocol(
