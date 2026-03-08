@@ -42,7 +42,7 @@ export class HarnessMutex {
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.removeWaiter(waiter);
-        reject(new Error('HarnessMutex 超时'));
+        waiter.reject(new Error('HarnessMutex 超时'));
       }, this.timeoutMs);
 
       const waiter = {
