@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { TaskResult } from '../../shared/tasking/task-result.types';
+import type { JobStore } from './job-store';
 import { type ScheduledJob, Scheduler } from './scheduler';
 
 describe('Scheduler', () => {
@@ -209,6 +210,73 @@ describe('Scheduler', () => {
 
       expect(scheduler.listJobs('user_A').length).toBe(2);
       expect(scheduler.listJobs('user_B').length).toBe(1);
+    });
+  });
+
+  describe('loadJobs', () => {
+    test('应该从 store 加载 jobs', async () => {
+      const mockStore = {
+        load: () => [
+          {
+            id: 'job_stored_1',
+            cronExpression: '0 9 * * *',
+            taskTemplate: {},
+            userId: 'user_001',
+            description: 'Stored job',
+            channel: 'api' as const,
+            status: 'active' as const,
+            nextRunAt: Date.now() + 60000,
+            createdAt: Date.now(),
+            executionCount: 0,
+            lastResult: null,
+          },
+        ],
+        save: () => {},
+      } as unknown as JobStore;
+
+      const s = new Scheduler(mockStore);
+      await s.loadJobs();
+
+      expect(s.getJobCount()).toBe(1);
+      expect(s.getJob('job_stored_1')).toBeDefined();
+      s.stop();
+    });
+
+    test('无 store 时 loadJobs 应该直接返回', async () => {
+      const s = new Scheduler();
+      await s.loadJobs();
+      expect(s.getJobCount()).toBe(0);
+    });
+  });
+
+  describe('persistJobs', () => {
+    test('应该持久化 jobs 到 store', async () => {
+      let saveCount = 0;
+      let lastSaved: ScheduledJob[] = [];
+      const mockStore = {
+        load: () => [],
+        save: (jobs: ScheduledJob[]) => {
+          saveCount++;
+          lastSaved = jobs;
+        },
+      } as unknown as JobStore;
+
+      const s = new Scheduler(mockStore);
+      // register calls persistJobs internally
+      await s.register({
+        cronExpression: '0 9 * * *',
+        taskTemplate: {},
+        userId: 'user_001',
+      });
+
+      // save was called once by register
+      expect(saveCount).toBe(1);
+      expect(lastSaved.length).toBe(1);
+
+      // explicit persistJobs call
+      s.persistJobs();
+      expect(saveCount).toBe(2);
+      s.stop();
     });
   });
 

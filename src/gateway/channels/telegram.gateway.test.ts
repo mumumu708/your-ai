@@ -117,6 +117,35 @@ describe('TelegramChannel', () => {
     await channel.sendStreamChunk('123', { type: 'done' });
   });
 
+  test('message handler emits message via emitMessage', async () => {
+    await channel.initialize();
+    const received: import('../../shared/messaging').BotMessage[] = [];
+    channel.onMessage(async (msg) => {
+      received.push(msg);
+    });
+
+    await capturedMessageHandler!({
+      message: {
+        message_id: 99,
+        from: { id: 555, first_name: 'Test' },
+        chat: { id: 777, type: 'private' },
+        text: 'hello via handler',
+        date: 1700000000,
+      },
+    });
+
+    expect(received.length).toBe(1);
+    expect(received[0]?.content).toBe('hello via handler');
+  });
+
+  test('message handler catches errors gracefully', async () => {
+    await channel.initialize();
+
+    // Passing invalid message should trigger catch block
+    await capturedMessageHandler!({ message: null });
+    // Should not throw — error is caught and logged
+  });
+
   test('shutdown stops the bot', async () => {
     await channel.initialize();
     await channel.shutdown();

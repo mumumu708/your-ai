@@ -105,6 +105,23 @@ describe('TelegramStreamAdapter', () => {
     expect(deps.sentMessages[0].text).toContain('timeout');
   });
 
+  test('throttled flush error 应该被捕获', async () => {
+    const deps = createMockDeps();
+    // Make editMessage always reject
+    deps.editMessage = async () => {
+      throw new Error('edit failed');
+    };
+    const adapter = new TelegramStreamAdapter(12345, deps, 200);
+
+    await adapter.onStreamStart('msg_001');
+    await adapter.sendChunk('A', createProtocol()); // sends new message
+    await adapter.sendChunk('B', createProtocol()); // throttled, schedules timer
+
+    // Wait for the timer to fire and trigger flushUpdate → editMessage → catch
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    // Should not throw — error is caught by .catch block (line 51)
+  });
+
   test('2000ms 节流应该限制 editMessage 频率', async () => {
     const deps = createMockDeps();
     const adapter = new TelegramStreamAdapter(12345, deps, 200); // 200ms for test

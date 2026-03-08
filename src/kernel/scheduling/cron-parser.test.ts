@@ -48,6 +48,31 @@ describe('CronParser', () => {
       expect(() => CronParser.parse('60 * * * *')).toThrow('out of range');
       expect(() => CronParser.parse('* 25 * * *')).toThrow('out of range');
     });
+
+    test('应该在步长为0时抛出错误', () => {
+      expect(() => CronParser.parse('*/0 * * * *')).toThrow('step must be > 0');
+    });
+
+    test('应该在范围格式无效时抛出错误', () => {
+      expect(() => CronParser.parse('a-b * * * *')).toThrow('Invalid range');
+    });
+
+    test('应该在单个值无效时抛出错误', () => {
+      expect(() => CronParser.parse('abc * * * *')).toThrow('Invalid value');
+    });
+
+    test('应该正确解析带步长的单个值', () => {
+      // Single number with step e.g. "5/10" means start=5, end=max, step=10
+      const fields = CronParser.parse('5/10 * * * *');
+      expect(fields.minutes).toEqual([5, 15, 25, 35, 45, 55]);
+    });
+
+    test('应该在范围越界时抛出错误', () => {
+      // Range start > end
+      expect(() => CronParser.parse('30-10 * * * *')).toThrow('out of bounds');
+      // Range exceeds max
+      expect(() => CronParser.parse('* * 1-32 * *')).toThrow('out of bounds');
+    });
   });
 
   describe('nextRun', () => {
@@ -92,6 +117,30 @@ describe('CronParser', () => {
       expect(next).not.toBeNull();
       expect(next?.getDate()).toBe(1);
       expect(next?.getMonth()).toBe(1); // February
+    });
+
+    test('应该跳过不匹配的月份', () => {
+      // Only run in March (month=3)
+      const after = new Date('2024-01-15T00:00:00');
+      const next = CronParser.nextRun('0 0 1 3 *', after);
+      expect(next).not.toBeNull();
+      expect(next?.getMonth()).toBe(2); // March (0-indexed)
+      expect(next?.getDate()).toBe(1);
+    });
+
+    test('应该成功返回匹配的时间', () => {
+      // Exact match: next minute
+      const after = new Date('2024-06-15T12:29:00');
+      const next = CronParser.nextRun('30 12 * * *', after);
+      expect(next).not.toBeNull();
+      expect(next?.getMinutes()).toBe(30);
+      expect(next?.getHours()).toBe(12);
+    });
+
+    test('无法匹配时应该返回 null', () => {
+      // February 30th never exists → should exhaust 2-year limit
+      const result = CronParser.nextRun('0 0 30 2 *');
+      expect(result).toBeNull();
     });
   });
 

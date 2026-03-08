@@ -101,6 +101,20 @@ describe('McpConfigUpdater', () => {
     });
   });
 
+  describe('defaultSpawn', () => {
+    test('should use Bun.spawn when no custom spawn is provided', async () => {
+      const spawnSpy = spyOn(Bun, 'spawn').mockReturnValue({
+        exited: Promise.resolve(0),
+      } as never);
+
+      const updater = new McpConfigUpdater(); // no custom spawn
+      await updater.addServer(TEST_DIR, 'test-server', { command: 'echo' });
+
+      expect(spawnSpy).toHaveBeenCalledTimes(1);
+      spawnSpy.mockRestore();
+    });
+  });
+
   describe('listServers', () => {
     test('应该列出所有已配置的 Server', () => {
       writeMcpJson({

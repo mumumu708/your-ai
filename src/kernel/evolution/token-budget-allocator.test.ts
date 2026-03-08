@@ -91,5 +91,28 @@ describe('TokenBudgetAllocator', () => {
       const totalTokens = result.reduce((sum, f) => sum + f.tokens, 0);
       expect(totalTokens).toBeLessThanOrEqual(60);
     });
+
+    test('handles workspace source mapping to session bucket', () => {
+      const fragments = [makeFragment('workspace' as KnowledgeFragment['source'], 'ws data', 3)];
+      const result = allocator.allocate(fragments, 100);
+      expect(result.length).toBe(1);
+    });
+  });
+
+  describe('trimFragment (additional coverage)', () => {
+    test('trims at plain character boundary when no good sentence break', () => {
+      // A long string with no sentence enders near the trim point
+      const content = 'word '.repeat(100); // No periods, just words
+      const fragment = makeFragment('identity', content, 10);
+      const result = allocator.trimFragment(fragment, 5);
+      expect(result.tokens).toBeLessThanOrEqual(5 + 1);
+    });
+
+    test('trims with various sentence enders (Chinese punctuation)', () => {
+      const content = `${'第一句话。第二句话！第三句话？'}${'x'.repeat(100)}`;
+      const fragment = makeFragment('identity', content, 10);
+      const result = allocator.trimFragment(fragment, 8);
+      expect(result.content.length).toBeLessThan(content.length);
+    });
   });
 });
