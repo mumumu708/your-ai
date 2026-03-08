@@ -1,6 +1,7 @@
 export { CronParser, type CronFields } from './cron-parser';
 export { JobStore } from './job-store';
 export { nlToCron, type NlToCronResult } from './nl-to-cron';
+export { ScheduleCancelManager } from './schedule-cancel-manager';
 export {
   Scheduler,
   type ScheduleConfig,

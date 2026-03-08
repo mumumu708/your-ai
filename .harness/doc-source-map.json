@@ -16,7 +16,8 @@
         "src/kernel/sessioning/git-operations.ts",
         "src/kernel/sessioning/branch-name-generator.ts",
         "src/kernel/scheduling/scheduler.ts",
-        "src/kernel/scheduling/job-store.ts"
+        "src/kernel/scheduling/job-store.ts",
+        "src/kernel/scheduling/schedule-cancel-manager.ts"
       ],
       "description": "架构概览"
     },
@@ -117,6 +118,17 @@
         "config/AGENTS.md"
       ],
       "description": "新用户引导系统"
+    },
+    {
+      "doc": ".harness/design-docs/009-scheduler-lifecycle.md",
+      "sources": [
+        "src/kernel/scheduling/scheduler.ts",
+        "src/kernel/scheduling/job-store.ts",
+        "src/kernel/scheduling/schedule-cancel-manager.ts",
+        "src/kernel/central-controller.ts",
+        "src/kernel/classifier/task-classifier.ts"
+      ],
+      "description": "Scheduler 生命周期与持久化"
     }
   ]
 }

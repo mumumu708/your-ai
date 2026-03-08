@@ -5,6 +5,7 @@ import type { BotMessage } from '../shared/messaging/bot-message.types';
 import type { IChannel } from '../shared/messaging/channel-adapter.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import { AgentRuntime } from './agents/agent-runtime';
+import type { LightLLMClient } from './agents/light-llm-client';
 import { CentralController } from './central-controller';
 import type { CentralControllerDeps } from './central-controller';
 import type { EvolutionScheduler } from './evolution/evolution-scheduler';
@@ -120,25 +121,34 @@ describe('CentralController', () => {
       expect(result.taskType).toBe('chat');
     });
 
-    test('应该将包含"每天"的消息分类为定时任务', async () => {
+    test('定时任务现在由 LLM 分类（不再规则匹配）', async () => {
+      // Without LLM, schedule-like messages fall through to chat (LLM fallback)
       const controller = CentralController.getInstance();
-      const message = createMockMessage({ content: '每天早上提醒我喝水' });
+      const message = createMockMessage({ content: '每天早上9点提醒我喝水吃药' });
       const result = await controller.classifyIntent(message);
-      expect(result.taskType).toBe('scheduled');
+      // No rule match, no LLM → defaults to chat
+      expect(result.classifiedBy).toBe('llm');
     });
 
-    test('应该将包含"提醒我"的消息分类为定时任务', async () => {
-      const controller = CentralController.getInstance();
-      const message = createMockMessage({ content: '提醒我下午3点开会' });
+    test('带 LLM 的分类器应正确识别定时任务及 subIntent', async () => {
+      const { TaskClassifier: TC } = await import('./classifier/task-classifier');
+      const mockLLM = {
+        complete: async () => ({
+          content:
+            '{"taskType":"scheduled","complexity":"complex","subIntent":"cancel","reason":"取消定时"}',
+          usage: { promptTokens: 10, completionTokens: 5, totalCost: 0.0001 },
+        }),
+        stream: async function* () {
+          yield { content: 'test' };
+        },
+        getDefaultModel: () => 'gpt-4o-mini',
+      } as unknown as LightLLMClient;
+      const classifier = new TC(mockLLM);
+      const controller = CentralController.getInstance({ classifier, ...createMockOVDeps() });
+      const message = createMockMessage({ content: '我想取消之前设置的定时任务' });
       const result = await controller.classifyIntent(message);
       expect(result.taskType).toBe('scheduled');
-    });
-
-    test('应该将英文定时模式分类为定时任务', async () => {
-      const controller = CentralController.getInstance();
-      const message = createMockMessage({ content: 'remind me every day at 9:00' });
-      const result = await controller.classifyIntent(message);
-      expect(result.taskType).toBe('scheduled');
+      expect(result.subIntent).toBe('cancel');
     });
 
     test('应该将包含"自动化"的消息分类为自动化任务', async () => {
@@ -297,6 +307,90 @@ describe('CentralController', () => {
       const result = await controller.orchestrate(task);
       expect(registerSpy).toHaveBeenCalledTimes(1);
       expect(result.success).toBe(true);
+    });
+
+    test('subIntent=cancel 时应启动取消流程', async () => {
+      const scheduler = new Scheduler();
+      spyOn(scheduler, 'listJobs').mockReturnValue([]);
+      const controller = CentralController.getInstance({ scheduler, ...createMockOVDeps() });
+
+      const session = {
+        id: 'sess_001',
+        userId: 'user_001',
+        channel: 'web',
+        conversationId: 'conv_001',
+        status: 'active' as const,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        agentConfig: { maxContextTokens: 100000 },
+        messages: [],
+      };
+
+      const task = {
+        id: 'task_cancel',
+        traceId: 'trace_cancel',
+        type: 'scheduled' as const,
+        message: createMockMessage({ content: '取消定时任务' }),
+        session,
+        priority: 10,
+        createdAt: Date.now(),
+        metadata: { userId: 'user_001', channel: 'web', conversationId: 'conv_001' },
+        classifyResult: {
+          taskType: 'scheduled' as const,
+          subIntent: 'cancel',
+          complexity: 'complex' as const,
+          reason: 'test',
+          confidence: 0.75,
+          classifiedBy: 'llm' as const,
+          costUsd: 0,
+        },
+      };
+
+      const result = await controller.orchestrate(task);
+      expect(result.success).toBe(true);
+      expect((result.data as { content: string }).content).toContain('没有活跃的定时任务');
+    });
+
+    test('subIntent=list 时应返回任务列表', async () => {
+      const scheduler = new Scheduler();
+      spyOn(scheduler, 'listJobs').mockReturnValue([]);
+      const controller = CentralController.getInstance({ scheduler, ...createMockOVDeps() });
+
+      const session = {
+        id: 'sess_001',
+        userId: 'user_001',
+        channel: 'web',
+        conversationId: 'conv_001',
+        status: 'active' as const,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        agentConfig: { maxContextTokens: 100000 },
+        messages: [],
+      };
+
+      const task = {
+        id: 'task_list',
+        traceId: 'trace_list',
+        type: 'scheduled' as const,
+        message: createMockMessage({ content: '查看定时任务' }),
+        session,
+        priority: 10,
+        createdAt: Date.now(),
+        metadata: { userId: 'user_001', channel: 'web', conversationId: 'conv_001' },
+        classifyResult: {
+          taskType: 'scheduled' as const,
+          subIntent: 'list',
+          complexity: 'complex' as const,
+          reason: 'test',
+          confidence: 0.75,
+          classifiedBy: 'llm' as const,
+          costUsd: 0,
+        },
+      };
+
+      const result = await controller.orchestrate(task);
+      expect(result.success).toBe(true);
+      expect((result.data as { content: string }).content).toContain('没有活跃的定时任务');
     });
 
     test('应该对系统任务返回成功结果', async () => {
@@ -1654,7 +1748,11 @@ describe('CentralController', () => {
           ...createMockOVDeps(),
         });
 
-        const session = await sessionManager.resolveSession('user_test_001', 'web', 'conv_test_001');
+        const session = await sessionManager.resolveSession(
+          'user_test_001',
+          'web',
+          'conv_test_001',
+        );
         session.harnessWorktreeSlotId = 'slot';
         session.harnessWorktreePath = '/tmp/wt';
         session.harnessBranch = 'agent/fix/x';

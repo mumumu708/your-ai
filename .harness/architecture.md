@@ -44,7 +44,7 @@
 │    error-to-rule-pipeline.ts — 错误→规则管道                    │
 │  onboarding/           — 新用户引导（多步对话状态机）              │
 │  sessioning/           — 会话管理 · 消息序列化 · WorktreePool 并行隔离 │
-│  scheduling/           — 定时任务（NL→Cron 解析 + 调度器 + JobStore 持久化）│
+│  scheduling/           — 定时任务（NL→Cron + 调度器 + 取消管理 + JobStore）│
 │  skills/               — 技能管理与部署                          │
 │  workspace/            — 用户工作空间初始化 + MCP 配置            │
 │  streaming/            — 流式输出处理                            │

@@ -18,9 +18,7 @@ const mockPatch = mock(() => Promise.resolve({}));
 const mockMessageResourceGet = mock(() =>
   Promise.resolve(createMockFileResponse(Buffer.from('file-content'))),
 );
-const mockChatCreate = mock(() =>
-  Promise.resolve({ data: { chat_id: 'oc_mock_group_123' } }),
-);
+const mockChatCreate = mock(() => Promise.resolve({ data: { chat_id: 'oc_mock_group_123' } }));
 const mockWsStart = mock(() => Promise.resolve());
 const mockWsClose = mock(() => {});
 let _capturedEventHandler: ((data: unknown) => Promise<void>) | null = null;

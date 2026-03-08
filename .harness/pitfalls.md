@@ -23,6 +23,7 @@ Agent 每次犯错后须追加一条，随代码一起提交。管理员 review 
 | P-017 | setTimeout delay 超过 2^31-1 溢出为 1ms | `setTimeout(fn, delay)` 的 delay 参数是 32 位有符号整数，超过 2147483647 会溢出变为立即执行。需分段等待（递归调度） |
 | P-018 | 一次性任务（空 cron）执行后无限重调度 | 空 cron job `calculateNextRun` 返回 365 天后，但仍会无限重调度。执行后应标记 `status='completed'` 终止循环 |
 | P-019 | executor 重放原始命令而非任务内容 | `taskTemplate.messageContent` 应使用从原文提取的任务内容（如"给我发消息"），而非包含调度前缀的完整命令 |
+| P-020 | 定时任务相关测试消息被 SIMPLE_PATTERNS 规则拦截 | `SCHEDULE_PATTERNS` 已清空，定时任务由 LLM 分类。但中文消息≤10字符会被 `^.{1,10}$` 匹配为 chat+simple，绕过 LLM。测试消息须 >10 字符 |
 
 ---
 
