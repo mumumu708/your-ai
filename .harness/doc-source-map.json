@@ -12,6 +12,9 @@
         "src/kernel/evolution/knowledge-router.ts",
         "src/kernel/sessioning/session-serializer.ts",
         "src/kernel/sessioning/harness-mutex.ts",
+        "src/kernel/sessioning/worktree-pool.ts",
+        "src/kernel/sessioning/git-operations.ts",
+        "src/kernel/sessioning/branch-name-generator.ts",
         "src/kernel/scheduling/scheduler.ts",
         "src/kernel/scheduling/job-store.ts"
       ],

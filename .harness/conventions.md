@@ -94,5 +94,5 @@ static resetInstance(): void  // 仅用于测试
 
 - 同一会话的消息通过 `SessionSerializer` 串行化，key 为 `${userId}:${channel}:${conversationId}`
 - 不同会话可并行处理，互不阻塞
-- Harness 任务额外通过 `HarnessMutex` 全局互斥，防止并发操作 git 工作目录
-- 序列化器和互斥锁均采用 waiter-queue + 超时模式，`try/finally` 保证锁释放
+- Harness 任务通过 `WorktreePool` 并行隔离，每个任务在独立 git worktree 中执行（最多 5 并发）
+- 序列化器和 WorktreePool 均采用 waiter-queue + 超时模式，`try/finally` 保证资源释放

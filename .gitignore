@@ -10,3 +10,6 @@ user-space/*/
 *.log
 openviking-data/*
 .serena/*
+
+# Harness worktrees
+.worktrees/
