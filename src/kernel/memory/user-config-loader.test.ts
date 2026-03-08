@@ -163,8 +163,8 @@ describe('UserConfigLoader', () => {
     expect(ov.write).toHaveBeenCalledTimes(2);
   });
 
-  test('skips sync when mkdir fails', async () => {
-    (ov.mkdir as ReturnType<typeof mock>).mockRejectedValue(new Error('down'));
+  test('continues sync even when mkdir fails (directory may already exist)', async () => {
+    (ov.mkdir as ReturnType<typeof mock>).mockRejectedValue(new Error('already exists'));
     bunFileSpy.mockRestore();
     bunFileSpy = spyOn(Bun, 'file').mockImplementation(
       () =>
@@ -175,8 +175,8 @@ describe('UserConfigLoader', () => {
     );
 
     await loader.loadAll(true);
-    // No write should happen since mkdir failed
-    expect(ov.write).not.toHaveBeenCalled();
+    // Sync should proceed: all 4 config files missing remotely (ls returns []), all local files exist
+    expect(ov.write).toHaveBeenCalledTimes(4);
   });
 
   test('handles ls failure gracefully', async () => {

@@ -16,6 +16,9 @@ Agent 每次犯错后须追加一条，随代码一起提交。管理员 review 
 | P-010 | 忘记在新模块的 index.ts 中导出公开 API | 每个 kernel 子模块必须有 index.ts，导出外部需要的类/类型/函数 |
 | P-011 | Harness 任务被路由到 LightLLM（无工具访问） | Harness 任务必须 forceComplex 走 Claude 路径，LightLLM 无法执行 bash/git |
 | P-012 | shared/ 类型文件间循环依赖 | shared/ 中的类型文件互相 import 会造成循环。解决：用 inline 联合类型代替跨文件 import（如 UnifiedClassifyResult 中 taskType 直接写联合字面量而非 import TaskType） |
+| P-013 | catch 块中 return 误杀后续逻辑 | `try { mkdir() } catch { return; }` 会阻止后续 sync 逻辑。"目录已存在"是正常情况，catch 应仅消化异常而非 return |
+| P-014 | 飞书 API 响应需通过 resp.data 访问 | Lark SDK v3 的 `im.chat.create` 等 API 返回 `{ data: { chat_id } }` 而非直接 `{ chat_id }`，忘记 `.data` 会导致 TS 编译错误和运行时 undefined |
+| P-015 | 流式卡片 sendDone 传入空内容 | 飞书 streamUpdateText API 要求非空文本，当 LLM 返回空内容时需降级为占位文本，否则返回 99992402 field validation failed |
 
 ---
 

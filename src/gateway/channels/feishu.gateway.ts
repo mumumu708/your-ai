@@ -48,13 +48,14 @@ export class FeishuChannel extends BaseChannel {
         chat_type: 'group',
       },
     });
-    if (!resp.chat_id) {
+    const chatId = resp.data?.chat_id;
+    if (!chatId) {
       throw new YourBotError(ERROR_CODES.INVALID_CHANNEL, '飞书群聊创建失败：未返回 chat_id', {
         userId,
         name,
       });
     }
-    return resp.chat_id;
+    return chatId;
   }
 
   async initialize(): Promise<void> {

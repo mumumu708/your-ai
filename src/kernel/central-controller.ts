@@ -326,6 +326,11 @@ export class CentralController {
       }
 
       // --- Harness group chat creation (feishu only) ---
+      if (classifyResult.taskType === 'harness' && !isAdminUser(message.userId)) {
+        this.logger.warn('非管理员用户触发 harness，降级为普通对话', {
+          userId: message.userId,
+        });
+      }
       if (
         classifyResult.taskType === 'harness' &&
         isAdminUser(message.userId) &&
@@ -493,7 +498,17 @@ export class CentralController {
     if (!channel?.createGroupChat) return null;
 
     const taskDesc = message.content.replace(/^\/harness\s*/i, '').slice(0, 40);
-    const groupChatId = await channel.createGroupChat(message.userId, `Harness: ${taskDesc}`);
+
+    let groupChatId: string;
+    try {
+      groupChatId = await channel.createGroupChat(message.userId, `Harness: ${taskDesc}`);
+    } catch (error) {
+      this.logger.error('Harness 群聊创建失败，继续使用当前会话', {
+        userId: message.userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
 
     await channel.sendMessage(message.userId, {
       type: 'text',
