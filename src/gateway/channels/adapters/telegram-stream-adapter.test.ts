@@ -122,6 +122,22 @@ describe('TelegramStreamAdapter', () => {
     // Should not throw — error is caught by .catch block (line 51)
   });
 
+  test('超长内容应该被截断保护', async () => {
+    const deps = createMockDeps();
+    const adapter = new TelegramStreamAdapter(12345, deps, 0);
+
+    await adapter.onStreamStart('msg_001');
+
+    // Send a chunk that exceeds 10000 chars
+    const longText = 'x'.repeat(12000);
+    await adapter.sendChunk(longText, createProtocol());
+
+    expect(deps.sentMessages.length).toBe(1);
+    const sentText = deps.sentMessages[0].text;
+    expect(sentText.length).toBeLessThanOrEqual(10000);
+    expect(sentText).toContain('truncated');
+  });
+
   test('2000ms 节流应该限制 editMessage 频率', async () => {
     const deps = createMockDeps();
     const adapter = new TelegramStreamAdapter(12345, deps, 200); // 200ms for test

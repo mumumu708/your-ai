@@ -9,6 +9,8 @@ export interface TelegramStreamDeps {
   editMessage(chatId: number, messageId: number, text: string): Promise<void>;
 }
 
+const MAX_MESSAGE_CONTENT_LENGTH = 10000;
+
 export class TelegramStreamAdapter implements ChannelStreamAdapter {
   readonly channelType = 'telegram';
 
@@ -38,6 +40,11 @@ export class TelegramStreamAdapter implements ChannelStreamAdapter {
 
   async sendChunk(text: string, _protocol: StreamProtocol): Promise<void> {
     this.accumulatedText += text;
+
+    if (this.accumulatedText.length > MAX_MESSAGE_CONTENT_LENGTH) {
+      const keep = MAX_MESSAGE_CONTENT_LENGTH - 100;
+      this.accumulatedText = `... (truncated)\n\n${this.accumulatedText.slice(-keep)}`;
+    }
 
     const now = Date.now();
     const timeSinceLastUpdate = now - this.lastUpdateTime;

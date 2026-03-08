@@ -230,6 +230,22 @@ describe('FeishuStreamAdapter', () => {
     expect(errorSpy).toHaveBeenCalled();
   });
 
+  test('超长内容应该被截断保护', async () => {
+    const deps = createMockDeps();
+    const adapter = new FeishuStreamAdapter('chat_001', deps, 0);
+
+    await adapter.onStreamStart('msg_001');
+
+    // Send a chunk that exceeds 28000 chars
+    const longText = 'x'.repeat(30000);
+    await adapter.sendChunk(longText, createProtocol());
+
+    expect(deps.textUpdates.length).toBe(1);
+    const updatedText = deps.textUpdates[0].text;
+    expect(updatedText.length).toBeLessThanOrEqual(28000);
+    expect(updatedText).toContain('内容已截断');
+  });
+
   test('sequence 应该严格递增', async () => {
     const deps = createMockDeps();
     const adapter = new FeishuStreamAdapter('chat_001', deps, 0);
