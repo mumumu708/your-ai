@@ -1,3 +1,4 @@
+import type { UnifiedClassifyResult } from '../classifier/classifier-types';
 import type { StreamEvent } from '../messaging/stream-event.types';
 import type { AgentConfig } from './agent-config.types';
 
@@ -46,6 +47,8 @@ export interface AgentExecuteParams {
   streamCallback?: (event: StreamEvent) => void;
   /** Force complex (Claude) path, bypassing complexity classification. Used for harness tasks. */
   forceComplex?: boolean;
+  /** Pre-computed classification result from CentralController. */
+  classifyResult?: UnifiedClassifyResult;
 }
 
 export interface AgentResult {
