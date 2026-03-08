@@ -46,6 +46,7 @@
       "sources": [
         "src/shared/tasking/task.types.ts",
         "src/shared/classifier/classifier-types.ts",
+        "src/shared/messaging/channel-adapter.types.ts",
         "src/kernel/memory/config-loader.ts",
         "src/kernel/memory/user-config-loader.ts",
         "config/SOUL.md",

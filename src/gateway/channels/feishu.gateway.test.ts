@@ -18,6 +18,7 @@ const mockPatch = mock(() => Promise.resolve({}));
 const mockMessageResourceGet = mock(() =>
   Promise.resolve(createMockFileResponse(Buffer.from('file-content'))),
 );
+const mockChatCreate = mock(() => Promise.resolve({ chat_id: 'oc_mock_group_123' }));
 const mockWsStart = mock(() => Promise.resolve());
 const mockWsClose = mock(() => {});
 let _capturedEventHandler: ((data: unknown) => Promise<void>) | null = null;
@@ -32,6 +33,9 @@ mock.module('@larksuiteoapi/node-sdk', () => ({
       },
       messageResource: {
         get: mockMessageResourceGet,
+      },
+      chat: {
+        create: mockChatCreate,
       },
     };
   },
@@ -59,6 +63,7 @@ describe('FeishuChannel', () => {
     mockCreate.mockClear();
     mockPatch.mockClear();
     mockMessageResourceGet.mockClear();
+    mockChatCreate.mockClear();
     mockWsStart.mockClear();
     mockWsClose.mockClear();
     _capturedEventHandler = null;
@@ -313,5 +318,43 @@ describe('FeishuChannel', () => {
     expect(mockWsClose).toHaveBeenCalledTimes(1);
     expect(mockWsClose.mock.calls[0]?.[0]).toEqual({ force: true });
     expect(channel.isConnected()).toBe(false);
+  });
+
+  describe('createGroupChat', () => {
+    test('should call im.chat.create with correct params and return chatId', async () => {
+      await channel.initialize();
+      const chatId = await channel.createGroupChat('ou_user_123', 'Harness: fix bug');
+      expect(mockChatCreate).toHaveBeenCalledTimes(1);
+      const callArgs = mockChatCreate.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(callArgs.params).toEqual({ user_id_type: 'open_id' });
+      const data = callArgs.data as Record<string, unknown>;
+      expect(data.name).toBe('Harness: fix bug');
+      expect(data.user_id_list).toEqual(['ou_user_123']);
+      expect(data.chat_type).toBe('group');
+      expect(chatId).toBe('oc_mock_group_123');
+    });
+
+    test('should truncate name to 60 chars', async () => {
+      await channel.initialize();
+      const longName = 'A'.repeat(100);
+      await channel.createGroupChat('ou_user_123', longName);
+      const callArgs = mockChatCreate.mock.calls[0]?.[0] as Record<string, unknown>;
+      const data = callArgs.data as Record<string, unknown>;
+      expect((data.name as string).length).toBe(60);
+    });
+
+    test('should throw when chat_id is not returned', async () => {
+      await channel.initialize();
+      mockChatCreate.mockResolvedValueOnce({});
+      await expect(channel.createGroupChat('ou_user_123', 'Test')).rejects.toThrow(
+        '飞书群聊创建失败',
+      );
+    });
+
+    test('should propagate SDK errors', async () => {
+      await channel.initialize();
+      mockChatCreate.mockRejectedValueOnce(new Error('SDK error'));
+      await expect(channel.createGroupChat('ou_user_123', 'Test')).rejects.toThrow('SDK error');
+    });
   });
 });

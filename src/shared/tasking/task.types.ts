@@ -31,6 +31,10 @@ export interface Session {
   claudeSessionId?: string;
   // biome-ignore lint/suspicious/noExplicitAny: opaque kernel type stored on session
   userConfigLoader?: any;
+  // Harness worktree binding — persists across messages in the same session
+  harnessWorktreeSlotId?: string;
+  harnessWorktreePath?: string;
+  harnessGroupChatId?: string;
 }
 
 export interface Task {

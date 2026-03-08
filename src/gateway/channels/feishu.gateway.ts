@@ -39,6 +39,24 @@ export class FeishuChannel extends BaseChannel {
     return this.client;
   }
 
+  async createGroupChat(userId: string, name: string): Promise<string> {
+    const resp = await this.client.im.chat.create({
+      params: { user_id_type: 'open_id' },
+      data: {
+        name: name.slice(0, 60),
+        user_id_list: [userId],
+        chat_type: 'group',
+      },
+    });
+    if (!resp.chat_id) {
+      throw new YourBotError(ERROR_CODES.INVALID_CHANNEL, '飞书群聊创建失败：未返回 chat_id', {
+        userId,
+        name,
+      });
+    }
+    return resp.chat_id;
+  }
+
   async initialize(): Promise<void> {
     this.logger.info('飞书通道初始化', { appId: this.config.appId });
 

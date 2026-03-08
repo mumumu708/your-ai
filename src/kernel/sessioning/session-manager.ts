@@ -9,6 +9,7 @@ import { WorkingMemory } from '../memory/working-memory';
 export type SessionCloseCallback = (
   summary: SessionSummary,
   sessionId: string,
+  session: Session,
 ) => void | Promise<void>;
 
 export class SessionManager {
@@ -146,7 +147,7 @@ export class SessionManager {
     });
 
     if (this.onSessionClose) {
-      await this.onSessionClose(summary, session.id);
+      await this.onSessionClose(summary, session.id, session);
     }
 
     return summary;

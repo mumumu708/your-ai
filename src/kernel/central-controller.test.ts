@@ -1041,16 +1041,15 @@ describe('CentralController', () => {
       });
 
       const worktreePool = {
-        run: async (_taskId: string, _branch: string, fn: (slot: unknown) => Promise<unknown>) => {
-          return fn({
-            id: 'harness-mock',
-            branch: 'agent/fix/mock',
-            worktreePath: '/tmp/worktree-mock',
-            taskId: _taskId,
-            createdAt: Date.now(),
-          });
-        },
-      } as CentralControllerDeps['worktreePool'];
+        acquire: async (taskId: string, branch: string) => ({
+          id: 'harness-mock',
+          branch,
+          worktreePath: '/tmp/worktree-mock',
+          taskId,
+          createdAt: Date.now(),
+        }),
+        release: async () => {},
+      } as unknown as CentralControllerDeps['worktreePool'];
 
       const controller = CentralController.getInstance({
         agentRuntime,
@@ -1134,18 +1133,19 @@ describe('CentralController', () => {
       let capturedTaskId = '';
       let capturedBranch = '';
       const worktreePool = {
-        run: async (taskId: string, branch: string, fn: (slot: unknown) => Promise<unknown>) => {
+        acquire: async (taskId: string, branch: string) => {
           capturedTaskId = taskId;
           capturedBranch = branch;
-          return fn({
+          return {
             id: 'harness-mock',
             branch,
             worktreePath: '/tmp/worktree-harness',
             taskId,
             createdAt: Date.now(),
-          });
+          };
         },
-      } as CentralControllerDeps['worktreePool'];
+        release: async () => {},
+      } as unknown as CentralControllerDeps['worktreePool'];
 
       const controller = CentralController.getInstance({
         agentRuntime,
@@ -1187,7 +1187,7 @@ describe('CentralController', () => {
       expect(context.workspacePath).toBe('/tmp/worktree-harness');
       // Harness tasks must force complex (Claude) path
       expect(callArgs.forceComplex).toBe(true);
-      // worktreePool.run should have been called with the task id
+      // worktreePool.acquire should have been called with the task id
       expect(capturedTaskId).toBe('task_002');
       expect(capturedBranch).toMatch(/^agent\/fix\//);
 
@@ -1236,6 +1236,332 @@ describe('CentralController', () => {
       await controller.orchestrate(task);
       const callArgs = executeSpy.mock.calls[0][0] as Record<string, unknown>;
       expect(callArgs.forceComplex).toBeUndefined();
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        process.env.ADMIN_USER_IDS = undefined;
+      }
+    });
+
+    test('后续 harness 消息应复用 session 中的 worktree', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'feishu:admin_user';
+
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute');
+
+      let acquireCount = 0;
+      const worktreePool = {
+        acquire: async (taskId: string, branch: string) => {
+          acquireCount++;
+          return {
+            id: 'harness-slot-1',
+            branch,
+            worktreePath: '/tmp/worktree-persist',
+            taskId,
+            createdAt: Date.now(),
+          };
+        },
+        release: async () => {},
+      } as unknown as CentralControllerDeps['worktreePool'];
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        worktreePool,
+        ...createMockOVDeps(),
+      });
+
+      // Session already has worktree bound (simulating follow-up message)
+      const session = {
+        id: 'sess_followup',
+        userId: 'feishu:admin_user',
+        channel: 'feishu',
+        conversationId: 'conv_followup',
+        status: 'active' as const,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        agentConfig: { maxContextTokens: 100000 },
+        messages: [],
+        workspacePath: '/tmp/user-space/feishu:admin_user',
+        harnessWorktreeSlotId: 'harness-slot-1',
+        harnessWorktreePath: '/tmp/worktree-persist',
+      };
+
+      const task = {
+        id: 'task_followup',
+        traceId: 'trace_followup',
+        type: 'harness' as const,
+        message: createMockMessage({
+          userId: 'feishu:admin_user',
+          content: '继续修改代码',
+        }),
+        session,
+        priority: 2,
+        createdAt: Date.now(),
+        metadata: {
+          userId: 'feishu:admin_user',
+          channel: 'feishu',
+          conversationId: 'conv_followup',
+        },
+      };
+
+      await controller.orchestrate(task);
+      // Should NOT call acquire — worktree already bound
+      expect(acquireCount).toBe(0);
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+
+      const callArgs = executeSpy.mock.calls[0][0] as Record<string, unknown>;
+      const context = callArgs.context as Record<string, unknown>;
+      expect(context.workspacePath).toBe('/tmp/worktree-persist');
+      expect(callArgs.forceComplex).toBe(true);
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        process.env.ADMIN_USER_IDS = undefined;
+      }
+    });
+
+    test('首次 harness 消息应 acquire worktree 并绑定到 session', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'feishu:admin_user';
+
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+
+      const worktreePool = {
+        acquire: async (taskId: string, branch: string) => ({
+          id: 'harness-new-slot',
+          branch,
+          worktreePath: '/tmp/worktree-new',
+          taskId,
+          createdAt: Date.now(),
+        }),
+        release: async () => {},
+      } as unknown as CentralControllerDeps['worktreePool'];
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        worktreePool,
+        ...createMockOVDeps(),
+      });
+
+      const session = {
+        id: 'sess_first',
+        userId: 'feishu:admin_user',
+        channel: 'feishu',
+        conversationId: 'conv_first',
+        status: 'active' as const,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        agentConfig: { maxContextTokens: 100000 },
+        messages: [],
+        workspacePath: '/tmp/user-space/feishu:admin_user',
+      };
+
+      const task = {
+        id: 'task_first',
+        traceId: 'trace_first',
+        type: 'harness' as const,
+        message: createMockMessage({
+          userId: 'feishu:admin_user',
+          content: '/harness 修复代码',
+        }),
+        session,
+        priority: 2,
+        createdAt: Date.now(),
+        metadata: {
+          userId: 'feishu:admin_user',
+          channel: 'feishu',
+          conversationId: 'conv_first',
+        },
+      };
+
+      await controller.orchestrate(task);
+      // Session should now have worktree bound
+      expect(session.harnessWorktreeSlotId).toBe('harness-new-slot');
+      expect(session.harnessWorktreePath).toBe('/tmp/worktree-new');
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        process.env.ADMIN_USER_IDS = undefined;
+      }
+    });
+  });
+
+  describe('harness group chat isolation', () => {
+    test('feishu harness 消息应创建群聊并重新 resolve session', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'user_test_001';
+
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'done',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const worktreePool = {
+        acquire: async (taskId: string, branch: string) => ({
+          id: 'harness-gc-slot',
+          branch,
+          worktreePath: '/tmp/worktree-gc',
+          taskId,
+          createdAt: Date.now(),
+        }),
+        release: async () => {},
+      } as unknown as CentralControllerDeps['worktreePool'];
+
+      const mockCreateGroupChat = mock(async () => 'oc_group_new');
+      const mockSendMessage = mock(async () => {});
+
+      const feishuChannel = {
+        type: 'feishu',
+        name: 'feishu',
+        createGroupChat: mockCreateGroupChat,
+        sendMessage: mockSendMessage,
+      } as unknown as IChannel;
+
+      const channelResolver = (type: string) => (type === 'feishu' ? feishuChannel : undefined);
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        worktreePool,
+        channelResolver,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({
+        channel: 'feishu',
+        userId: 'user_test_001',
+        content: '/harness 修复登录Bug',
+      });
+
+      const result = await controller.handleIncomingMessage(message);
+      expect(result.success).toBe(true);
+
+      // Should have created a group chat
+      expect(mockCreateGroupChat).toHaveBeenCalledTimes(1);
+      expect(mockCreateGroupChat.mock.calls[0][0]).toBe('user_test_001');
+
+      // Should have sent notification to private chat
+      expect(mockSendMessage).toHaveBeenCalledTimes(1);
+
+      // message.conversationId should be overwritten to group chat id
+      expect(message.conversationId).toBe('oc_group_new');
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        process.env.ADMIN_USER_IDS = undefined;
+      }
+    });
+
+    test('非 feishu 通道不应创建群聊但仍 acquire worktree', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'user_test_001';
+
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'done',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      let acquireCount = 0;
+      const worktreePool = {
+        acquire: async (taskId: string, branch: string) => {
+          acquireCount++;
+          return {
+            id: 'harness-web-slot',
+            branch,
+            worktreePath: '/tmp/worktree-web',
+            taskId,
+            createdAt: Date.now(),
+          };
+        },
+        release: async () => {},
+      } as unknown as CentralControllerDeps['worktreePool'];
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        worktreePool,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({
+        channel: 'web',
+        content: '/harness 修复bug',
+      });
+
+      const result = await controller.handleIncomingMessage(message);
+      expect(result.success).toBe(true);
+      // Should still acquire worktree (via handleHarnessTask)
+      expect(acquireCount).toBe(1);
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        process.env.ADMIN_USER_IDS = undefined;
+      }
+    });
+
+    test('session 有 harnessWorktreeSlotId 时应跳过分类强制 harness', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'user_test_001';
+
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'done',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const worktreePool = {
+        acquire: async () => ({
+          id: 'x',
+          branch: 'x',
+          worktreePath: '/tmp/x',
+          taskId: 'x',
+          createdAt: 0,
+        }),
+        release: async () => {},
+      } as unknown as CentralControllerDeps['worktreePool'];
+
+      const sessionManager = new SessionManager();
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        worktreePool,
+        sessionManager,
+        ...createMockOVDeps(),
+      });
+
+      // Pre-populate a session with harness worktree binding
+      const session = await sessionManager.resolveSession('user_test_001', 'web', 'conv_test_001');
+      session.harnessWorktreeSlotId = 'harness-existing';
+      session.harnessWorktreePath = '/tmp/worktree-existing';
+
+      // Send a normal message (not /harness) — should still be forced to harness
+      const message = createMockMessage({
+        content: '请继续修改代码',
+      });
+
+      const result = await controller.handleIncomingMessage(message);
+      expect(result.success).toBe(true);
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+
+      const callArgs = executeSpy.mock.calls[0][0] as Record<string, unknown>;
+      const context = callArgs.context as Record<string, unknown>;
+      expect(context.workspacePath).toBe('/tmp/worktree-existing');
+      expect(callArgs.forceComplex).toBe(true);
 
       if (originalEnv !== undefined) {
         process.env.ADMIN_USER_IDS = originalEnv;
