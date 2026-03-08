@@ -93,15 +93,16 @@ export class FeishuStreamAdapter implements ChannelStreamAdapter {
       this.pendingUpdate = null;
     }
 
-    this.accumulatedText = finalText;
+    const displayText = finalText || '（无响应内容）';
+    this.accumulatedText = displayText;
 
     if (this.fallbackMode) {
-      await this.deps.sendTextMessage(this.chatId, finalText);
+      await this.deps.sendTextMessage(this.chatId, displayText);
       return;
     }
 
     if (!this.cardId) {
-      await this.deps.sendTextMessage(this.chatId, finalText);
+      await this.deps.sendTextMessage(this.chatId, displayText);
       return;
     }
 
@@ -110,7 +111,7 @@ export class FeishuStreamAdapter implements ChannelStreamAdapter {
     await this.deps.streamUpdateText(
       this.cardId,
       CONTENT_ELEMENT_ID,
-      finalText,
+      displayText,
       this.sequenceCounter,
     );
 
