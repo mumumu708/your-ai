@@ -2,6 +2,44 @@ import { describe, expect, test } from 'bun:test';
 import { nlToCron } from './nl-to-cron';
 
 describe('nlToCron', () => {
+  describe('每分钟/每小时', () => {
+    test('每分钟', () => {
+      const result = nlToCron('每分钟');
+      expect(result.cron).toBe('* * * * *');
+      expect(result.confidence).toBeGreaterThan(0);
+    });
+
+    test('每小时', () => {
+      const result = nlToCron('每小时');
+      expect(result.cron).toBe('0 * * * *');
+    });
+
+    test('每时', () => {
+      const result = nlToCron('每时');
+      expect(result.cron).toBe('0 * * * *');
+    });
+
+    test('every minute', () => {
+      const result = nlToCron('every minute');
+      expect(result.cron).toBe('* * * * *');
+    });
+
+    test('every hour', () => {
+      const result = nlToCron('every hour');
+      expect(result.cron).toBe('0 * * * *');
+    });
+
+    test('不干扰 每2小时', () => {
+      const result = nlToCron('每2小时');
+      expect(result.cron).toBe('0 */2 * * *');
+    });
+
+    test('不干扰 每隔30分钟', () => {
+      const result = nlToCron('每隔30分钟');
+      expect(result.cron).toBe('*/30 * * * *');
+    });
+  });
+
   describe('中文模式', () => {
     test('每天上午9点', () => {
       const result = nlToCron('每天上午9点');
@@ -109,6 +147,30 @@ describe('nlToCron', () => {
     test('every 3 hours', () => {
       const result = nlToCron('every 3 hours');
       expect(result.cron).toBe('0 */3 * * *');
+    });
+  });
+
+  describe('taskContent 提取', () => {
+    test('从调度命令中提取任务内容', () => {
+      const result = nlToCron('创建一个定时任务，每分钟，给我发送一条消息，内容是你好');
+      expect(result.cron).toBe('* * * * *');
+      expect(result.taskContent).toBe('给我发送一条消息，内容是你好');
+    });
+
+    test('纯调度表达式时 taskContent 保留原文', () => {
+      const result = nlToCron('每分钟');
+      expect(result.taskContent).toBe('每分钟');
+    });
+
+    test('设置定时任务前缀也能去除', () => {
+      const result = nlToCron('设置定时任务每天上午9点提醒我开会');
+      expect(result.cron).toBe('0 9 * * *');
+      expect(result.taskContent).toBe('提醒我开会');
+    });
+
+    test('无法识别时 taskContent 回退为原文', () => {
+      const result = nlToCron('明天帮我买菜');
+      expect(result.taskContent).toBe('明天帮我买菜');
     });
   });
 

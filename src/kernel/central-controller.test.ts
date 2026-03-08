@@ -287,7 +287,7 @@ describe('CentralController', () => {
         id: 'task_002',
         traceId: 'trace_002',
         type: 'scheduled' as const,
-        message: createMockMessage({ content: '每天提醒我' }),
+        message: createMockMessage({ content: '每天上午9点提醒我' }),
         session,
         priority: 10,
         createdAt: Date.now(),

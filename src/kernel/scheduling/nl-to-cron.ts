@@ -7,6 +7,7 @@ export interface NlToCronResult {
   cron: string | null;
   description: string;
   confidence: number;
+  taskContent: string;
 }
 
 interface NlRule {
@@ -49,6 +50,18 @@ const CN_AFTERNOON = '(?:下午|晚上)';
 const CN_TIME_SEP = '[点时:：]';
 
 const NL_RULES: NlRule[] = [
+  // --- Simple interval patterns (no digits) ---
+  {
+    patterns: [/每分钟/, /every\s+minute/i],
+    extract: () => '* * * * *',
+    description: '每分钟',
+  },
+  {
+    patterns: [/每小?时/, /every\s+hour/i],
+    extract: () => '0 * * * *',
+    description: '每小时',
+  },
+
   // --- Interval patterns ---
   {
     patterns: [/每隔?(\d+)分钟/, /every\s+(\d+)\s+minutes?/i],
@@ -155,6 +168,36 @@ const NL_RULES: NlRule[] = [
 ];
 
 /**
+ * Common prefixes for scheduling commands that should be stripped
+ * when extracting the actual task content.
+ */
+const TASK_PREFIX_PATTERNS: RegExp[] = [
+  /^(?:创建|设置|新建|添加)一?个?定时任务[，,]?\s*/,
+  /^定时[，,]?\s*/,
+  /^(?:帮我|请)\s*/,
+];
+
+/**
+ * Extract task content from the original text by removing
+ * scheduling patterns and common command prefixes.
+ */
+function extractTaskContent(text: string, matchedPattern: RegExp): string {
+  // Remove the matched scheduling pattern
+  let content = text.replace(matchedPattern, '').trim();
+
+  // Remove common task prefixes
+  for (const prefix of TASK_PREFIX_PATTERNS) {
+    content = content.replace(prefix, '').trim();
+  }
+
+  // Remove leading punctuation/connectors
+  content = content.replace(/^[，,、]\s*/, '').trim();
+
+  // If nothing left after stripping, fall back to original text
+  return content || text;
+}
+
+/**
  * Convert a natural language scheduling description to a cron expression.
  */
 export function nlToCron(text: string): NlToCronResult {
@@ -168,6 +211,7 @@ export function nlToCron(text: string): NlToCronResult {
           cron: rule.extract(match),
           description: rule.description,
           confidence: 0.9,
+          taskContent: extractTaskContent(trimmed, pattern),
         };
       }
     }
@@ -177,5 +221,6 @@ export function nlToCron(text: string): NlToCronResult {
     cron: null,
     description: '无法识别的调度模式',
     confidence: 0,
+    taskContent: trimmed,
   };
 }
