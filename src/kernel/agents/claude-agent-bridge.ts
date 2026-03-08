@@ -36,7 +36,16 @@ interface ClaudeStreamEvent {
   type: string;
   subtype?: string;
   message?: {
-    content?: Array<{ type: string; text?: string; thinking?: string; name?: string }>;
+    content?: Array<{
+      type: string;
+      text?: string;
+      thinking?: string;
+      name?: string;
+      id?: string;
+      input?: unknown;
+      tool_use_id?: string;
+      content?: string;
+    }>;
   };
   result?: string;
   session_id?: string;
@@ -280,6 +289,7 @@ export class ClaudeAgentBridge {
     let turns = 0;
     const toolsUsedSet = new Set<string>();
     let claudeSessionId: string | undefined;
+    const toolIdMap = new Map<string, string>();
 
     try {
       while (true) {
@@ -317,6 +327,12 @@ export class ClaudeAgentBridge {
             setClaudeSessionId: (id: string) => {
               claudeSessionId = id;
             },
+            trackToolId: (id: string, name: string) => {
+              toolIdMap.set(id, name);
+            },
+            resolveToolName: (id: string) => {
+              return toolIdMap.get(id);
+            },
           });
         }
       }
@@ -345,6 +361,8 @@ export class ClaudeAgentBridge {
       setUsage: (inp: number, out: number, cost: number, turns: number) => void;
       addToolUsed: (name: string) => void;
       setClaudeSessionId: (id: string) => void;
+      trackToolId: (id: string, name: string) => void;
+      resolveToolName: (id: string) => string | undefined;
     },
   ): void {
     if (event.type === 'assistant' && event.message?.content) {
@@ -355,9 +373,24 @@ export class ClaudeAgentBridge {
             params.onStream({ type: 'text_delta', text: block.text });
           }
         }
-        // Capture tool_use blocks
+        // Capture tool_use blocks and emit stream events
         if (block.type === 'tool_use' && block.name) {
           ctx.addToolUsed(block.name);
+          if (block.id) ctx.trackToolId(block.id, block.name);
+          if (params.onStream) {
+            params.onStream({ type: 'tool_use', toolName: block.name, toolInput: block.input });
+          }
+        }
+      }
+    }
+
+    if (event.type === 'user' && event.message?.content) {
+      for (const block of event.message.content) {
+        if (block.type === 'tool_result') {
+          const toolName = block.tool_use_id ? ctx.resolveToolName(block.tool_use_id) : undefined;
+          if (params.onStream) {
+            params.onStream({ type: 'tool_result', toolName, text: block.content ?? '' });
+          }
         }
       }
     }

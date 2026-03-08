@@ -118,7 +118,8 @@ execute(params)
 **Stream 解析** (processStream):
 
 逐行解析 Claude CLI 的 stream-json 输出：
-- `type='assistant'` → 提取 text blocks → onStream('text_delta')，收集 tool_use names
+- `type='assistant'` → 提取 text blocks → onStream('text_delta')；提取 tool_use blocks → onStream('tool_use') 并记录 tool_use_id → tool_name 映射
+- `type='user'` → 提取 tool_result blocks → 通过 tool_use_id 映射解析工具名 → onStream('tool_result')
 - `type='result'` → 提取 usage (inputTokens/outputTokens/costUsd)，捕获 session_id
 
 **会话续接**:
