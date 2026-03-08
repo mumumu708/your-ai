@@ -28,6 +28,7 @@ import { UserConfigLoader } from './memory/user-config-loader';
 import { OnboardingManager } from './onboarding';
 import { JobStore } from './scheduling/job-store';
 import { nlToCron } from './scheduling/nl-to-cron';
+import { ScheduleCancelManager } from './scheduling/schedule-cancel-manager';
 import { Scheduler } from './scheduling/scheduler';
 import {
   HarnessMutex,
@@ -76,6 +77,7 @@ export class CentralController {
   private readonly sessionManager: SessionManager;
   private readonly agentRuntime: AgentRuntime;
   private readonly scheduler: Scheduler;
+  private readonly scheduleCancelManager: ScheduleCancelManager;
   private readonly taskQueue: TaskQueue;
   private readonly logger: Logger;
   private readonly activeRequests: Map<string, AbortController> = new Map();
@@ -106,6 +108,7 @@ export class CentralController {
   private constructor(deps?: CentralControllerDeps) {
     this.sessionManager = deps?.sessionManager ?? new SessionManager();
     this.scheduler = deps?.scheduler ?? new Scheduler(new JobStore());
+    this.scheduleCancelManager = new ScheduleCancelManager(this.scheduler);
     this.taskQueue = deps?.taskQueue ?? new TaskQueue();
     this.logger = new Logger('CentralController');
     this.streamHandler = deps?.streamHandler ?? new StreamHandler();
@@ -314,6 +317,20 @@ export class CentralController {
       if (session.harnessWorktreeSlotId && HARNESS_END_PATTERN.test(message.content.trim())) {
         const sessionKey = `${message.userId}:${message.channel}:${message.conversationId}`;
         return this.handleHarnessEnd(message, session, sessionKey);
+      }
+
+      // --- Schedule cancel selection detection ---
+      if (this.scheduleCancelManager.isPendingSelection(message.userId)) {
+        const result = this.scheduleCancelManager.processSelection(message.userId, message.content);
+        return {
+          success: true,
+          taskId: generateTaskId(),
+          data: {
+            content: (result.data as { content: string })?.content ?? result.error,
+            channel: message.channel,
+          },
+          completedAt: Date.now(),
+        };
       }
 
       // --- Harness follow-up detection ---
@@ -698,6 +715,17 @@ export class CentralController {
   private async handleScheduledTask(task: Task): Promise<TaskResult> {
     this.logger.info('处理定时任务', { traceId: task.traceId, taskId: task.id });
 
+    const subIntent = task.classifyResult?.subIntent;
+
+    if (subIntent === 'cancel') {
+      return this.scheduleCancelManager.startCancelFlow(task.message.userId);
+    }
+
+    if (subIntent === 'list') {
+      return this.handleListScheduledTasks(task.message.userId);
+    }
+
+    // Default: create flow
     const nlResult = nlToCron(task.message.content);
 
     // Bug 2: cron 解析失败时拦截，不注册无效 job
@@ -732,6 +760,37 @@ export class CentralController {
         cronDescription: nlResult.description,
         confidence: nlResult.confidence,
       },
+      completedAt: Date.now(),
+    };
+  }
+
+  private handleListScheduledTasks(userId: string): TaskResult {
+    const activeJobs = this.scheduler
+      .listJobs(userId)
+      .filter((j) => j.status === 'active' || j.status === 'paused');
+
+    if (activeJobs.length === 0) {
+      return {
+        success: true,
+        taskId: generateTaskId(),
+        data: { content: '你目前没有活跃的定时任务。' },
+        completedAt: Date.now(),
+      };
+    }
+
+    const lines = ['你当前的定时任务：', ''];
+    for (const [i, job] of activeJobs.entries()) {
+      const nextRun = new Date(job.nextRunAt).toLocaleString('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+      });
+      lines.push(`${i + 1}. ${job.description}`);
+      lines.push(`   下次执行: ${nextRun}`);
+    }
+
+    return {
+      success: true,
+      taskId: generateTaskId(),
+      data: { content: lines.join('\n') },
       completedAt: Date.now(),
     };
   }

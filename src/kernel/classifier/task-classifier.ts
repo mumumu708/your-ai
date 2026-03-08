@@ -12,16 +12,8 @@ const HARNESS_PATTERNS: RegExp[] = [/^\/harness\b/i, /^harness:/i];
 
 const SYSTEM_COMMAND_PREFIX = '/';
 
-const SCHEDULE_PATTERNS: RegExp[] = [
-  /每[天日周月]/,
-  /定时/,
-  /提醒我/,
-  /remind/i,
-  /schedule/i,
-  /every\s+(day|week|month|hour|minute)/i,
-  /at\s+\d{1,2}:\d{2}/i,
-  /cron/i,
-];
+// Removed — scheduled intent is now classified by LLM with subIntent
+const SCHEDULE_PATTERNS: RegExp[] = [];
 
 const AUTOMATION_PATTERNS: RegExp[] = [/自动化/, /批量/, /automate/i, /batch/i, /workflow/i];
 
@@ -191,7 +183,7 @@ export class TaskClassifier {
           {
             role: 'system',
             content:
-              '你是一个任务分类器。根据用户消息判断两个维度：\n1. taskType: "chat"(对话/问答/工程任务) | "scheduled"(定时提醒) | "automation"(批量自动化) | "system"(系统命令)\n2. complexity: "simple"(简单问答/闲聊) | "complex"(需要工具/代码/多步推理)\n只回复 JSON: {"taskType":"...","complexity":"...","reason":"..."}',
+              '你是一个任务分类器。根据用户消息判断：\n1. taskType: "chat"(对话/问答/工程任务) | "scheduled"(定时提醒/取消定时/查看定时) | "automation"(批量自动化) | "system"(系统命令)\n2. complexity: "simple"(简单问答/闲聊) | "complex"(需要工具/代码/多步推理)\n3. subIntent: 当 taskType 为 "scheduled" 时必填 — "create"(创建/设置定时任务) | "cancel"(取消/删除定时任务) | "list"(查看/列出定时任务)\n只回复 JSON: {"taskType":"...","complexity":"...","subIntent":"...","reason":"..."}',
           },
           { role: 'user', content: message },
         ],
@@ -216,9 +208,11 @@ export class TaskClassifier {
 
       const taskType = this.normalizeTaskType(parsed.taskType);
       const complexity: TaskComplexity = parsed.complexity === 'simple' ? 'simple' : 'complex';
+      const subIntent = taskType === 'scheduled' && parsed.subIntent ? parsed.subIntent : undefined;
 
       return {
         taskType,
+        subIntent,
         complexity,
         reason: parsed.reason || 'LLM 分类',
         confidence: 0.75,
@@ -260,7 +254,7 @@ export class TaskClassifier {
    */
   private extractJson(
     content: string,
-  ): { taskType?: string; complexity: string; reason?: string } | null {
+  ): { taskType?: string; complexity: string; subIntent?: string; reason?: string } | null {
     const trimmed = content.trim();
 
     // 1. 尝试直接解析

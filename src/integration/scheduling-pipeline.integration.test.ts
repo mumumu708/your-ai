@@ -9,6 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { AgentBridgeResult, ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
+import type { LightLLMClient } from '../kernel/agents/light-llm-client';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
 import { Scheduler } from '../kernel/scheduling/scheduler';
@@ -24,12 +25,27 @@ function createMessage(overrides?: Partial<BotMessage>): BotMessage {
     userId: 'user_sched',
     userName: 'Schedule Tester',
     conversationId: 'conv_sched',
-    content: '每天9点提醒我开会',
+    content: '请帮我设置每天早上9点提醒我开会',
     contentType: 'text',
     timestamp: Date.now(),
     metadata: {},
     ...overrides,
   };
+}
+
+/** Mock LightLLM that classifies schedule-like messages as 'scheduled' */
+function createScheduleClassifierLLM(): LightLLMClient {
+  return {
+    complete: async () => ({
+      content:
+        '{"taskType":"scheduled","complexity":"complex","subIntent":"create","reason":"定时任务"}',
+      usage: { promptTokens: 10, completionTokens: 5, totalCost: 0.0001 },
+    }),
+    stream: async function* () {
+      yield { content: 'test' };
+    },
+    getDefaultModel: () => 'gpt-4o-mini',
+  } as unknown as LightLLMClient;
 }
 
 function createMockClaudeBridge(response = 'Claude says hi'): ClaudeAgentBridge {
@@ -79,11 +95,11 @@ describe('定时调度管道集成测试', () => {
       const claudeBridge = createMockClaudeBridge();
       const controller = CentralController.getInstance({
         claudeBridge,
-        classifier: new TaskClassifier(null),
+        classifier: new TaskClassifier(createScheduleClassifierLLM()),
         scheduler,
       });
 
-      const msg = createMessage({ content: '每天9点提醒我开会' });
+      const msg = createMessage({ content: '请帮我设置每天早上9点提醒我开会' });
       const result = await controller.handleIncomingMessage(msg);
 
       expect(result.success).toBe(true);
@@ -94,19 +110,19 @@ describe('定时调度管道集成测试', () => {
       const jobs = scheduler.listJobs('user_sched');
       expect(jobs).toHaveLength(1);
       expect(jobs[0].userId).toBe('user_sched');
-      expect(jobs[0].description).toBe('每天9点提醒我开会');
+      expect(jobs[0].description).toBe('请帮我设置每天早上9点提醒我开会');
     });
 
     test('"提醒我" 的消息应该正确分类为 scheduled 并注册', async () => {
       const claudeBridge = createMockClaudeBridge();
       const controller = CentralController.getInstance({
         claudeBridge,
-        classifier: new TaskClassifier(null),
+        classifier: new TaskClassifier(createScheduleClassifierLLM()),
         scheduler,
       });
 
       const msg = createMessage({
-        content: '每天下午3点提醒我开会',
+        content: '请帮我设置每天下午3点提醒我开会',
         userId: 'user_remind',
       });
       const result = await controller.handleIncomingMessage(msg);
@@ -191,11 +207,11 @@ describe('定时调度管道集成测试', () => {
     test('注册的 Job 应该支持 pause / resume / cancel', async () => {
       const controller = CentralController.getInstance({
         claudeBridge: createMockClaudeBridge(),
-        classifier: new TaskClassifier(null),
+        classifier: new TaskClassifier(createScheduleClassifierLLM()),
         scheduler,
       });
 
-      const msg = createMessage({ content: '每天上午9点提醒我写周报' });
+      const msg = createMessage({ content: '请帮我设置每天上午9点提醒我写周报' });
       const result = await controller.handleIncomingMessage(msg);
       const jobId = (result.data as Record<string, unknown>).jobId as string;
 
@@ -218,15 +234,23 @@ describe('定时调度管道集成测试', () => {
     test('多个用户的定时任务应该隔离', async () => {
       const controller = CentralController.getInstance({
         claudeBridge: createMockClaudeBridge(),
-        classifier: new TaskClassifier(null),
+        classifier: new TaskClassifier(createScheduleClassifierLLM()),
         scheduler,
       });
 
       await controller.handleIncomingMessage(
-        createMessage({ content: '每天上午8点提醒我锻炼', userId: 'user_A', conversationId: 'conv_A' }),
+        createMessage({
+          content: '请帮我设置每天上午8点提醒我锻炼',
+          userId: 'user_A',
+          conversationId: 'conv_A',
+        }),
       );
       await controller.handleIncomingMessage(
-        createMessage({ content: '每周一上午10点提醒我整理', userId: 'user_B', conversationId: 'conv_B' }),
+        createMessage({
+          content: '请帮我设置每周一上午10点提醒我整理',
+          userId: 'user_B',
+          conversationId: 'conv_B',
+        }),
       );
 
       expect(scheduler.getJobCount()).toBe(2);

@@ -70,24 +70,70 @@ describe('TaskClassifier', () => {
     });
   });
 
-  describe('规则分类 - scheduled 任务', () => {
-    test('应该将"每天"分类为 scheduled', async () => {
-      const classifier = new TaskClassifier();
-      const result = await classifier.classify('每天早上提醒我喝水');
-      expect(result.taskType).toBe('scheduled');
-      expect(result.complexity).toBe('complex');
+  describe('LLM 分类 - scheduled 任务（含 subIntent）', () => {
+    test('SCHEDULE_PATTERNS 已清空，不再规则匹配定时任务', async () => {
+      const classifier = new TaskClassifier(null);
+      // "每天早上9点提醒我喝水吃药" is long enough to avoid SIMPLE_PATTERNS
+      const result = await classifier.classify('每天早上9点提醒我喝水吃药');
+      // No rule match → LLM fallback (null LLM → chat+complex)
+      expect(result.classifiedBy).toBe('llm');
+      expect(result.taskType).toBe('chat');
     });
 
-    test('应该将"提醒我"分类为 scheduled', async () => {
-      const classifier = new TaskClassifier();
-      const result = await classifier.classify('提醒我下午3点开会');
+    test('LLM 返回 scheduled+create 时正确解析 subIntent', async () => {
+      const mockLLM = createMockLightLLM({
+        complete: async () => ({
+          content:
+            '{"taskType":"scheduled","complexity":"complex","subIntent":"create","reason":"创建定时提醒"}',
+          usage: { promptTokens: 10, completionTokens: 5, totalCost: 0.0001 },
+        }),
+      } as unknown as Partial<LightLLMClient>);
+      const classifier = new TaskClassifier(mockLLM);
+      const result = await classifier.classify('每天早上9点提醒我喝水吃药');
       expect(result.taskType).toBe('scheduled');
+      expect(result.subIntent).toBe('create');
     });
 
-    test('应该将 remind 分类为 scheduled', async () => {
-      const classifier = new TaskClassifier();
-      const result = await classifier.classify('remind me every day at 9:00');
+    test('LLM 返回 scheduled+cancel 时正确解析 subIntent', async () => {
+      const mockLLM = createMockLightLLM({
+        complete: async () => ({
+          content:
+            '{"taskType":"scheduled","complexity":"complex","subIntent":"cancel","reason":"取消定时任务"}',
+          usage: { promptTokens: 10, completionTokens: 5, totalCost: 0.0001 },
+        }),
+      } as unknown as Partial<LightLLMClient>);
+      const classifier = new TaskClassifier(mockLLM);
+      const result = await classifier.classify('我想取消之前设置的定时任务');
       expect(result.taskType).toBe('scheduled');
+      expect(result.subIntent).toBe('cancel');
+    });
+
+    test('LLM 返回 scheduled+list 时正确解析 subIntent', async () => {
+      const mockLLM = createMockLightLLM({
+        complete: async () => ({
+          content:
+            '{"taskType":"scheduled","complexity":"complex","subIntent":"list","reason":"查看定时任务"}',
+          usage: { promptTokens: 10, completionTokens: 5, totalCost: 0.0001 },
+        }),
+      } as unknown as Partial<LightLLMClient>);
+      const classifier = new TaskClassifier(mockLLM);
+      const result = await classifier.classify('帮我看看我有哪些定时任务');
+      expect(result.taskType).toBe('scheduled');
+      expect(result.subIntent).toBe('list');
+    });
+
+    test('LLM 返回非 scheduled 时不设置 subIntent', async () => {
+      const mockLLM = createMockLightLLM({
+        complete: async () => ({
+          content: '{"taskType":"chat","complexity":"simple","subIntent":"create","reason":"闲聊"}',
+          usage: { promptTokens: 10, completionTokens: 5, totalCost: 0.0001 },
+        }),
+      } as unknown as Partial<LightLLMClient>);
+      const classifier = new TaskClassifier(mockLLM);
+      // Use message that falls through to LLM (not matching any rule)
+      const result = await classifier.classify('能不能帮我看看这个东西好不好用');
+      expect(result.taskType).toBe('chat');
+      expect(result.subIntent).toBeUndefined();
     });
   });
 

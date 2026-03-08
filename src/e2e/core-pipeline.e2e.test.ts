@@ -17,11 +17,11 @@ import { ChannelManager } from '../gateway/channel-manager';
 import { WebChannel } from '../gateway/channels/web.gateway';
 import { MessageRouter } from '../gateway/message-router';
 import type { ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
+import type { LightLLMClient } from '../kernel/agents/light-llm-client';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
 import type { ChannelType } from '../shared/messaging';
 import { isValidBotMessage } from '../shared/utils/validators';
-import { createMockLightLLM } from '../test-utils/mock-light-llm';
 import { createMockOVDeps } from '../test-utils/mock-ov-deps';
 
 // --- Config ---
@@ -96,8 +96,26 @@ describe('全链路 E2E 测试', () => {
       defaultModel: 'sonnet',
     });
 
-    // 2. Mock LightLLM
-    const lightLLM = createMockLightLLM('mock light response');
+    // 2. Mock LightLLM — returns schedule classification for schedule-like messages
+    const lightLLM = {
+      complete: mock(async (params: { messages: Array<{ role: string; content: string }> }) => {
+        const userMsg = params.messages.find((m) => m.role === 'user')?.content ?? '';
+        const isSchedule = /每[天日周月]|定时|提醒我|remind|schedule/i.test(userMsg);
+        const content = isSchedule
+          ? '{"taskType":"scheduled","complexity":"complex","subIntent":"create","reason":"定时任务"}'
+          : '{"taskType":"chat","complexity":"complex","reason":"对话"}';
+        return {
+          content,
+          model: 'deepseek-chat',
+          usage: { promptTokens: 5, completionTokens: 3, totalCost: 0.0001 },
+        };
+      }),
+      stream: mock(async function* () {
+        yield { content: 'mock', done: false };
+        yield { content: '', done: true };
+      }),
+      getDefaultModel: () => 'deepseek-chat',
+    } as unknown as LightLLMClient;
 
     // 3. Core assembly
     const classifier = new TaskClassifier(lightLLM);

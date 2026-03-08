@@ -2,6 +2,7 @@ export type TaskComplexity = 'simple' | 'complex';
 
 export interface UnifiedClassifyResult {
   taskType: 'chat' | 'scheduled' | 'automation' | 'system' | 'harness';
+  subIntent?: string;
   complexity: TaskComplexity;
   reason: string;
   confidence: number; // 0-1
