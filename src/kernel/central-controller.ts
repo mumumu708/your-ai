@@ -178,8 +178,24 @@ export class CentralController {
     this.fileUploadHandler = new FileUploadHandler();
     this.channelResolver = deps?.channelResolver;
 
-    // Wire session close to OpenViking commit + evolution scheduling
-    this.sessionManager.setOnSessionClose(async (_summary, sessionId) => {
+    // Wire session close to worktree release + OpenViking commit + evolution scheduling
+    this.sessionManager.setOnSessionClose(async (_summary, sessionId, session) => {
+      // Release worktree if session was a harness session
+      if (session?.harnessWorktreeSlotId) {
+        try {
+          await this.worktreePool.release(session.harnessWorktreeSlotId);
+          this.logger.info('Harness worktree 已释放', {
+            sessionId,
+            slotId: session.harnessWorktreeSlotId,
+          });
+        } catch (err) {
+          this.logger.warn('Harness worktree 释放失败', {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
       try {
         const commitResult = await this.ovClient.commit(sessionId);
         if (commitResult.memories_extracted > 0) {
@@ -217,7 +233,7 @@ export class CentralController {
     });
 
     try {
-      const session = await this.sessionManager.resolveSession(
+      let session = await this.sessionManager.resolveSession(
         message.userId,
         message.channel,
         message.conversationId,
@@ -293,7 +309,46 @@ export class CentralController {
         };
       }
 
-      const classifyResult = await this.classifyIntent(message);
+      // --- Harness follow-up detection ---
+      // If session already has a bound worktree, force harness classification
+      let classifyResult: UnifiedClassifyResult;
+      if (session.harnessWorktreeSlotId) {
+        classifyResult = {
+          taskType: 'harness',
+          complexity: 'complex',
+          reason: '会话已绑定 worktree，继续 harness 模式',
+          confidence: 1.0,
+          classifiedBy: 'rule',
+          costUsd: 0,
+        };
+      } else {
+        classifyResult = await this.classifyIntent(message);
+      }
+
+      // --- Harness group chat creation (feishu only) ---
+      if (
+        classifyResult.taskType === 'harness' &&
+        isAdminUser(message.userId) &&
+        !session.harnessWorktreeSlotId
+      ) {
+        const groupChatId = await this.maybeCreateHarnessGroupChat(message);
+        if (groupChatId) {
+          const originalSession = session;
+          message.conversationId = groupChatId;
+          // Re-resolve session with new conversationId (group chat)
+          session = await this.sessionManager.resolveSession(
+            message.userId,
+            message.channel,
+            groupChatId,
+          );
+          session.harnessGroupChatId = groupChatId;
+          // Carry over workspace and config from original session
+          if (!session.workspacePath) session.workspacePath = originalSession.workspacePath;
+          if (!session.userConfigLoader)
+            session.userConfigLoader = originalSession.userConfigLoader;
+        }
+      }
+
       const taskType = classifyResult.taskType;
 
       const task: Task = {
@@ -394,18 +449,58 @@ export class CentralController {
       task.type = 'chat';
       return this.executeChatPipeline(task);
     }
-    const branchName = generateBranchName(task.message.content);
-    return this.worktreePool.run(task.id, branchName, async (slot) => {
-      this.logger.info('Harness 任务分配 worktree', {
+
+    const session = task.session;
+
+    // Follow-up: session already has worktree
+    if (session.harnessWorktreeSlotId && session.harnessWorktreePath) {
+      this.logger.info('Harness 后续消息复用 worktree', {
         taskId: task.id,
-        branch: slot.branch,
-        worktreePath: slot.worktreePath,
+        slotId: session.harnessWorktreeSlotId,
+        worktreePath: session.harnessWorktreePath,
       });
       return this.executeChatPipeline(task, {
-        cwdOverride: slot.worktreePath,
+        cwdOverride: session.harnessWorktreePath,
         forceComplex: true,
       });
+    }
+
+    // First message: acquire worktree and bind to session
+    const branchName = generateBranchName(task.message.content);
+    const slot = await this.worktreePool.acquire(task.id, branchName);
+    session.harnessWorktreeSlotId = slot.id;
+    session.harnessWorktreePath = slot.worktreePath;
+
+    this.logger.info('Harness 首次消息分配 worktree', {
+      taskId: task.id,
+      branch: slot.branch,
+      worktreePath: slot.worktreePath,
     });
+
+    return this.executeChatPipeline(task, {
+      cwdOverride: slot.worktreePath,
+      forceComplex: true,
+    });
+  }
+
+  /**
+   * For feishu harness commands, create a group chat and return its chatId.
+   * Returns null if not applicable (non-feishu channel or no channel resolver).
+   */
+  private async maybeCreateHarnessGroupChat(message: BotMessage): Promise<string | null> {
+    if (message.channel !== 'feishu' || !this.channelResolver) return null;
+    const channel = this.channelResolver('feishu');
+    if (!channel?.createGroupChat) return null;
+
+    const taskDesc = message.content.replace(/^\/harness\s*/i, '').slice(0, 40);
+    const groupChatId = await channel.createGroupChat(message.userId, `Harness: ${taskDesc}`);
+
+    await channel.sendMessage(message.userId, {
+      type: 'text',
+      text: 'Harness 会话已创建群聊，请在群聊中继续交互。',
+    });
+
+    return groupChatId;
   }
 
   private async executeChatPipeline(

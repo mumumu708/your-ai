@@ -77,13 +77,7 @@ describe('BunGitOperations', () => {
     await ops.removeWorktree('/tmp/wt');
 
     expect(spawnSpy).toHaveBeenCalledTimes(1);
-    expect(spawnSpy.mock.calls[0]![0]).toEqual([
-      'git',
-      'worktree',
-      'remove',
-      '/tmp/wt',
-      '--force',
-    ]);
+    expect(spawnSpy.mock.calls[0]![0]).toEqual(['git', 'worktree', 'remove', '/tmp/wt', '--force']);
 
     spawnSpy.mockRestore();
   });
