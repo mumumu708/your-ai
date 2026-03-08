@@ -4,6 +4,7 @@
 - **作者**: Agent
 - **创建日期**: 2026-03-07
 - **最后更新**: 2026-03-08
+- **补充**: 2026-03-08 新增"定时任务执行机制"章节，详述 executor 内部流程
 
 ## 背景
 
@@ -29,6 +30,47 @@
 ### 概述
 
 引入 `JobStore` 类做 JSON 文件持久化；在 `Scheduler` 中集成 store，关键操作后自动持久化；在 `CentralController` 新增 `initScheduler()` / `stopScheduler()` 方法，executor 回调走 chat pipeline + channel 推送；Gateway 启动/关闭时调用。
+
+### 定时任务执行机制
+
+定时任务**不是**调用 Claude Code CLI 或直接执行代码，而是**内部模拟一次对话请求**，走完整的 chat pipeline。
+
+#### 注册阶段
+
+1. 用户发送自然语言（如"每天早上9点提醒我看邮件"）
+2. `TaskClassifier` 分类为 `scheduled` 类型
+3. `handleScheduledTask` 调用 `nlToCron()` — 基于正则规则的 NL→cron 转换器
+4. `nlToCron` 返回 `{ cron, taskContent }`，其中 `taskContent` 是去掉时间描述后的实际任务内容（如"提醒我看邮件"）
+5. 调用 `scheduler.register()` 注册 job，`taskTemplate` 中保存 `messageContent`（= taskContent）、`userName`、`conversationId`
+
+#### 触发阶段
+
+1. `Scheduler` 内部通过 `setTimeout` 定时，到达 `nextRunAt` 后调用 `executeJob()`
+2. `executeJob()` 调用 `executor` 回调（由 `CentralController.initScheduler()` 设置）
+
+#### 执行阶段（executor 回调逻辑）
+
+```
+job.taskTemplate.messageContent
+    ↓
+构造模拟 BotMessage（channel/userId/conversationId 来自 job）
+    ↓
+resolveSession → 确保 workspace + userConfigLoader
+    ↓
+构造 Task（type: 'chat'）
+    ↓
+executeChatPipeline(task)
+    ↓  完整流程：AIEOS 上下文 + 记忆检索 + LLM 推理
+AI 回复文本
+    ↓
+channelResolver(job.channel).sendMessage → 推送到用户所在通道
+```
+
+关键点：
+
+- 执行类型为 `chat`（非 `scheduled`），走标准对话管线，包含完整的知识路由、记忆检索、上下文构建
+- `metadata.isScheduledExecution = true` 标记区分于普通用户消息
+- 回复通过 `channelResolver` 找到原注册通道（飞书/Telegram 等）主动推送
 
 ### 详细设计
 
