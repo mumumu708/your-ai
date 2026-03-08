@@ -16,7 +16,8 @@
         "src/kernel/sessioning/git-operations.ts",
         "src/kernel/sessioning/branch-name-generator.ts",
         "src/kernel/scheduling/scheduler.ts",
-        "src/kernel/scheduling/job-store.ts"
+        "src/kernel/scheduling/job-store.ts",
+        "src/kernel/scheduling/schedule-cancel-manager.ts"
       ],
       "description": "架构概览"
     },
