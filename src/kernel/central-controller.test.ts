@@ -1045,7 +1045,7 @@ describe('CentralController', () => {
         ...createMockOVDeps(),
       });
 
-      const message = createMockMessage({ content: '修复bug' });
+      const message = createMockMessage({ content: '/harness 修复bug' });
       const result = await controller.handleIncomingMessage(message);
       expect(result.success).toBe(true);
 
