@@ -60,6 +60,11 @@ skills/                 # 内置 / 自定义技能
 ### 安装
 
 ```bash
+# 安装 Agent Browser
+brew install agent-browser
+agent-browser install
+
+# 安装项目依赖
 bun install
 ```
 
