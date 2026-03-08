@@ -5,6 +5,7 @@ import {
   createApiAuthMiddleware,
   createAuthMiddleware,
   createWebSocketAuthHandler,
+  loadAuthConfig,
   verifyJwt,
 } from './auth.middleware';
 import type { AuthContext, AuthMiddlewareConfig } from './middleware.types';
@@ -94,6 +95,47 @@ describe('verifyJwt', () => {
     const result = await verifyJwt('header.payload', secret);
     expect(result.valid).toBe(false);
   });
+
+  test('rejects token with non-JSON payload (triggers catch)', async () => {
+    // Build a JWT where the payload is valid base64 but not valid JSON
+    // The signature must match so we get past the signature check to JSON.parse
+    const header = { alg: 'HS256', typ: 'JWT' };
+    const encode = (s: string) =>
+      btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const headerB64 = encode(JSON.stringify(header));
+    const payloadB64 = encode('not-valid-json'); // valid base64, invalid JSON
+    const signingInput = `${headerB64}.${payloadB64}`;
+
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signingInput));
+    const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    const token = `${headerB64}.${payloadB64}.${sigB64}`;
+    const result = await verifyJwt(token, secret);
+    expect(result.valid).toBe(false);
+  });
+});
+
+// ── loadAuthConfig ────────────────────────────────────────────────────────
+
+describe('loadAuthConfig', () => {
+  test('应该从环境变量读取配置', () => {
+    const config = loadAuthConfig();
+    expect(typeof config.devBypass).toBe('boolean');
+    // jwtSecret, apiKeys etc. come from env vars — may be undefined in test
+    expect(config).toHaveProperty('jwtSecret');
+    expect(config).toHaveProperty('feishuVerificationToken');
+    expect(config).toHaveProperty('telegramWebhookSecret');
+  });
 });
 
 // ── createAuthMiddleware (BotMessage pipeline) ────────────────────────────
@@ -151,6 +193,22 @@ describe('createAuthMiddleware', () => {
     }
   });
 
+  test('telegram channel rejects unknown userId', async () => {
+    const config: AuthMiddlewareConfig = { devBypass: false };
+    const middleware = createAuthMiddleware(config);
+    const next: MessageHandler = async () => {};
+
+    const handler = middleware(next);
+
+    try {
+      await handler(createTestMessage({ channel: 'telegram', userId: 'unknown' }));
+      expect(true).toBe(false);
+    } catch (error) {
+      expect(error).toBeInstanceOf(YourBotError);
+      expect((error as YourBotError).code).toBe('AUTH_FAILED');
+    }
+  });
+
   test('telegram channel authenticates by userId presence', async () => {
     const config: AuthMiddlewareConfig = { devBypass: false };
     const middleware = createAuthMiddleware(config);
@@ -200,6 +258,26 @@ describe('createAuthMiddleware', () => {
 
     try {
       await handler(createTestMessage({ channel: 'api', metadata: { apiKey: 'wrong-key' } }));
+      expect(true).toBe(false);
+    } catch (error) {
+      expect(error).toBeInstanceOf(YourBotError);
+      expect((error as YourBotError).code).toBe('AUTH_FAILED');
+    }
+  });
+
+  test('web channel rejects invalid JWT token', async () => {
+    const config: AuthMiddlewareConfig = {
+      devBypass: false,
+      jwtSecret: 'web-jwt-secret',
+    };
+    const middleware = createAuthMiddleware(config);
+    const next: MessageHandler = async () => {};
+    const handler = middleware(next);
+
+    try {
+      await handler(
+        createTestMessage({ channel: 'web', metadata: { token: 'invalid.jwt.token' } }),
+      );
       expect(true).toBe(false);
     } catch (error) {
       expect(error).toBeInstanceOf(YourBotError);

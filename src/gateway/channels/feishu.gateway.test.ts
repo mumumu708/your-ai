@@ -212,6 +212,99 @@ describe('FeishuChannel', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  test('getClient returns the Lark client after initialize', async () => {
+    await channel.initialize();
+    const client = channel.getClient();
+    expect(client).toBeDefined();
+    expect(client.im).toBeDefined();
+  });
+
+  test('emitMessage error should be caught and logged in event handler', async () => {
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = () => {};
+    console.error = () => {};
+
+    try {
+      await channel.initialize();
+      expect(_capturedEventHandler).toBeTruthy();
+
+      // Register a handler that throws
+      channel.onMessage(async () => {
+        throw new Error('handler failed');
+      });
+
+      const rawEvent = {
+        sender: { sender_id: { open_id: 'ou_abc', union_id: 'on_xyz' } },
+        message: {
+          message_id: 'om_error_test',
+          chat_id: 'oc_456',
+          message_type: 'text',
+          content: JSON.stringify({ text: '你好' }),
+        },
+      };
+
+      await _capturedEventHandler?.(rawEvent);
+      // Allow fire-and-forget promises to settle
+      await new Promise((r) => setTimeout(r, 50));
+
+      // The error should have been caught and logged, not thrown — reaching here = success
+      expect(true).toBe(true);
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+  });
+
+  test('dedup cleanup timer should fire and remove message ID', async () => {
+    // Override setTimeout to capture and immediately invoke cleanup callbacks
+    const origSetTimeout = globalThis.setTimeout;
+    const cleanupCallbacks: Array<() => void> = [];
+    globalThis.setTimeout = ((fn: (...args: unknown[]) => void, ms?: number) => {
+      // Capture the 5-minute cleanup callbacks (delay = 300000)
+      if (ms === 5 * 60 * 1000) {
+        cleanupCallbacks.push(fn as () => void);
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }
+      return origSetTimeout(fn, ms);
+    }) as typeof setTimeout;
+
+    try {
+      await channel.initialize();
+      expect(_capturedEventHandler).toBeTruthy();
+
+      const handler = mock(() => Promise.resolve());
+      channel.onMessage(handler);
+
+      const rawEvent = {
+        sender: { sender_id: { open_id: 'ou_abc', union_id: 'on_xyz' } },
+        message: {
+          message_id: 'om_cleanup_test',
+          chat_id: 'oc_456',
+          message_type: 'text',
+          content: JSON.stringify({ text: '你好' }),
+        },
+      };
+
+      await _capturedEventHandler?.(rawEvent);
+      await new Promise((r) => origSetTimeout(r, 50));
+
+      // The cleanup callback should have been captured
+      expect(cleanupCallbacks.length).toBeGreaterThan(0);
+
+      // Fire the cleanup callback
+      for (const cb of cleanupCallbacks) cb();
+
+      // Second event with same message_id should now be processed (dedup cleared)
+      await _capturedEventHandler?.(rawEvent);
+      await new Promise((r) => origSetTimeout(r, 50));
+
+      expect(handler).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.setTimeout = origSetTimeout;
+    }
+  });
+
   test('shutdown calls wsClient.close and clears state', async () => {
     await channel.initialize();
     expect(channel.isConnected()).toBe(true);

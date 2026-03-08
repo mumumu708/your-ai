@@ -192,6 +192,32 @@ describe('StreamHandler', () => {
       expect(result.durationMs).toBeGreaterThanOrEqual(0);
     });
 
+    test('应该处理迭代器抛出的异常', async () => {
+      const handler = new StreamHandler();
+      const adapter = createMockAdapter();
+
+      const throwingSource: AsyncIterable<StreamEvent> = {
+        [Symbol.asyncIterator]() {
+          let called = false;
+          return {
+            async next() {
+              if (!called) {
+                called = true;
+                return { value: { type: 'text_delta' as const, text: 'partial' }, done: false };
+              }
+              throw new Error('iterator exploded');
+            },
+          };
+        },
+      };
+
+      const result = await handler.processStream(throwingSource, [adapter]);
+
+      expect(adapter.errors.length).toBe(1);
+      expect(adapter.errors[0]).toBe('iterator exploded');
+      expect(result.fullContent).toContain('partial');
+    });
+
     test('空流应该正常处理', async () => {
       const handler = new StreamHandler();
       const adapter = createMockAdapter();
@@ -222,6 +248,24 @@ describe('StreamHandler', () => {
 
       expect(streamResult.fullContent).toBe('Hello World');
       expect(adapter.doneText).toBe('Hello World');
+    });
+
+    test('应该在事件稍后到达时正确等待', async () => {
+      const handler = new StreamHandler({
+        buffer: { flushIntervalMs: 0, maxBufferSize: 1 },
+      });
+      const adapter = createMockAdapter();
+
+      const { callback, result } = handler.createStreamCallback([adapter]);
+
+      // Fire events asynchronously so the iterator must wait at line 179
+      setTimeout(() => callback({ type: 'text_delta', text: 'async' }), 10);
+      setTimeout(() => callback({ type: 'done' }), 20);
+
+      const streamResult = await result;
+
+      expect(streamResult.fullContent).toBe('async');
+      expect(adapter.doneText).toBe('async');
     });
 
     test('error 事件应该终止流', async () => {

@@ -110,6 +110,42 @@ describe('WebChannel', () => {
     ws.close();
   });
 
+  test('updateMessage sends update to connected client', async () => {
+    await channel.initialize();
+
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?userId=user_upd`);
+    await new Promise<void>((resolve) => {
+      ws.onopen = () => resolve();
+    });
+    // Consume connected message and capture connectionId
+    const connMsg = await new Promise<string>((resolve) => {
+      ws.onmessage = (e) => resolve(e.data as string);
+    });
+    const { connectionId } = JSON.parse(connMsg);
+
+    const updatePromise = new Promise<string>((resolve) => {
+      ws.onmessage = (e) => resolve(e.data as string);
+    });
+
+    await channel.updateMessage(`${connectionId}:msg_123`, { type: 'text', text: 'updated' });
+
+    const data = JSON.parse(await updatePromise);
+    expect(data.type).toBe('update');
+    expect(data.data.text).toBe('updated');
+
+    ws.close();
+  });
+
+  test('updateMessage throws when connection not found', async () => {
+    await channel.initialize();
+    try {
+      await channel.updateMessage('nonexistent:msg_1', { type: 'text', text: 'fail' });
+      expect(true).toBe(false);
+    } catch (error) {
+      expect((error as Error).message).toContain('未找到');
+    }
+  });
+
   test('sendStreamChunk pushes stream events to client', async () => {
     await channel.initialize();
 

@@ -204,6 +204,32 @@ describe('FeishuStreamAdapter', () => {
     await adapter.sendDone('AB final', createProtocol({ type: 'stream_end' }));
   });
 
+  test('节流延迟更新失败时应该记录错误', async () => {
+    const deps = createMockDeps();
+    const adapter = new FeishuStreamAdapter('chat_001', deps, 200);
+
+    await adapter.onStreamStart('msg_001');
+
+    // First chunk goes through immediately
+    await adapter.sendChunk('A', createProtocol());
+    expect(deps.textUpdates.length).toBe(1);
+
+    // Make streamUpdateText fail for the deferred update
+    deps.streamUpdateText = async () => {
+      throw new Error('network error');
+    };
+
+    // Second chunk within throttle window should be deferred
+    await adapter.sendChunk('B', createProtocol());
+    expect(deps.textUpdates.length).toBe(1);
+
+    // Wait for throttle to expire — the deferred flushUpdate will fail
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    // The error is caught and logged, not thrown
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
   test('sequence 应该严格递增', async () => {
     const deps = createMockDeps();
     const adapter = new FeishuStreamAdapter('chat_001', deps, 0);

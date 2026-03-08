@@ -127,6 +127,23 @@ describe('TaskQueue', () => {
     });
   });
 
+  describe('getActiveCount', () => {
+    test('应该返回当前活跃的任务数', async () => {
+      const queue = new TaskQueue();
+      expect(queue.getActiveCount()).toBe(0);
+
+      queue.setHandler(async (task) => {
+        await new Promise((r) => setTimeout(r, 50));
+        return { success: true, taskId: task.id, completedAt: Date.now() };
+      });
+
+      const p = queue.enqueue(createMockTask());
+      await new Promise((r) => setTimeout(r, 10));
+      expect(queue.getActiveCount()).toBeGreaterThanOrEqual(1);
+      await p;
+    });
+  });
+
   describe('calculateRetryDelay', () => {
     test('应该使用指数退避', () => {
       const queue = new TaskQueue({ retryBaseDelayMs: 5000 });

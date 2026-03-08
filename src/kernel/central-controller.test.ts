@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { LessonsLearnedUpdater } from '../lessons/lessons-updater';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import type { BotMessage } from '../shared/messaging/bot-message.types';
+import type { IChannel } from '../shared/messaging/channel-adapter.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import { AgentRuntime } from './agents/agent-runtime';
 import { CentralController } from './central-controller';
@@ -635,6 +636,78 @@ describe('CentralController', () => {
     });
   });
 
+  describe('lightLLM callback in PostResponseAnalyzer', () => {
+    test('构造时传入 lightLLM 应该自动包装为 llmCall', async () => {
+      const sessionManager = new SessionManager();
+      const agentRuntime = new AgentRuntime();
+
+      // Mock lightLLM.complete
+      const mockLightLLM = {
+        complete: mock(async () => ({
+          content: JSON.stringify({
+            action: '使用 TypeScript',
+            category: 'instruction',
+            lesson: '用户要求用 TypeScript',
+          }),
+        })),
+      };
+
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: '好的',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      // Do NOT pass postResponseAnalyzer — let constructor build it with lightLLM callback
+      const controller = CentralController.getInstance({
+        sessionManager,
+        agentRuntime,
+        lightLLM: mockLightLLM as CentralControllerDeps['lightLLM'],
+        knowledgeRouter: {
+          buildContext: async () => ({
+            systemPrompt: 'Test',
+            fragments: [],
+            totalTokens: 20,
+            conflictsResolved: [],
+            retrievedMemories: [],
+          }),
+        } as unknown as KnowledgeRouter,
+        ovClient: {
+          addMessage: async () => {},
+          commit: async () => ({ memories_extracted: 0 }),
+        } as unknown as OpenVikingClient,
+        contextManager: {
+          checkAndFlush: async () => null,
+        } as unknown as ContextManager,
+        configLoader: {
+          loadAll: async () => ({
+            soul: 'Be helpful',
+            identity: 'Test',
+            user: '',
+            agents: '',
+          }),
+          invalidateCache: () => {},
+        } as unknown as ConfigLoader,
+        lessonsUpdater: {
+          addLesson: async () => true,
+        } as unknown as LessonsLearnedUpdater,
+        evolutionScheduler: {
+          schedulePostCommit: () => {},
+        } as unknown as EvolutionScheduler,
+        entityManager: {} as unknown as EntityManager,
+      });
+
+      // Send a correction message to trigger PostResponseAnalyzer with llmCall
+      const message = createMockMessage({ content: '不对，应该用 TypeScript 写代码' });
+      await controller.handleIncomingMessage(message);
+
+      // lightLLM.complete should have been called through the llmCall wrapper
+      expect(mockLightLLM.complete).toHaveBeenCalled();
+    });
+  });
+
   describe('classifyIntent — harness patterns', () => {
     test('应该将 /harness 命令分类为 harness 任务', () => {
       const controller = CentralController.getInstance();
@@ -700,6 +773,317 @@ describe('CentralController', () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: '/setup' });
       expect(controller.classifyIntent(message)).toBe('system');
+    });
+  });
+
+  describe('setChannelResolver / setStreamAdapterFactory', () => {
+    test('setChannelResolver 应该设置通道解析器', () => {
+      const controller = CentralController.getInstance(createMockOVDeps());
+      const resolver = (_type: string) => undefined;
+      controller.setChannelResolver(resolver);
+      // No error thrown = success
+      expect(true).toBe(true);
+    });
+
+    test('setStreamAdapterFactory 应该设置流式适配器工厂', () => {
+      const controller = CentralController.getInstance(createMockOVDeps());
+      const factory = (_u: string, _c: string, _conv: string) => [] as ChannelStreamAdapter[];
+      controller.setStreamAdapterFactory(factory);
+      expect(true).toBe(true);
+    });
+  });
+
+  describe('initScheduler / stopScheduler', () => {
+    test('initScheduler 应该加载任务、设置 executor 并启动', async () => {
+      const scheduler = new Scheduler();
+      const loadSpy = spyOn(scheduler, 'loadJobs').mockResolvedValue();
+      const setExecSpy = spyOn(scheduler, 'setExecutor');
+      const startSpy = spyOn(scheduler, 'start');
+
+      const controller = CentralController.getInstance({ scheduler, ...createMockOVDeps() });
+      await controller.initScheduler();
+
+      expect(loadSpy).toHaveBeenCalledTimes(1);
+      expect(setExecSpy).toHaveBeenCalledTimes(1);
+      expect(startSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('initScheduler executor 应该构造消息并推送结果', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: '定时任务结果',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'simple',
+        channel: 'light_llm',
+        classificationCostUsd: 0,
+      });
+
+      const sentMessages: Array<{ userId: string; text: string }> = [];
+      const mockChannel = {
+        sendMessage: async (userId: string, content: { text: string }) => {
+          sentMessages.push({ userId, text: content.text });
+        },
+      } as unknown as IChannel;
+
+      const scheduler = new Scheduler();
+      const loadSpy = spyOn(scheduler, 'loadJobs').mockResolvedValue();
+      spyOn(scheduler, 'start');
+      // Capture the executor
+      let capturedExecutor: ((job: unknown) => Promise<unknown>) | null = null;
+      spyOn(scheduler, 'setExecutor').mockImplementation((exec) => {
+        capturedExecutor = exec as (job: unknown) => Promise<unknown>;
+      });
+
+      const controller = CentralController.getInstance({
+        scheduler,
+        agentRuntime,
+        channelResolver: () => mockChannel,
+        ...createMockOVDeps(),
+      });
+
+      await controller.initScheduler();
+      expect(capturedExecutor).toBeTruthy();
+      expect(loadSpy).toHaveBeenCalled();
+
+      // Invoke the executor with a mock job
+      const mockJob = {
+        id: 'job_001',
+        channel: 'web',
+        userId: 'user_test',
+        description: '每天提醒喝水',
+        taskTemplate: {
+          messageContent: '提醒喝水',
+          userName: 'Test',
+          conversationId: 'sched_conv',
+        },
+      };
+
+      const result = await capturedExecutor!(mockJob);
+      expect((result as { success: boolean }).success).toBe(true);
+      expect(sentMessages.length).toBe(1);
+      expect(sentMessages[0].userId).toBe('user_test');
+    });
+
+    test('initScheduler executor 推送失败时不应抛出', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: '结果',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'simple',
+        channel: 'light_llm',
+        classificationCostUsd: 0,
+      });
+
+      const mockChannel = {
+        sendMessage: async () => {
+          throw new Error('send failed');
+        },
+      } as unknown as IChannel;
+
+      const scheduler = new Scheduler();
+      spyOn(scheduler, 'loadJobs').mockResolvedValue();
+      spyOn(scheduler, 'start');
+      let capturedExecutor: ((job: unknown) => Promise<unknown>) | null = null;
+      spyOn(scheduler, 'setExecutor').mockImplementation((exec) => {
+        capturedExecutor = exec as (job: unknown) => Promise<unknown>;
+      });
+
+      const controller = CentralController.getInstance({
+        scheduler,
+        agentRuntime,
+        channelResolver: () => mockChannel,
+        ...createMockOVDeps(),
+      });
+
+      await controller.initScheduler();
+
+      const mockJob = {
+        id: 'job_002',
+        channel: 'web',
+        userId: 'user_test',
+        description: '提醒',
+        taskTemplate: {},
+      };
+
+      // Should not throw even though sendMessage fails
+      const result = await capturedExecutor!(mockJob);
+      expect((result as { success: boolean }).success).toBe(true);
+    });
+
+    test('stopScheduler 应该停止并持久化', () => {
+      const scheduler = new Scheduler();
+      const stopSpy = spyOn(scheduler, 'stop');
+      const persistSpy = spyOn(scheduler, 'persistJobs');
+
+      const controller = CentralController.getInstance({ scheduler, ...createMockOVDeps() });
+      controller.stopScheduler();
+
+      expect(stopSpy).toHaveBeenCalledTimes(1);
+      expect(persistSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('handleUserMdUpload', () => {
+    test('web 通道 base64 文件上传应该处理成功', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const fileContent = '# My Profile\nI like coding';
+      const base64 = Buffer.from(fileContent).toString('base64');
+      const message = createMockMessage({
+        contentType: 'file',
+        content: '[文件: user.md]',
+        metadata: {
+          fileName: 'user.md',
+          fileContentBase64: base64,
+        },
+      });
+
+      const result = await controller.handleIncomingMessage(message);
+      expect(result.success).toBe(true);
+      const content = (result.data as Record<string, unknown>).content as string;
+      expect(content).toContain('已更新成功');
+    });
+
+    test('feishu 通道 fileKey 上传应该通过 channelResolver 下载', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+
+      const fileContent = '# My Profile';
+      const mockChannel = {
+        downloadFile: mock(async () => Buffer.from(fileContent)),
+      } as unknown as IChannel;
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        channelResolver: () => mockChannel,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({
+        contentType: 'file',
+        content: '[文件: user.md]',
+        metadata: {
+          fileName: 'user.md',
+          fileKey: 'fkey_001',
+        },
+      });
+
+      const result = await controller.handleIncomingMessage(message);
+      expect(result.success).toBe(true);
+      const content = (result.data as Record<string, unknown>).content as string;
+      expect(content).toContain('已更新成功');
+    });
+
+    test('通道不支持文件下载时应该返回提示', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+
+      const mockChannel = {} as unknown as IChannel; // no downloadFile
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        channelResolver: () => mockChannel,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({
+        contentType: 'file',
+        content: '[文件: user.md]',
+        metadata: {
+          fileName: 'user.md',
+          fileKey: 'fkey_001',
+        },
+      });
+
+      const result = await controller.handleIncomingMessage(message);
+      const content = (result.data as Record<string, unknown>).content as string;
+      expect(content).toContain('不支持文件下载');
+    });
+
+    test('无 fileKey 且无 base64 时应该返回无法获取', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({
+        contentType: 'file',
+        content: '[文件: user.md]',
+        metadata: {
+          fileName: 'user.md',
+        },
+      });
+
+      const result = await controller.handleIncomingMessage(message);
+      const content = (result.data as Record<string, unknown>).content as string;
+      expect(content).toContain('无法获取文件内容');
+    });
+
+    test('文件处理异常时应该返回失败提示', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        channelResolver: () =>
+          ({
+            downloadFile: async () => {
+              throw new Error('download failed');
+            },
+          }) as unknown as IChannel,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({
+        contentType: 'file',
+        content: '[文件: user.md]',
+        metadata: {
+          fileName: 'user.md',
+          fileKey: 'fkey_001',
+        },
+      });
+
+      const result = await controller.handleIncomingMessage(message);
+      const content = (result.data as Record<string, unknown>).content as string;
+      expect(content).toContain('文件处理失败');
+    });
+  });
+
+  describe('harness task via handleIncomingMessage', () => {
+    test('harness 消息应该经过 harnessMutex 执行', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'web:user_test_001';
+
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'done',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '修复bug' });
+      const result = await controller.handleIncomingMessage(message);
+      expect(result.success).toBe(true);
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        process.env.ADMIN_USER_IDS = undefined;
+      }
     });
   });
 

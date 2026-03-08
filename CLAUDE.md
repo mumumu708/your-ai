@@ -35,6 +35,7 @@ check:all 通过后，提交前，逐条自检：
 - Lint: `bun run lint` / `bun run lint:fix`
 - 格式化: `bun run format`
 - 架构检查: `bun run check:arch`
+- 覆盖率检查: `bun run check:coverage`（变更文件必须 100% 行/函数覆盖）
 - 创建 PR: `gh pr create --base main --head {branch} --title "..." --body "..."`
 
 ## Git 工作流

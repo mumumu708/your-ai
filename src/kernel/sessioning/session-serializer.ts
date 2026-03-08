@@ -45,7 +45,7 @@ export class SessionSerializer {
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.removeWaiter(sessionKey, waiter);
-        reject(new Error(`SessionSerializer 超时: key=${sessionKey}`));
+        waiter.reject(new Error(`SessionSerializer 超时: key=${sessionKey}`));
       }, this.timeoutMs);
 
       const waiter = {

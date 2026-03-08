@@ -1,8 +1,8 @@
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import type { ScheduledJob } from './scheduler';
 import { JobStore } from './job-store';
+import type { ScheduledJob } from './scheduler';
 
 const TEST_DIR = join(import.meta.dir, '__test_store__');
 const TEST_FILE = join(TEST_DIR, 'jobs.json');

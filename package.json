@@ -15,7 +15,8 @@
     "check:arch": "bun run scripts/check-architecture.ts",
     "check:conventions": "bun run scripts/lint-conventions.ts",
     "check:docs": "bun run scripts/check-docs.ts",
-    "check:all": "bun run lint && bun run typecheck && bun run check:arch && bun run check:conventions && bun test",
+    "check:coverage": "bun run scripts/check-coverage.ts",
+    "check:all": "bun run lint && bun run typecheck && bun run check:arch && bun run check:conventions && bun test && bun run check:coverage",
     "db:init": "bun run infra/scripts/db-init.ts",
     "db:migrate": "bun run infra/scripts/db-migrate.ts"
   },

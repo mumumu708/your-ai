@@ -156,6 +156,16 @@ describe('FileManager', () => {
       expect(files.get(`${BASE}/uploads/documents/file.txt`)).toBe('content');
     });
 
+    test('should stat a file', async () => {
+      const { ops, files } = createMockOps();
+      files.set(`${BASE}/test.txt`, 'hello');
+      const fm = new FileManager('user_001', BASE, ops);
+
+      const info = await fm.stat('test.txt');
+      expect(info.size).toBe(5);
+      expect(info.isDirectory).toBe(false);
+    });
+
     test('should check file existence', async () => {
       const { ops, files } = createMockOps();
       files.set(`${BASE}/exists.txt`, 'yes');
@@ -178,6 +188,13 @@ describe('FileManager', () => {
       expect(dirs.has(`${BASE}/uploads/temp`)).toBe(true);
       expect(dirs.has(`${BASE}/outputs/generated`)).toBe(true);
       expect(dirs.has(`${BASE}/outputs/exports`)).toBe(true);
+    });
+
+    test('should return the base workspace path', () => {
+      const { ops } = createMockOps();
+      const fm = new FileManager('user_001', BASE, ops);
+
+      expect(fm.getBasePath()).toBe(BASE);
     });
 
     test('should return correct upload paths by category', () => {

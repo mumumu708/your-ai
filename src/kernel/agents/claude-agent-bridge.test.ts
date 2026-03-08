@@ -231,6 +231,218 @@ describe('ClaudeAgentBridge', () => {
     });
   });
 
+  describe('会话续接 (resume)', () => {
+    test('应该使用 --resume 参数续接已有会话', async () => {
+      const events = [makeInitEvent(), makeAssistantEvent('resumed'), makeResultEvent('resumed')];
+      spawnSpy = spyOn(Bun, 'spawn').mockReturnValue(mockSpawn(events) as never);
+
+      const bridge = new ClaudeAgentBridge();
+      const result = await bridge.execute({
+        sessionId: 's1',
+        messages: [
+          { role: 'user', content: 'first msg' },
+          { role: 'user', content: 'follow up' },
+        ],
+        claudeSessionId: 'claude-sess-123',
+      });
+
+      expect(result.content).toBe('resumed');
+      const [args] = spawnSpy.mock.calls[0] as [string[]];
+      expect(args).toContain('--resume');
+      expect(args).toContain('claude-sess-123');
+      // In resume mode, only last message is sent
+      const pIdx = args.indexOf('-p');
+      expect(args[pIdx + 1]).toBe('follow up');
+    });
+
+    test('应该在续接失败时回退到全量 prompt 模式', async () => {
+      let callCount = 0;
+      spawnSpy = spyOn(Bun, 'spawn').mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          // First attempt fails (resume)
+          return mockSpawn([], 1) as never;
+        }
+        // Fallback attempt succeeds
+        const events = [
+          makeInitEvent(),
+          makeAssistantEvent('fallback ok'),
+          makeResultEvent('fallback ok'),
+        ];
+        return mockSpawn(events) as never;
+      });
+
+      const bridge = new ClaudeAgentBridge();
+      const result = await bridge.execute({
+        sessionId: 's1',
+        messages: [{ role: 'user', content: 'hello' }],
+        claudeSessionId: 'old-session',
+      });
+
+      expect(result.content).toBe('fallback ok');
+      expect(callCount).toBe(2);
+    });
+  });
+
+  describe('abort signal', () => {
+    test('executeWithoutResume 中 abort signal 应该 kill 子进程', async () => {
+      const controller = new AbortController();
+      let killed = false;
+      let callCount = 0;
+
+      spawnSpy = spyOn(Bun, 'spawn').mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          // First call (resume) fails
+          return mockSpawn([], 1) as never;
+        }
+        // Second call (fallback executeWithoutResume) — use a slow stream so abort fires in time
+        const stdout = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            const enc = new TextEncoder();
+            ctrl.enqueue(enc.encode(`${makeInitEvent()}\n`));
+            // Delay remaining events so abort fires between listener registration and stream end
+            setTimeout(() => {
+              ctrl.enqueue(enc.encode(`${makeAssistantEvent('fallback')}\n`));
+              ctrl.enqueue(enc.encode(`${makeResultEvent('fallback')}\n`));
+              ctrl.close();
+            }, 50);
+          },
+        });
+        const stderr = new ReadableStream<Uint8Array>({
+          start(c) {
+            c.close();
+          },
+        });
+        return {
+          stdout,
+          stderr,
+          exited: Promise.resolve(0),
+          kill: () => {
+            killed = true;
+          },
+        } as never;
+      });
+
+      const bridge = new ClaudeAgentBridge();
+      const promise = bridge.execute({
+        sessionId: 's1',
+        messages: [{ role: 'user', content: 'hello' }],
+        claudeSessionId: 'old-session',
+        signal: controller.signal,
+      });
+
+      // Delay abort so it fires after executeWithoutResume registers the listener
+      setTimeout(() => controller.abort(), 20);
+      await promise;
+      expect(callCount).toBe(2);
+      expect(killed).toBe(true);
+    });
+
+    test('应该在 abort 时 kill 子进程', async () => {
+      const controller = new AbortController();
+      let killed = false;
+      const events = [makeInitEvent(), makeAssistantEvent('hi'), makeResultEvent('hi')];
+
+      spawnSpy = spyOn(Bun, 'spawn').mockReturnValue({
+        ...mockSpawn(events),
+        kill: () => {
+          killed = true;
+        },
+      } as never);
+
+      const bridge = new ClaudeAgentBridge();
+      const promise = bridge.execute({
+        sessionId: 's1',
+        messages: [{ role: 'user', content: 'hello' }],
+        signal: controller.signal,
+      });
+
+      controller.abort();
+      await promise;
+      expect(killed).toBe(true);
+    });
+  });
+
+  describe('tool_use events', () => {
+    test('应该捕获 tool_use 事件', async () => {
+      const events = [
+        makeInitEvent(),
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'tool_use', name: 'Read' },
+              { type: 'text', text: 'result' },
+            ],
+          },
+        }),
+        makeResultEvent('result'),
+      ];
+
+      spawnSpy = spyOn(Bun, 'spawn').mockReturnValue(mockSpawn(events) as never);
+
+      const bridge = new ClaudeAgentBridge();
+      const result = await bridge.execute({
+        sessionId: 's1',
+        messages: [{ role: 'user', content: 'hello' }],
+      });
+
+      expect(result.toolsUsed).toContain('Read');
+    });
+  });
+
+  describe('session_id capture', () => {
+    test('应该捕获 result 事件中的 session_id', async () => {
+      const events = [
+        makeInitEvent(),
+        makeAssistantEvent('ok'),
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          session_id: 'new-session-id',
+          total_cost_usd: 0.001,
+          usage: { input_tokens: 10, output_tokens: 5 },
+        }),
+      ];
+
+      spawnSpy = spyOn(Bun, 'spawn').mockReturnValue(mockSpawn(events) as never);
+
+      const bridge = new ClaudeAgentBridge();
+      const result = await bridge.execute({
+        sessionId: 's1',
+        messages: [{ role: 'user', content: 'hello' }],
+      });
+
+      expect(result.claudeSessionId).toBe('new-session-id');
+    });
+  });
+
+  describe('prompt truncation', () => {
+    test('应该在超出 token 预算时截断旧消息', async () => {
+      const events = [makeInitEvent(), makeAssistantEvent('ok'), makeResultEvent('ok')];
+      spawnSpy = spyOn(Bun, 'spawn').mockReturnValue(mockSpawn(events) as never);
+
+      const bridge = new ClaudeAgentBridge();
+      // Create many messages to exceed budget
+      const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+      for (let i = 0; i < 500; i++) {
+        messages.push({ role: 'user', content: 'a'.repeat(1000) });
+        messages.push({ role: 'assistant', content: 'b'.repeat(1000) });
+      }
+      messages.push({ role: 'user', content: 'final question' });
+
+      await bridge.execute({ sessionId: 's1', messages });
+
+      const [args] = spawnSpy.mock.calls[0] as [string[]];
+      const pIdx = args.indexOf('-p');
+      const prompt = args[pIdx + 1];
+      // Should contain truncation notice
+      expect(prompt).toContain('已省略');
+      expect(prompt).toContain('final question');
+    });
+  });
+
   describe('命令行参数构建', () => {
     test('应该传递正确的 CLI 参数', async () => {
       const events = [makeInitEvent(), makeAssistantEvent('hi'), makeResultEvent('hi')];

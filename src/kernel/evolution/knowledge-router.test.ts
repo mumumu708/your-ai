@@ -162,4 +162,57 @@ describe('KnowledgeRouter', () => {
     expect(result.systemPrompt).toContain('Session Context');
     logSpy.mockRestore();
   });
+
+  test('应该包含工作区信息', async () => {
+    const result = await router.buildContext('user1', 'Hello', [], 'complex', {
+      workspaceInfo: {
+        availableSkills: ['translate', 'summarize'],
+        recentToolsUsed: ['search'],
+      },
+    });
+
+    expect(result.systemPrompt).toContain('Workspace');
+    expect(result.systemPrompt).toContain('translate');
+    logSpy.mockRestore();
+  });
+
+  test('应该包含摘要和锚文本', async () => {
+    const result = await router.buildContext('user1', 'Continue', [], 'complex', {
+      summaries: [{ content: '之前讨论了天气', messageCount: 3 }],
+      anchorText: '## 关键记忆\n- 用户喜欢咖啡',
+    });
+
+    expect(result.systemPrompt).toContain('Session Context');
+    logSpy.mockRestore();
+  });
+
+  test('skips workspace section when info is empty', async () => {
+    const result = await router.buildContext('user1', 'Hello', [], 'complex', {
+      workspaceInfo: {
+        availableSkills: [],
+        recentToolsUsed: [],
+      },
+    });
+
+    expect(result.systemPrompt).not.toContain('Workspace');
+    logSpy.mockRestore();
+  });
+
+  test('uses custom configLoader from options', async () => {
+    const customConfigLoader = {
+      loadAll: async () => ({
+        soul: '# Custom Soul',
+        identity: '# Custom Identity',
+        user: '',
+        agents: '',
+      }),
+    };
+
+    const result = await router.buildContext('user1', 'Hello', [], 'simple', {
+      configLoader: customConfigLoader,
+    });
+
+    expect(result.systemPrompt).toContain('Custom Identity');
+    logSpy.mockRestore();
+  });
 });

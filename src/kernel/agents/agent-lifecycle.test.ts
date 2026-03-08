@@ -193,6 +193,51 @@ describe('AgentLifecycleManager', () => {
     });
   });
 
+  describe('cleanup', () => {
+    test('应该清理已完成且超过5分钟的上下文', () => {
+      const manager = new AgentLifecycleManager();
+      const ctx = manager.startLifecycle('sess_001', 'Hello');
+      manager.markClassified(ctx.requestId, createClassifyResult({ complexity: 'simple' }));
+      manager.markCompleting(ctx.requestId);
+      manager.markCompleted(ctx.requestId);
+
+      // Manually backdate completedAt to 6 minutes ago
+      ctx.completedAt = Date.now() - 360_000;
+
+      expect(manager.getActiveCount()).toBe(0);
+      manager.cleanup();
+      // After cleanup, the context should be removed
+      expect(() => manager.markError(ctx.requestId, 'test')).toThrow();
+    });
+
+    test('不应该清理未过期的已完成上下文', () => {
+      const manager = new AgentLifecycleManager();
+      const ctx = manager.startLifecycle('sess_001', 'Hello');
+      manager.markClassified(ctx.requestId, createClassifyResult({ complexity: 'simple' }));
+      manager.markCompleting(ctx.requestId);
+      manager.markCompleted(ctx.requestId);
+
+      // Just completed — should not be cleaned
+      manager.cleanup();
+      // Context should still exist
+      expect(ctx.state).toBe('COMPLETED');
+    });
+
+    test('不应该清理仍活跃的上下文', () => {
+      const manager = new AgentLifecycleManager();
+      manager.startLifecycle('sess_001', 'Hello');
+      manager.cleanup();
+      expect(manager.getActiveCount()).toBe(1);
+    });
+  });
+
+  describe('getContext 错误', () => {
+    test('应该对不存在的请求ID抛出错误', () => {
+      const manager = new AgentLifecycleManager();
+      expect(() => manager.markCompleted('nonexistent')).toThrow('不存在');
+    });
+  });
+
   describe('metrics 事件', () => {
     test('完成时应该发射 lifecycle:metrics', () => {
       const manager = new AgentLifecycleManager();
