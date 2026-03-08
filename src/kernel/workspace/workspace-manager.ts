@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import * as fs from 'node:fs';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Logger } from '../../shared/logging/logger';
 import { SkillDeployer, type SkillFileOps } from '../skills/skill-deployer';
@@ -19,7 +20,9 @@ export interface WorkspaceManagerOptions {
   baseDir?: string;
 }
 
-const DEFAULT_BASE_DIR = process.env.USER_SPACE_ROOT ?? 'user-space';
+function getDefaultBaseDir(): string {
+  return process.env.USER_SPACE_ROOT ?? join(homedir(), '.your-ai', 'user-space');
+}
 
 const CLAUDE_MD_TEMPLATE = `You have just been awakened by your user.
 
@@ -86,7 +89,10 @@ export class WorkspaceManager {
   private readonly mcpConfigGenerator = new McpConfigGenerator();
 
   constructor(options: WorkspaceManagerOptions = {}) {
-    this.baseDir = resolve(options.baseDir ?? DEFAULT_BASE_DIR);
+    this.baseDir = resolve(options.baseDir ?? getDefaultBaseDir());
+    if (!process.env.USER_SPACE_ROOT) {
+      this.logger.warn('USER_SPACE_ROOT 未设置，使用默认路径', { path: this.baseDir });
+    }
   }
 
   ensureWorkspace(userId: string): WorkspacePath {
