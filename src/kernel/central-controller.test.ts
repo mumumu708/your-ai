@@ -1570,4 +1570,185 @@ describe('CentralController', () => {
       }
     });
   });
+
+  describe('handleHarnessEnd', () => {
+    test('"结束" in harness session should close session and return summary', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'user_test_001';
+
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+
+      const worktreePool = {
+        acquire: async () => ({
+          id: 'harness-end-slot',
+          branch: 'agent/fix/test',
+          worktreePath: '/tmp/worktree-end',
+          taskId: 'x',
+          createdAt: 0,
+        }),
+        release: async () => {},
+      } as unknown as CentralControllerDeps['worktreePool'];
+
+      const sessionManager = new SessionManager();
+      const closeSessionSpy = spyOn(sessionManager, 'closeSession').mockResolvedValue(null);
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        worktreePool,
+        sessionManager,
+        ...createMockOVDeps(),
+      });
+
+      // Pre-populate a session with harness worktree binding
+      const session = await sessionManager.resolveSession('user_test_001', 'web', 'conv_test_001');
+      session.harnessWorktreeSlotId = 'harness-end-slot';
+      session.harnessWorktreePath = '/tmp/worktree-end';
+      session.harnessBranch = 'agent/fix/test';
+
+      const message = createMockMessage({ content: '结束' });
+      const result = await controller.handleIncomingMessage(message);
+
+      expect(result.success).toBe(true);
+      expect(closeSessionSpy).toHaveBeenCalledTimes(1);
+      expect(closeSessionSpy).toHaveBeenCalledWith('user_test_001:web:conv_test_001');
+      const data = result.data as { content: string };
+      expect(data.content).toContain('agent/fix/test');
+      expect(data.content).toContain('Harness 任务结束');
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        process.env.ADMIN_USER_IDS = undefined;
+      }
+    });
+
+    test('"结束任务" and "/end" should also trigger harness end', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'user_test_001';
+
+      for (const content of ['结束任务', '/end']) {
+        CentralController.resetInstance();
+
+        const agentRuntime = new AgentRuntime();
+        spyOn(agentRuntime, 'execute');
+
+        const worktreePool = {
+          acquire: async () => ({
+            id: 'slot',
+            branch: 'agent/fix/x',
+            worktreePath: '/tmp/wt',
+            taskId: 'x',
+            createdAt: 0,
+          }),
+          release: async () => {},
+        } as unknown as CentralControllerDeps['worktreePool'];
+
+        const sessionManager = new SessionManager();
+        const closeSessionSpy = spyOn(sessionManager, 'closeSession').mockResolvedValue(null);
+
+        const controller = CentralController.getInstance({
+          agentRuntime,
+          worktreePool,
+          sessionManager,
+          ...createMockOVDeps(),
+        });
+
+        const session = await sessionManager.resolveSession('user_test_001', 'web', 'conv_test_001');
+        session.harnessWorktreeSlotId = 'slot';
+        session.harnessWorktreePath = '/tmp/wt';
+        session.harnessBranch = 'agent/fix/x';
+
+        const message = createMockMessage({ content });
+        const result = await controller.handleIncomingMessage(message);
+        expect(result.success).toBe(true);
+        expect(closeSessionSpy).toHaveBeenCalledTimes(1);
+      }
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        process.env.ADMIN_USER_IDS = undefined;
+      }
+    });
+
+    test('normal messages in harness session should not trigger end', async () => {
+      const originalEnv = process.env.ADMIN_USER_IDS;
+      process.env.ADMIN_USER_IDS = 'user_test_001';
+
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'done',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const worktreePool = {
+        acquire: async () => ({
+          id: 'slot',
+          branch: 'agent/fix/x',
+          worktreePath: '/tmp/wt',
+          taskId: 'x',
+          createdAt: 0,
+        }),
+        release: async () => {},
+      } as unknown as CentralControllerDeps['worktreePool'];
+
+      const sessionManager = new SessionManager();
+      const closeSessionSpy = spyOn(sessionManager, 'closeSession').mockResolvedValue(null);
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        worktreePool,
+        sessionManager,
+        ...createMockOVDeps(),
+      });
+
+      const session = await sessionManager.resolveSession('user_test_001', 'web', 'conv_test_001');
+      session.harnessWorktreeSlotId = 'slot';
+      session.harnessWorktreePath = '/tmp/wt';
+
+      // Normal message should go through chat pipeline, not trigger end
+      const message = createMockMessage({ content: '请继续修改代码' });
+      const result = await controller.handleIncomingMessage(message);
+      expect(result.success).toBe(true);
+      expect(closeSessionSpy).not.toHaveBeenCalled();
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+
+      if (originalEnv !== undefined) {
+        process.env.ADMIN_USER_IDS = originalEnv;
+      } else {
+        process.env.ADMIN_USER_IDS = undefined;
+      }
+    });
+
+    test('"结束" in non-harness session should go through normal chat', async () => {
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'done',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'simple',
+        channel: 'light_llm',
+        classificationCostUsd: 0,
+      });
+
+      const sessionManager = new SessionManager();
+      const closeSessionSpy = spyOn(sessionManager, 'closeSession').mockResolvedValue(null);
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        sessionManager,
+        ...createMockOVDeps(),
+      });
+
+      // No harness binding — "结束" should be treated as normal chat
+      const message = createMockMessage({ content: '结束' });
+      const result = await controller.handleIncomingMessage(message);
+      expect(result.success).toBe(true);
+      expect(closeSessionSpy).not.toHaveBeenCalled();
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+    });
+  });
 });

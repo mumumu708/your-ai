@@ -34,6 +34,7 @@ export interface Session {
   // Harness worktree binding — persists across messages in the same session
   harnessWorktreeSlotId?: string;
   harnessWorktreePath?: string;
+  harnessBranch?: string;
   harnessGroupChatId?: string;
 }
 
