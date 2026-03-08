@@ -94,8 +94,10 @@ describe('消息管道集成测试', () => {
 
       const handler = router.createHandler();
 
-      // "帮我写一段排序算法" should be classified as complex by rule
-      await handler(createMessage({ content: '帮我写一段排序算法' }));
+      // "帮我写一段排序算法" goes through LLM classification (fuzzy patterns removed).
+      // The mock LLM returns unparseable content → fallback to chat+complex → Claude Bridge.
+      // Use a longer message to avoid hitting the short-message simple rule.
+      await handler(createMessage({ content: '帮我写一段排序算法，要求支持多种数据类型' }));
 
       // Claude bridge should have been called
       expect((claudeBridge.execute as ReturnType<typeof mock>).mock.calls.length).toBe(1);
@@ -398,13 +400,14 @@ describe('消息管道集成测试', () => {
       expect((dispatched[0].content as { text: string }).text).toContain('help');
     });
 
-    test('TaskClassifier 规则层应该正确标记 complex 模式', async () => {
+    test('TaskClassifier 规则层应该正确标记 harness 模式', async () => {
       const lightLLM = createMockLightLLM();
       const classifier = new TaskClassifier(lightLLM);
 
-      // "帮我创建一个" should hit complex rule
-      const result = classifier.ruleClassify('帮我创建一个 React 项目');
+      // "/harness" should hit explicit harness rule
+      const result = classifier.ruleClassify('/harness 创建一个 React 项目');
       expect(result).not.toBeNull();
+      expect(result?.taskType).toBe('harness');
       expect(result?.complexity).toBe('complex');
     });
 

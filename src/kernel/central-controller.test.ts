@@ -106,52 +106,60 @@ describe('CentralController', () => {
   });
 
   describe('classifyIntent', () => {
-    test('应该将以 / 开头的消息分类为系统任务', () => {
+    test('应该将以 / 开头的消息分类为系统任务', async () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: '/help' });
-      expect(controller.classifyIntent(message)).toBe('system');
+      const result = await controller.classifyIntent(message);
+      expect(result.taskType).toBe('system');
     });
 
-    test('应该将普通消息分类为聊天任务', () => {
+    test('应该将普通消息分类为聊天任务', async () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: '你好' });
-      expect(controller.classifyIntent(message)).toBe('chat');
+      const result = await controller.classifyIntent(message);
+      expect(result.taskType).toBe('chat');
     });
 
-    test('应该将包含"每天"的消息分类为定时任务', () => {
+    test('应该将包含"每天"的消息分类为定时任务', async () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: '每天早上提醒我喝水' });
-      expect(controller.classifyIntent(message)).toBe('scheduled');
+      const result = await controller.classifyIntent(message);
+      expect(result.taskType).toBe('scheduled');
     });
 
-    test('应该将包含"提醒我"的消息分类为定时任务', () => {
+    test('应该将包含"提醒我"的消息分类为定时任务', async () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: '提醒我下午3点开会' });
-      expect(controller.classifyIntent(message)).toBe('scheduled');
+      const result = await controller.classifyIntent(message);
+      expect(result.taskType).toBe('scheduled');
     });
 
-    test('应该将英文定时模式分类为定时任务', () => {
+    test('应该将英文定时模式分类为定时任务', async () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: 'remind me every day at 9:00' });
-      expect(controller.classifyIntent(message)).toBe('scheduled');
+      const result = await controller.classifyIntent(message);
+      expect(result.taskType).toBe('scheduled');
     });
 
-    test('应该将包含"自动化"的消息分类为自动化任务', () => {
+    test('应该将包含"自动化"的消息分类为自动化任务', async () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: '自动化处理这些文件' });
-      expect(controller.classifyIntent(message)).toBe('automation');
+      const result = await controller.classifyIntent(message);
+      expect(result.taskType).toBe('automation');
     });
 
-    test('应该将包含 batch 的消息分类为自动化任务', () => {
+    test('应该将包含 batch 的消息分类为自动化任务', async () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: 'batch process these files' });
-      expect(controller.classifyIntent(message)).toBe('automation');
+      const result = await controller.classifyIntent(message);
+      expect(result.taskType).toBe('automation');
     });
 
-    test('应该将无法识别的内容默认分类为聊天', () => {
+    test('应该将无法识别的内容默认分类为聊天', async () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: '今天天气怎么样？' });
-      expect(controller.classifyIntent(message)).toBe('chat');
+      const result = await controller.classifyIntent(message);
+      expect(result.taskType).toBe('chat');
     });
   });
 
@@ -709,70 +717,32 @@ describe('CentralController', () => {
   });
 
   describe('classifyIntent — harness patterns', () => {
-    test('应该将 /harness 命令分类为 harness 任务', () => {
+    test('应该将 /harness 命令分类为 harness 任务', async () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: '/harness 修改代码' });
-      expect(controller.classifyIntent(message)).toBe('harness');
+      const result = await controller.classifyIntent(message);
+      expect(result.taskType).toBe('harness');
     });
 
-    test('应该将 harness: 前缀分类为 harness 任务', () => {
+    test('应该将 harness: 前缀分类为 harness 任务', async () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: 'harness: fix the bug' });
-      expect(controller.classifyIntent(message)).toBe('harness');
+      const result = await controller.classifyIntent(message);
+      expect(result.taskType).toBe('harness');
     });
 
-    test('应该将"修复bug"分类为 harness 任务', () => {
-      const controller = CentralController.getInstance();
-      const message = createMockMessage({ content: '修复bug' });
-      expect(controller.classifyIntent(message)).toBe('harness');
-    });
-
-    test('应该将"加个功能"分类为 harness 任务', () => {
-      const controller = CentralController.getInstance();
-      const message = createMockMessage({ content: '加个功能' });
-      expect(controller.classifyIntent(message)).toBe('harness');
-    });
-
-    test('应该将"重构"分类为 harness 任务', () => {
-      const controller = CentralController.getInstance();
-      const message = createMockMessage({ content: '重构这段代码' });
-      expect(controller.classifyIntent(message)).toBe('harness');
-    });
-
-    test('应该将 "fix the bug" 分类为 harness 任务', () => {
-      const controller = CentralController.getInstance();
-      const message = createMockMessage({ content: 'fix the bug' });
-      expect(controller.classifyIntent(message)).toBe('harness');
-    });
-
-    test('应该将 "run tests" 分类为 harness 任务', () => {
-      const controller = CentralController.getInstance();
-      const message = createMockMessage({ content: 'run tests' });
-      expect(controller.classifyIntent(message)).toBe('harness');
-    });
-
-    test('应该将 "add a feature" 分类为 harness 任务', () => {
-      const controller = CentralController.getInstance();
-      const message = createMockMessage({ content: 'add a feature' });
-      expect(controller.classifyIntent(message)).toBe('harness');
-    });
-
-    test('不应该将"什么是bug"分类为 harness', () => {
-      const controller = CentralController.getInstance();
-      const message = createMockMessage({ content: '什么是bug' });
-      expect(controller.classifyIntent(message)).toBe('chat');
-    });
-
-    test('不应该将普通对话分类为 harness', () => {
+    test('不应该将普通对话分类为 harness', async () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: '你好' });
-      expect(controller.classifyIntent(message)).toBe('chat');
+      const result = await controller.classifyIntent(message);
+      expect(result.taskType).toBe('chat');
     });
 
-    test('不应该将 /setup 分类为 harness', () => {
+    test('不应该将 /setup 分类为 harness', async () => {
       const controller = CentralController.getInstance();
       const message = createMockMessage({ content: '/setup' });
-      expect(controller.classifyIntent(message)).toBe('system');
+      const result = await controller.classifyIntent(message);
+      expect(result.taskType).toBe('system');
     });
   });
 
@@ -858,7 +828,7 @@ describe('CentralController', () => {
         },
       };
 
-      const result = await capturedExecutor!(mockJob);
+      const result = await (capturedExecutor as NonNullable<typeof capturedExecutor>)(mockJob);
       expect((result as { success: boolean }).success).toBe(true);
       expect(sentMessages.length).toBe(1);
       expect(sentMessages[0].userId).toBe('user_test');
@@ -906,7 +876,7 @@ describe('CentralController', () => {
       };
 
       // Should not throw even though sendMessage fails
-      const result = await capturedExecutor!(mockJob);
+      const result = await (capturedExecutor as NonNullable<typeof capturedExecutor>)(mockJob);
       expect((result as { success: boolean }).success).toBe(true);
     });
 

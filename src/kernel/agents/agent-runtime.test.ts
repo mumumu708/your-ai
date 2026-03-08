@@ -9,6 +9,7 @@ import type { LightLLMClient } from './light-llm-client';
 function createMockClassifier(complexity: 'simple' | 'complex' = 'complex'): TaskClassifier {
   return {
     classify: async () => ({
+      taskType: 'chat' as const,
       complexity,
       reason: 'mock',
       confidence: 0.9,
@@ -224,6 +225,104 @@ describe('AgentRuntime', () => {
       expect(result).toHaveProperty('channel');
       expect(result).toHaveProperty('classificationCostUsd');
       expect(typeof result.classificationCostUsd).toBe('number');
+    });
+  });
+
+  describe('预计算 classifyResult', () => {
+    test('传入 classifyResult 为 simple 时直接路由到 LightLLM，不调用 classifier', async () => {
+      const mockClassifier = createMockClassifier('complex'); // Would route to complex
+      const classifySpy = spyOn(mockClassifier, 'classify');
+
+      const runtime = new AgentRuntime({
+        classifier: mockClassifier,
+        claudeBridge: createMockClaudeBridge(),
+        lightLLM: createMockLightLLM(),
+      });
+
+      const result = await runtime.execute(
+        createParams({
+          classifyResult: {
+            taskType: 'chat',
+            complexity: 'simple',
+            reason: 'pre-computed',
+            confidence: 0.9,
+            classifiedBy: 'rule',
+            costUsd: 0.001,
+          },
+        }),
+      );
+
+      expect(classifySpy).not.toHaveBeenCalled();
+      expect(result.complexity).toBe('simple');
+      expect(result.channel).toBe('light_llm');
+      expect(result.classificationCostUsd).toBe(0.001);
+    });
+
+    test('传入 classifyResult 为 complex 时直接路由到 Claude Bridge，不调用 classifier', async () => {
+      const mockClassifier = createMockClassifier('simple'); // Would route to simple
+      const classifySpy = spyOn(mockClassifier, 'classify');
+
+      const runtime = new AgentRuntime({
+        classifier: mockClassifier,
+        claudeBridge: createMockClaudeBridge(),
+        lightLLM: createMockLightLLM(),
+      });
+
+      const result = await runtime.execute(
+        createParams({
+          classifyResult: {
+            taskType: 'harness',
+            complexity: 'complex',
+            reason: 'pre-computed harness',
+            confidence: 0.95,
+            classifiedBy: 'llm',
+            costUsd: 0.002,
+          },
+        }),
+      );
+
+      expect(classifySpy).not.toHaveBeenCalled();
+      expect(result.complexity).toBe('complex');
+      expect(result.channel).toBe('agent_sdk');
+      expect(result.content).toBe('Claude response');
+    });
+
+    test('无 classifyResult 时应该 fallback 到 classifier', async () => {
+      const mockClassifier = createMockClassifier('complex');
+      const classifySpy = spyOn(mockClassifier, 'classify');
+
+      const runtime = new AgentRuntime({
+        classifier: mockClassifier,
+        claudeBridge: createMockClaudeBridge(),
+      });
+
+      await runtime.execute(createParams());
+
+      expect(classifySpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('forceComplex 应优先于 classifyResult', async () => {
+      const runtime = new AgentRuntime({
+        claudeBridge: createMockClaudeBridge(),
+        lightLLM: createMockLightLLM(),
+      });
+
+      const result = await runtime.execute(
+        createParams({
+          forceComplex: true,
+          classifyResult: {
+            taskType: 'chat',
+            complexity: 'simple',
+            reason: 'should be overridden',
+            confidence: 0.9,
+            classifiedBy: 'rule',
+            costUsd: 0,
+          },
+        }),
+      );
+
+      expect(result.complexity).toBe('complex');
+      expect(result.channel).toBe('agent_sdk');
     });
   });
 });

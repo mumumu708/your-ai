@@ -1,4 +1,5 @@
 import { LessonsLearnedUpdater } from '../lessons/lessons-updater';
+import type { UnifiedClassifyResult } from '../shared/classifier/classifier-types';
 import { ERROR_CODES } from '../shared/errors/error-codes';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import { Logger } from '../shared/logging/logger';
@@ -33,44 +34,6 @@ import { StreamHandler } from './streaming/stream-handler';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
 import { TaskQueue } from './tasking/task-queue';
 import { WorkspaceManager } from './workspace';
-
-const SYSTEM_COMMAND_PREFIX = '/';
-
-const SCHEDULE_PATTERNS = [
-  /每[天日周月]/,
-  /定时/,
-  /提醒我/,
-  /remind/i,
-  /schedule/i,
-  /every\s+(day|week|month|hour|minute)/i,
-  /at\s+\d{1,2}:\d{2}/i,
-  /cron/i,
-];
-
-const AUTOMATION_PATTERNS = [/自动化/, /批量/, /automate/i, /batch/i, /workflow/i];
-
-const HARNESS_PATTERNS = [
-  // Explicit triggers
-  /^\/harness\b/i,
-  /^harness:/i,
-  // Code modification (CN)
-  /修[复个]?\s*(bug|缺陷|问题)/i,
-  /加[个一]?\s*(功能|特性)/i,
-  /重构/,
-  // Project infrastructure (CN)
-  /跑[一下]*\s*测试/,
-  /运行\s*测试/,
-  /查[看下]*\s*架构/,
-  // Documentation maintenance (CN)
-  /更新[一下]*\s*文档/,
-  // Deployment (CN)
-  /部署/,
-  /重启\s*服务/,
-  // EN patterns
-  /\b(fix|debug|refactor)\s+(the\s+)?(bug|code|issue)/i,
-  /\brun\s+tests?\b/i,
-  /\badd\s+(a\s+)?feature\b/i,
-];
 
 export interface CentralControllerDeps {
   sessionManager?: SessionManager;
@@ -128,6 +91,7 @@ export class CentralController {
   private readonly onboardingManager: OnboardingManager;
   private readonly sessionSerializer: SessionSerializer;
   private readonly harnessMutex: HarnessMutex;
+  private readonly classifier: TaskClassifier;
   private readonly fileUploadHandler: FileUploadHandler;
   private channelResolver?: (channelType: string) => IChannel | undefined;
 
@@ -140,12 +104,12 @@ export class CentralController {
     this.streamCallback = deps?.streamCallback;
     this.streamAdapterFactory = deps?.streamAdapterFactory;
 
-    // Build AgentRuntime with injected dependencies
-    const classifier = deps?.classifier ?? new TaskClassifier(deps?.lightLLM ?? null);
+    // Build classifier and AgentRuntime with injected dependencies
+    this.classifier = deps?.classifier ?? new TaskClassifier(deps?.lightLLM ?? null);
     this.agentRuntime =
       deps?.agentRuntime ??
       new AgentRuntime({
-        classifier,
+        classifier: this.classifier,
         claudeBridge: deps?.claudeBridge ?? null,
         lightLLM: deps?.lightLLM ?? null,
       });
@@ -320,7 +284,8 @@ export class CentralController {
         };
       }
 
-      const taskType = this.classifyIntent(message);
+      const classifyResult = await this.classifyIntent(message);
+      const taskType = classifyResult.taskType;
 
       const task: Task = {
         id: generateTaskId(),
@@ -335,6 +300,7 @@ export class CentralController {
           channel: message.channel,
           conversationId: message.conversationId,
         },
+        classifyResult,
       };
 
       this.logger.info('任务创建', {
@@ -342,6 +308,9 @@ export class CentralController {
         taskId: task.id,
         type: taskType,
         priority: task.priority,
+        classifiedBy: classifyResult.classifiedBy,
+        reason: classifyResult.reason,
+        complexity: classifyResult.complexity,
       });
 
       const abortController = new AbortController();
@@ -398,31 +367,8 @@ export class CentralController {
     }
   }
 
-  classifyIntent(message: BotMessage): TaskType {
-    // Harness patterns checked first (/harness must not be swallowed by system command prefix)
-    for (const pattern of HARNESS_PATTERNS) {
-      if (pattern.test(message.content)) {
-        return 'harness';
-      }
-    }
-
-    if (message.content.startsWith(SYSTEM_COMMAND_PREFIX)) {
-      return 'system';
-    }
-
-    for (const pattern of SCHEDULE_PATTERNS) {
-      if (pattern.test(message.content)) {
-        return 'scheduled';
-      }
-    }
-
-    for (const pattern of AUTOMATION_PATTERNS) {
-      if (pattern.test(message.content)) {
-        return 'automation';
-      }
-    }
-
-    return 'chat';
+  async classifyIntent(message: BotMessage): Promise<UnifiedClassifyResult> {
+    return this.classifier.classify(message.content, { userId: message.userId });
   }
 
   calculatePriority(taskType: TaskType): number {
@@ -530,6 +476,7 @@ export class CentralController {
       signal: task.signal,
       streamCallback,
       forceComplex: options?.forceComplex,
+      classifyResult: task.classifyResult,
     });
 
     if (streamResultPromise) {
