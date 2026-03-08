@@ -24,6 +24,7 @@ export interface FeishuStreamDeps {
 }
 
 const CONTENT_ELEMENT_ID = 'md_content';
+const MAX_CARD_CONTENT_LENGTH = 28000;
 
 export class FeishuStreamAdapter implements ChannelStreamAdapter {
   readonly channelType = 'feishu';
@@ -68,6 +69,11 @@ export class FeishuStreamAdapter implements ChannelStreamAdapter {
 
   async sendChunk(text: string, _protocol: StreamProtocol): Promise<void> {
     this.accumulatedText += text;
+
+    if (this.accumulatedText.length > MAX_CARD_CONTENT_LENGTH) {
+      const keep = MAX_CARD_CONTENT_LENGTH - 100;
+      this.accumulatedText = `... (内容已截断)\n\n${this.accumulatedText.slice(-keep)}`;
+    }
 
     if (this.fallbackMode) return;
 

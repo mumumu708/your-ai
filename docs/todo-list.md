@@ -18,6 +18,12 @@ done
 
 ## 多agent构建
 
+## 定时查看错误日志并修复
+
+## 定时读取todo开发
+
+## 发现变更重启服务任务
+
 # skills
 
 ## 信息聚合
@@ -38,3 +44,7 @@ done
 - Podcast Production Pipeline — 自动化播客全流程：嘉宾研究、大纲生成、录制后的带时间戳 Show Notes、社交媒体推广套件、SEO 优化描述。子代理并行处理研究和写作任务，将 70% 的生产开销交给 AI。
 - Todoist Task Manager — 将 Agent 内部推理和进度日志同步到 Todoist，实现工作流透明化。Agent 自建 bash 脚本（todoist_api.sh、sync_task.sh、add_comment.sh），自动更新状态分区（🟡 In Progress → 🟠 Waiting → 🟢 Done）。
 - Market Research & Product Factory — 使用 Last 30 Days 技能挖掘 Reddit 和 X 上的真实痛点，然后让 OpenClaw 直接构建解决这些问题的 MVP。覆盖从"痛点发现"到"产品交付"的完整管道，是创业者的自动化利器。
+
+# 缺陷
+
+- 流式更新不能读所有模型的返回，会超长，得看看怎么拿一些关键信息
