@@ -29,7 +29,13 @@ import { OnboardingManager } from './onboarding';
 import { JobStore } from './scheduling/job-store';
 import { nlToCron } from './scheduling/nl-to-cron';
 import { Scheduler } from './scheduling/scheduler';
-import { HarnessMutex, SessionManager, SessionSerializer } from './sessioning';
+import {
+  HarnessMutex,
+  SessionManager,
+  SessionSerializer,
+  WorktreePool,
+  generateBranchName,
+} from './sessioning';
 import { StreamHandler } from './streaming/stream-handler';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
 import { TaskQueue } from './tasking/task-queue';
@@ -62,6 +68,7 @@ export interface CentralControllerDeps {
   channelResolver?: (channelType: string) => IChannel | undefined;
   sessionSerializer?: SessionSerializer;
   harnessMutex?: HarnessMutex;
+  worktreePool?: WorktreePool;
 }
 
 export class CentralController {
@@ -91,6 +98,7 @@ export class CentralController {
   private readonly onboardingManager: OnboardingManager;
   private readonly sessionSerializer: SessionSerializer;
   private readonly harnessMutex: HarnessMutex;
+  private readonly worktreePool: WorktreePool;
   private readonly classifier: TaskClassifier;
   private readonly fileUploadHandler: FileUploadHandler;
   private channelResolver?: (channelType: string) => IChannel | undefined;
@@ -161,6 +169,7 @@ export class CentralController {
     this.workspaceManager = deps?.workspaceManager ?? new WorkspaceManager();
     this.sessionSerializer = deps?.sessionSerializer ?? new SessionSerializer();
     this.harnessMutex = deps?.harnessMutex ?? new HarnessMutex();
+    this.worktreePool = deps?.worktreePool ?? new WorktreePool();
 
     // OnboardingManager — guides new users through setup
     this.onboardingManager = new OnboardingManager(deps?.lightLLM ?? null);
@@ -319,14 +328,7 @@ export class CentralController {
 
       try {
         const sessionKey = `${message.userId}:${message.channel}:${message.conversationId}`;
-        let result: TaskResult;
-        if (taskType === 'harness') {
-          result = await this.harnessMutex.run(() =>
-            this.sessionSerializer.run(sessionKey, () => this.orchestrate(task)),
-          );
-        } else {
-          result = await this.sessionSerializer.run(sessionKey, () => this.orchestrate(task));
-        }
+        const result = await this.sessionSerializer.run(sessionKey, () => this.orchestrate(task));
         return result;
       } finally {
         this.activeRequests.delete(task.id);
@@ -392,8 +394,18 @@ export class CentralController {
       task.type = 'chat';
       return this.executeChatPipeline(task);
     }
-    // Admin: use project root as cwd, force Claude path for tool access
-    return this.executeChatPipeline(task, { cwdOverride: process.cwd(), forceComplex: true });
+    const branchName = generateBranchName(task.message.content);
+    return this.worktreePool.run(task.id, branchName, async (slot) => {
+      this.logger.info('Harness 任务分配 worktree', {
+        taskId: task.id,
+        branch: slot.branch,
+        worktreePath: slot.worktreePath,
+      });
+      return this.executeChatPipeline(task, {
+        cwdOverride: slot.worktreePath,
+        forceComplex: true,
+      });
+    });
   }
 
   private async executeChatPipeline(

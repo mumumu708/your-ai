@@ -1,6 +1,11 @@
+export { generateBranchName } from './branch-name-generator';
+export { BunGitOperations } from './git-operations';
+export type { GitOperations } from './git-operations';
 export { HarnessMutex } from './harness-mutex';
 export type { HarnessMutexConfig } from './harness-mutex';
 export { SessionManager } from './session-manager';
 export type { SessionCloseCallback } from './session-manager';
 export { SessionSerializer } from './session-serializer';
 export type { SessionSerializerConfig } from './session-serializer';
+export { WorktreePool } from './worktree-pool';
+export type { WorktreePoolConfig, WorktreeSlot } from './worktree-pool';

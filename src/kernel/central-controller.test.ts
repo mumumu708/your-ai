@@ -1027,7 +1027,7 @@ describe('CentralController', () => {
   });
 
   describe('harness task via handleIncomingMessage', () => {
-    test('harness 消息应该经过 harnessMutex 执行', async () => {
+    test('harness 消息应该经过 worktreePool 执行', async () => {
       const originalEnv = process.env.ADMIN_USER_IDS;
       process.env.ADMIN_USER_IDS = 'web:user_test_001';
 
@@ -1040,8 +1040,21 @@ describe('CentralController', () => {
         classificationCostUsd: 0,
       });
 
+      const worktreePool = {
+        run: async (_taskId: string, _branch: string, fn: (slot: unknown) => Promise<unknown>) => {
+          return fn({
+            id: 'harness-mock',
+            branch: 'agent/fix/mock',
+            worktreePath: '/tmp/worktree-mock',
+            taskId: _taskId,
+            createdAt: Date.now(),
+          });
+        },
+      } as CentralControllerDeps['worktreePool'];
+
       const controller = CentralController.getInstance({
         agentRuntime,
+        worktreePool,
         ...createMockOVDeps(),
       });
 
@@ -1111,14 +1124,32 @@ describe('CentralController', () => {
       }
     });
 
-    test('管理员发送 harness 消息应使用 process.cwd()', async () => {
+    test('管理员发送 harness 消息应使用 worktree 路径', async () => {
       const originalEnv = process.env.ADMIN_USER_IDS;
       process.env.ADMIN_USER_IDS = 'feishu:admin_user';
 
       const agentRuntime = new AgentRuntime();
       const executeSpy = spyOn(agentRuntime, 'execute');
+
+      let capturedTaskId = '';
+      let capturedBranch = '';
+      const worktreePool = {
+        run: async (taskId: string, branch: string, fn: (slot: unknown) => Promise<unknown>) => {
+          capturedTaskId = taskId;
+          capturedBranch = branch;
+          return fn({
+            id: 'harness-mock',
+            branch,
+            worktreePath: '/tmp/worktree-harness',
+            taskId,
+            createdAt: Date.now(),
+          });
+        },
+      } as CentralControllerDeps['worktreePool'];
+
       const controller = CentralController.getInstance({
         agentRuntime,
+        worktreePool,
         ...createMockOVDeps(),
       });
 
@@ -1152,9 +1183,13 @@ describe('CentralController', () => {
 
       const callArgs = executeSpy.mock.calls[0][0] as Record<string, unknown>;
       const context = callArgs.context as Record<string, unknown>;
-      expect(context.workspacePath).toBe(process.cwd());
+      // Should use worktree path, not process.cwd()
+      expect(context.workspacePath).toBe('/tmp/worktree-harness');
       // Harness tasks must force complex (Claude) path
       expect(callArgs.forceComplex).toBe(true);
+      // worktreePool.run should have been called with the task id
+      expect(capturedTaskId).toBe('task_002');
+      expect(capturedBranch).toMatch(/^agent\/fix\//);
 
       if (originalEnv !== undefined) {
         process.env.ADMIN_USER_IDS = originalEnv;
