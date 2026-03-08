@@ -191,7 +191,7 @@ export class TaskClassifier {
           {
             role: 'system',
             content:
-              '你是一个任务分类器。根据用户消息判断两个维度：\n1. taskType: "chat"(对话/问答) | "harness"(工程开发任务:改代码/修bug/跑测试/部署/重构等) | "scheduled"(定时提醒) | "automation"(批量自动化) | "system"(系统命令)\n2. complexity: "simple"(简单问答/闲聊) | "complex"(需要工具/代码/多步推理)\n只回复 JSON: {"taskType":"...","complexity":"...","reason":"..."}',
+              '你是一个任务分类器。根据用户消息判断两个维度：\n1. taskType: "chat"(对话/问答/工程任务) | "scheduled"(定时提醒) | "automation"(批量自动化) | "system"(系统命令)\n2. complexity: "simple"(简单问答/闲聊) | "complex"(需要工具/代码/多步推理)\n只回复 JSON: {"taskType":"...","complexity":"...","reason":"..."}',
           },
           { role: 'user', content: message },
         ],
@@ -246,7 +246,8 @@ export class TaskClassifier {
   private normalizeTaskType(
     raw?: string,
   ): 'chat' | 'scheduled' | 'automation' | 'system' | 'harness' {
-    const valid = ['chat', 'scheduled', 'automation', 'system', 'harness'] as const;
+    // harness is only triggered by explicit rule patterns, never by LLM
+    const valid = ['chat', 'scheduled', 'automation', 'system'] as const;
     if (raw && valid.includes(raw as (typeof valid)[number])) {
       return raw as (typeof valid)[number];
     }

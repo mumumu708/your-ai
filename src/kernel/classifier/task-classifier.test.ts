@@ -187,7 +187,7 @@ describe('TaskClassifier', () => {
       expect(result.costUsd).toBe(0.0001);
     });
 
-    test('LLM 返回 harness + complex 时正确解析', async () => {
+    test('LLM 返回 harness 时应降级为 chat（harness 仅限显式命令）', async () => {
       const mockLLM = createMockLightLLM({
         complete: async () => ({
           content: '{"taskType":"harness","complexity":"complex","reason":"需要修改代码"}',
@@ -196,7 +196,7 @@ describe('TaskClassifier', () => {
       } as unknown as Partial<LightLLMClient>);
       const classifier = new TaskClassifier(mockLLM);
       const result = await classifier.classify('从skills同步最新内容，替换本地内置的skill');
-      expect(result.taskType).toBe('harness');
+      expect(result.taskType).toBe('chat');
       expect(result.complexity).toBe('complex');
     });
 
@@ -265,13 +265,13 @@ describe('TaskClassifier', () => {
     test('LLM 返回无语言标记代码块时正确解析', async () => {
       const mockLLM = createMockLightLLM({
         complete: async () => ({
-          content: '```\n{"taskType":"harness","complexity":"complex","reason":"需要工具"}\n```',
+          content: '```\n{"taskType":"chat","complexity":"complex","reason":"需要工具"}\n```',
           usage: { promptTokens: 10, completionTokens: 5, totalCost: 0.0001 },
         }),
       } as unknown as Partial<LightLLMClient>);
       const classifier = new TaskClassifier(mockLLM);
       const result = await classifier.classify('能不能帮我看看这个东西好不好用');
-      expect(result.taskType).toBe('harness');
+      expect(result.taskType).toBe('chat');
       expect(result.complexity).toBe('complex');
       expect(result.reason).toBe('需要工具');
     });
