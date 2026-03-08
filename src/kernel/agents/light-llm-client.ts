@@ -76,48 +76,74 @@ export class LightLLMClient {
 
     this.logger.debug('LightLLM complete 请求', { model, messageCount: request.messages.length });
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: request.messages,
-        max_tokens: request.maxTokens ?? 1024,
-        temperature: request.temperature ?? 0.7,
-        stream: false,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'unknown');
-      throw new YourBotError(ERROR_CODES.LLM_API_ERROR, `LightLLM API 错误: ${response.status}`, {
-        status: response.status,
-        body: errorText,
+    const maxAttempts = 2;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: request.messages,
+          max_tokens: request.maxTokens ?? 1024,
+          temperature: request.temperature ?? 0.7,
+          stream: false,
+        }),
       });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'unknown');
+        throw new YourBotError(ERROR_CODES.LLM_API_ERROR, `LightLLM API 错误: ${response.status}`, {
+          status: response.status,
+          body: errorText,
+        });
+      }
+
+      const data = (await response.json()) as {
+        choices: Array<{
+          message: { content: string | null };
+          finish_reason?: string;
+        }>;
+        model: string;
+        usage?: { prompt_tokens: number; completion_tokens: number };
+      };
+
+      const content = data.choices?.[0]?.message?.content ?? '';
+      const finishReason = data.choices?.[0]?.finish_reason;
+      const promptTokens = data.usage?.prompt_tokens ?? 0;
+      const completionTokens = data.usage?.completion_tokens ?? 0;
+
+      if (!content && attempt < maxAttempts) {
+        this.logger.warn('LightLLM 返回空内容，重试中', {
+          attempt,
+          finishReason,
+          choicesLength: data.choices?.length ?? 0,
+        });
+        continue;
+      }
+
+      if (!content) {
+        this.logger.warn('LightLLM 返回空内容', {
+          finishReason,
+          choicesLength: data.choices?.length ?? 0,
+        });
+      }
+
+      return {
+        content,
+        model: data.model ?? model,
+        usage: {
+          promptTokens,
+          completionTokens,
+          totalCost: this.estimateCost(model, promptTokens, completionTokens),
+        },
+      };
     }
 
-    const data = (await response.json()) as {
-      choices: Array<{ message: { content: string } }>;
-      model: string;
-      usage?: { prompt_tokens: number; completion_tokens: number };
-    };
-
-    const content = data.choices?.[0]?.message?.content ?? '';
-    const promptTokens = data.usage?.prompt_tokens ?? 0;
-    const completionTokens = data.usage?.completion_tokens ?? 0;
-
-    return {
-      content,
-      model: data.model ?? model,
-      usage: {
-        promptTokens,
-        completionTokens,
-        totalCost: this.estimateCost(model, promptTokens, completionTokens),
-      },
-    };
+    /* istanbul ignore next -- unreachable but satisfies TS */
+    return { content: '', model, usage: { promptTokens: 0, completionTokens: 0, totalCost: 0 } };
   }
 
   async *stream(request: LightLLMRequest): AsyncGenerator<LightLLMStreamChunk> {

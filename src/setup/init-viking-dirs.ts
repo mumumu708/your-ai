@@ -29,11 +29,8 @@ export async function initVikingDirs(
     try {
       await ov.mkdir(dir);
     } catch (err) {
-      // Directory may already exist — that's fine
       const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes('exists')) {
-        console.warn(`Warning: could not create ${dir}: ${msg}`);
-      }
+      console.warn(`Warning: could not create ${dir}: ${msg}`);
     }
   }
 
