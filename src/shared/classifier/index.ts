@@ -1,4 +1,3 @@
-export { TaskClassifier } from './task-classifier';
 export type {
   TaskComplexity,
   UnifiedClassifyResult,

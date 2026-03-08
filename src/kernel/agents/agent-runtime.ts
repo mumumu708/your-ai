@@ -40,12 +40,26 @@ export class AgentRuntime {
       return this.executeComplex(params);
     }
 
-    // If no classifier, default to complex path
+    // Use pre-computed classification result if available
+    if (params.classifyResult) {
+      this.logger.info('分类结果', {
+        sessionId: params.context.sessionId,
+        complexity: params.classifyResult.complexity,
+        taskType: params.classifyResult.taskType,
+        reason: params.classifyResult.reason,
+        classifiedBy: params.classifyResult.classifiedBy,
+      });
+      if (params.classifyResult.complexity === 'simple') {
+        return this.executeSimple(params, params.classifyResult.costUsd);
+      }
+      return this.executeComplex(params, params.classifyResult.costUsd);
+    }
+
+    // Fallback: no pre-computed result — run classifier inline (backward compat)
     if (!this.classifier) {
       return this.executeComplex(params);
     }
 
-    // Build classification context
     const lastUserMessage = this.getLastUserMessage(params);
     if (!lastUserMessage) {
       return this.executeComplex(params);
@@ -60,6 +74,7 @@ export class AgentRuntime {
     this.logger.info('分类结果', {
       sessionId: params.context.sessionId,
       complexity: classification.complexity,
+      taskType: classification.taskType,
       reason: classification.reason,
       classifiedBy: classification.classifiedBy,
     });

@@ -1,4 +1,5 @@
 import type { ConversationMessage } from '../agents/agent-instance.types';
+import type { UnifiedClassifyResult } from '../classifier/classifier-types';
 import type { BotMessage } from '../messaging/bot-message.types';
 
 export type TaskType = 'chat' | 'scheduled' | 'automation' | 'system' | 'harness';
@@ -42,4 +43,5 @@ export interface Task {
   createdAt: number;
   signal?: AbortSignal;
   metadata: TaskMetadata;
+  classifyResult?: UnifiedClassifyResult;
 }
