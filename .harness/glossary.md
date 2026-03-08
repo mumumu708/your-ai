@@ -25,7 +25,7 @@
 | **SessionManager** | 会话管理器，维护用户对话历史和上下文 |
 | **SessionSerializer** | 会话消息序列化器，同一会话 FIFO 串行执行，不同会话可并行，防止并发消息竞争 session.messages |
 | **HarnessMutex** | (已弃用) Harness 互斥锁，原用于全局串行 harness 任务，已被 WorktreePool 替代 |
-| **WorktreePool** | Worktree 并行隔离池，每个 harness 任务分配独立 git worktree，支持最多 N 个并发（默认 5），采用 waiter-queue + 超时模式 |
+| **WorktreePool** | Worktree 并行隔离池，每个 harness session 分配独立 git worktree（生命周期 = session 生命周期），支持最多 N 个并发（默认 5），采用 waiter-queue + 超时模式。首条消息 acquire，session close 时 release |
 | **GitOperations** | Git 操作抽象接口（addWorktree/removeWorktree），生产实现为 BunGitOperations，可注入 mock 用于单测 |
 | **generateBranchName** | 纯函数，从 harness 消息内容生成分支名（去前缀→动词映射→slugify→短哈希） |
 | **WorkspaceManager** | 工作空间管理器，初始化用户目录结构和 MCP 配置 |
