@@ -280,6 +280,83 @@ describe('Scheduler', () => {
     });
   });
 
+  describe('setTimeout 溢出保护 (Bug 3)', () => {
+    test('超长 delay 不应立即执行', async () => {
+      const results: string[] = [];
+      scheduler.setExecutor(async (job: ScheduledJob): Promise<TaskResult> => {
+        results.push(job.id);
+        return { success: true, taskId: job.id, completedAt: Date.now() };
+      });
+
+      const jobId = await scheduler.register({
+        cronExpression: '',
+        taskTemplate: {},
+        userId: 'user_001',
+      });
+
+      const job = scheduler.getJob(jobId);
+      if (!job) throw new Error('Expected job to exist');
+      // Set nextRunAt far in the future (beyond 32-bit limit)
+      job.nextRunAt = Date.now() + 3_000_000_000;
+
+      scheduler.start();
+      // Wait a bit — should NOT have executed
+      await new Promise((r) => setTimeout(r, 100));
+
+      expect(results.length).toBe(0);
+      expect(job.executionCount).toBe(0);
+    });
+  });
+
+  describe('一次性任务完成标记 (Bug 4)', () => {
+    test('空 cron job 执行后 status 为 completed', async () => {
+      scheduler.setExecutor(async (job: ScheduledJob): Promise<TaskResult> => {
+        return { success: true, taskId: job.id, completedAt: Date.now() };
+      });
+
+      const jobId = await scheduler.register({
+        cronExpression: '',
+        taskTemplate: {},
+        userId: 'user_001',
+      });
+
+      const job = scheduler.getJob(jobId);
+      if (!job) throw new Error('Expected job to exist');
+      job.nextRunAt = Date.now() - 1000;
+
+      scheduler.start();
+      await new Promise((r) => setTimeout(r, 100));
+
+      expect(job.status).toBe('completed');
+      expect(job.executionCount).toBe(1);
+    });
+
+    test('空 cron job 失败后也标记 completed，不重试', async () => {
+      let callCount = 0;
+      scheduler.setExecutor(async (): Promise<TaskResult> => {
+        callCount++;
+        throw new Error('Task failed');
+      });
+
+      const jobId = await scheduler.register({
+        cronExpression: '',
+        taskTemplate: {},
+        userId: 'user_001',
+      });
+
+      const job = scheduler.getJob(jobId);
+      if (!job) throw new Error('Expected job to exist');
+      job.nextRunAt = Date.now() - 1000;
+
+      scheduler.start();
+      await new Promise((r) => setTimeout(r, 100));
+
+      expect(job.status).toBe('completed');
+      expect(callCount).toBe(1);
+      expect(job.lastResult?.success).toBe(false);
+    });
+  });
+
   describe('executor callback', () => {
     test('应该在 job 触发时调用 executor', async () => {
       const results: string[] = [];

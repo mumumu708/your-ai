@@ -19,6 +19,10 @@ Agent 每次犯错后须追加一条，随代码一起提交。管理员 review 
 | P-013 | catch 块中 return 误杀后续逻辑 | `try { mkdir() } catch { return; }` 会阻止后续 sync 逻辑。"目录已存在"是正常情况，catch 应仅消化异常而非 return |
 | P-014 | 飞书 API 响应需通过 resp.data 访问 | Lark SDK v3 的 `im.chat.create` 等 API 返回 `{ data: { chat_id } }` 而非直接 `{ chat_id }`，忘记 `.data` 会导致 TS 编译错误和运行时 undefined |
 | P-015 | 流式卡片 sendDone 传入空内容 | 飞书 streamUpdateText API 要求非空文本，当 LLM 返回空内容时需降级为占位文本，否则返回 99992402 field validation failed |
+| P-016 | nlToCron 返回 null 时仍注册 job | `nlToCron` 匹配失败返回 `cron: null` 时，`handleScheduledTask` 须提前拦截返回 `success: false`，不得用 `??''` 注册空 cron job |
+| P-017 | setTimeout delay 超过 2^31-1 溢出为 1ms | `setTimeout(fn, delay)` 的 delay 参数是 32 位有符号整数，超过 2147483647 会溢出变为立即执行。需分段等待（递归调度） |
+| P-018 | 一次性任务（空 cron）执行后无限重调度 | 空 cron job `calculateNextRun` 返回 365 天后，但仍会无限重调度。执行后应标记 `status='completed'` 终止循环 |
+| P-019 | executor 重放原始命令而非任务内容 | `taskTemplate.messageContent` 应使用从原文提取的任务内容（如"给我发消息"），而非包含调度前缀的完整命令 |
 
 ---
 

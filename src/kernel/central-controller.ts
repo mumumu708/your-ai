@@ -700,10 +700,20 @@ export class CentralController {
 
     const nlResult = nlToCron(task.message.content);
 
+    // Bug 2: cron 解析失败时拦截，不注册无效 job
+    if (!nlResult.cron || nlResult.confidence === 0) {
+      return {
+        success: false,
+        taskId: task.id,
+        error: `无法识别调度模式: ${nlResult.description}`,
+        completedAt: Date.now(),
+      };
+    }
+
     const jobId = await this.scheduler.register({
-      cronExpression: nlResult.cron ?? '',
+      cronExpression: nlResult.cron,
       taskTemplate: {
-        messageContent: task.message.content,
+        messageContent: nlResult.taskContent,
         userName: task.message.userName,
         conversationId: task.message.conversationId,
       },

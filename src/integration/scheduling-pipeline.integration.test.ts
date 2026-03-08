@@ -106,7 +106,7 @@ describe('定时调度管道集成测试', () => {
       });
 
       const msg = createMessage({
-        content: '提醒我下午3点开会',
+        content: '每天下午3点提醒我开会',
         userId: 'user_remind',
       });
       const result = await controller.handleIncomingMessage(msg);
@@ -195,7 +195,7 @@ describe('定时调度管道集成测试', () => {
         scheduler,
       });
 
-      const msg = createMessage({ content: '每天提醒我写周报' });
+      const msg = createMessage({ content: '每天上午9点提醒我写周报' });
       const result = await controller.handleIncomingMessage(msg);
       const jobId = (result.data as Record<string, unknown>).jobId as string;
 
@@ -223,10 +223,10 @@ describe('定时调度管道集成测试', () => {
       });
 
       await controller.handleIncomingMessage(
-        createMessage({ content: '每天提醒我锻炼', userId: 'user_A', conversationId: 'conv_A' }),
+        createMessage({ content: '每天上午8点提醒我锻炼', userId: 'user_A', conversationId: 'conv_A' }),
       );
       await controller.handleIncomingMessage(
-        createMessage({ content: '每周提醒我整理', userId: 'user_B', conversationId: 'conv_B' }),
+        createMessage({ content: '每周一上午10点提醒我整理', userId: 'user_B', conversationId: 'conv_B' }),
       );
 
       expect(scheduler.getJobCount()).toBe(2);

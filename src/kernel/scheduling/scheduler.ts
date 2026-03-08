@@ -15,7 +15,10 @@ export interface ScheduleConfig {
   channel?: ChannelType;
 }
 
-export type JobStatus = 'active' | 'paused' | 'cancelled';
+export type JobStatus = 'active' | 'paused' | 'cancelled' | 'completed';
+
+/** Maximum safe value for setTimeout delay (2^31 - 1 ms ≈ 24.8 days) */
+const MAX_TIMEOUT = 2_147_483_647;
 
 export interface ScheduledJob {
   id: string;
@@ -225,6 +228,13 @@ export class Scheduler {
       return;
     }
 
+    if (delay > MAX_TIMEOUT) {
+      // Delay exceeds 32-bit limit; set a wakeup timer then recalculate
+      const timer = setTimeout(() => this.scheduleNextRun(job), MAX_TIMEOUT);
+      this.timers.set(job.id, timer);
+      return;
+    }
+
     const timer = setTimeout(() => this.executeJob(job), delay);
     this.timers.set(job.id, timer);
   }
@@ -264,6 +274,13 @@ export class Scheduler {
         error: error instanceof Error ? error.message : String(error),
         completedAt: Date.now(),
       };
+    }
+
+    // One-shot tasks (no cron expression): mark completed, do not reschedule
+    if (!job.cronExpression) {
+      job.status = 'completed';
+      this.persistJobs();
+      return;
     }
 
     this.persistJobs();
