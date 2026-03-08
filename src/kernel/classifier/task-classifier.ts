@@ -187,7 +187,7 @@ export class TaskClassifier {
           },
           { role: 'user', content: message },
         ],
-        maxTokens: 100,
+        maxTokens: 1024,
         temperature: 0,
       });
 

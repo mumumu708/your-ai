@@ -179,7 +179,15 @@ export class OpenVikingClient {
   }
 
   async mkdir(uri: string): Promise<void> {
-    await this.request('POST', '/api/v1/fs/mkdir', { uri });
+    try {
+      await this.request('POST', '/api/v1/fs/mkdir', { uri }, undefined, 0);
+    } catch (err) {
+      // "already exists" is expected for idempotent mkdir — swallow it
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.toLowerCase().includes('already exist')) {
+        throw err;
+      }
+    }
   }
 
   async write(uri: string, content: string): Promise<void> {

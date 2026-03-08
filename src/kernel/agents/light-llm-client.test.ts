@@ -292,6 +292,85 @@ describe('LightLLMClient', () => {
   });
 
   describe('complete (additional)', () => {
+    test('应该在首次返回空内容时重试一次', async () => {
+      let callCount = 0;
+      globalThis.fetch = (async () => {
+        callCount++;
+        const content = callCount === 1 ? '' : 'retry ok';
+        return {
+          ok: true,
+          status: 200,
+          text: async () => '',
+          json: async () => ({
+            choices: [{ message: { content }, finish_reason: 'stop' }],
+            model: 'gpt-4o-mini',
+            usage: { prompt_tokens: 10, completion_tokens: 5 },
+          }),
+          body: null,
+        };
+      }) as unknown as typeof fetch;
+
+      const client = new LightLLMClient({
+        apiKey: 'test-key',
+        baseUrl: 'https://api.example.com/v1',
+      });
+      const result = await client.complete({
+        messages: [{ role: 'user', content: 'Hi' }],
+      });
+
+      expect(callCount).toBe(2);
+      expect(result.content).toBe('retry ok');
+    });
+
+    test('应该在重试后仍为空内容时返回空字符串', async () => {
+      mockFetch({
+        choices: [{ message: { content: '' }, finish_reason: 'stop' }],
+        model: 'gpt-4o-mini',
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+
+      const client = new LightLLMClient({
+        apiKey: 'test-key',
+        baseUrl: 'https://api.example.com/v1',
+      });
+      const result = await client.complete({
+        messages: [{ role: 'user', content: 'Hi' }],
+      });
+
+      expect(result.content).toBe('');
+    });
+
+    test('应该在 choices 为空数组时重试', async () => {
+      let callCount = 0;
+      globalThis.fetch = (async () => {
+        callCount++;
+        const choices =
+          callCount === 1 ? [] : [{ message: { content: 'ok' }, finish_reason: 'stop' }];
+        return {
+          ok: true,
+          status: 200,
+          text: async () => '',
+          json: async () => ({
+            choices,
+            model: 'gpt-4o-mini',
+            usage: { prompt_tokens: 10, completion_tokens: 5 },
+          }),
+          body: null,
+        };
+      }) as unknown as typeof fetch;
+
+      const client = new LightLLMClient({
+        apiKey: 'test-key',
+        baseUrl: 'https://api.example.com/v1',
+      });
+      const result = await client.complete({
+        messages: [{ role: 'user', content: 'Hi' }],
+      });
+
+      expect(callCount).toBe(2);
+      expect(result.content).toBe('ok');
+    });
+
     test('应该使用未知模型的默认费率估算成本', async () => {
       mockFetch({
         choices: [{ message: { content: 'ok' } }],

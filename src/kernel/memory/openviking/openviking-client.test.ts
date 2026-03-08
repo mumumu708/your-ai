@@ -269,6 +269,23 @@ describe('OpenVikingClient', () => {
     await client.mkdir('viking://dir');
   });
 
+  test('mkdir swallows "already exists" error', async () => {
+    mockFetch(() => ({
+      status: 'error',
+      error: { code: 'FS_ERROR', message: 'directory already exists: /some/path' },
+    }));
+    // Should NOT throw
+    await client.mkdir('viking://dir');
+  });
+
+  test('mkdir re-throws non-exists errors', async () => {
+    mockFetch(() => ({
+      status: 'error',
+      error: { code: 'FS_ERROR', message: 'permission denied' },
+    }));
+    await expect(client.mkdir('viking://dir')).rejects.toThrow('permission denied');
+  });
+
   test('write sends content', async () => {
     mockFetch((_url, init) => {
       const body = JSON.parse(init?.body as string);

@@ -131,7 +131,7 @@ export class UserConfigLoader {
     try {
       await this.ov.mkdir(remoteDir);
     } catch {
-      // directory may already exist — continue to sync
+      // mkdir is idempotent; other errors (network etc.) are non-fatal
     }
 
     // Sync local config files that are missing on VikingFS
