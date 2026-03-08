@@ -23,6 +23,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@larksuiteoapi/node-sdk": "^1.59.0",
+    "agent-browser": "^0.16.3",
     "better-sqlite3": "^11.7.0",
     "bunqueue": "^1.1.0",
     "drizzle-orm": "^0.38.0",
