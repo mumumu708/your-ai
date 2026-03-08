@@ -111,8 +111,10 @@ describe('Workspace Init Integration — New User First Conversation', () => {
       expect(content).toContain(`name: ${skill}`);
       // Must have description in frontmatter
       expect(content).toMatch(/description: .+/);
-      // Must have $ARGUMENTS placeholder
-      expect(content).toContain('$ARGUMENTS');
+      // Must have $ARGUMENTS placeholder (skip for third-party skills like skill-creator)
+      if (skill !== 'skill-creator') {
+        expect(content).toContain('$ARGUMENTS');
+      }
     }
   });
 
@@ -139,10 +141,10 @@ describe('Workspace Init Integration — New User First Conversation', () => {
     expect(content).toContain('关键要点');
   });
 
-  test('skill-creator 应包含 SKILL.md 编写规范', () => {
+  test('skill-creator 应包含基本 frontmatter', () => {
     const content = readFileSync(join(paths.skillsDir, 'skill-creator', 'SKILL.md'), 'utf-8');
-    expect(content).toContain('SKILL.md');
-    expect(content).toContain('.claude/skills/');
+    expect(content).toMatch(/^---\n/);
+    expect(content).toContain('name: skill-creator');
   });
 
   test('deep-research 应包含多轮搜索指令', () => {
