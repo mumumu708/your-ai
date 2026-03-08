@@ -20,6 +20,8 @@ import { SessionManager } from './sessioning/session-manager';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
 import { TaskQueue } from './tasking/task-queue';
 
+const TEST_USER_SPACE = '/tmp/test-user-space';
+
 function createMockMessage(overrides: Partial<BotMessage> = {}): BotMessage {
   return {
     id: 'msg_test_001',
@@ -1192,7 +1194,7 @@ describe('CentralController', () => {
         lastActiveAt: Date.now(),
         agentConfig: { maxContextTokens: 100000 },
         messages: [],
-        workspacePath: '/tmp/user-space/user_regular',
+        workspacePath: `${TEST_USER_SPACE}/user_regular`,
       };
 
       const task = {
@@ -1257,7 +1259,7 @@ describe('CentralController', () => {
         lastActiveAt: Date.now(),
         agentConfig: { maxContextTokens: 100000 },
         messages: [],
-        workspacePath: '/tmp/user-space/feishu:admin_user',
+        workspacePath: `${TEST_USER_SPACE}/feishu:admin_user`,
       };
 
       const task = {
@@ -1313,7 +1315,7 @@ describe('CentralController', () => {
         lastActiveAt: Date.now(),
         agentConfig: { maxContextTokens: 100000 },
         messages: [],
-        workspacePath: '/tmp/user-space/user_regular',
+        workspacePath: `${TEST_USER_SPACE}/user_regular`,
       };
 
       const task = {
@@ -1377,7 +1379,7 @@ describe('CentralController', () => {
         lastActiveAt: Date.now(),
         agentConfig: { maxContextTokens: 100000 },
         messages: [],
-        workspacePath: '/tmp/user-space/feishu:admin_user',
+        workspacePath: `${TEST_USER_SPACE}/feishu:admin_user`,
         harnessWorktreeSlotId: 'harness-slot-1',
         harnessWorktreePath: '/tmp/worktree-persist',
       };
@@ -1451,7 +1453,7 @@ describe('CentralController', () => {
         lastActiveAt: Date.now(),
         agentConfig: { maxContextTokens: 100000 },
         messages: [],
-        workspacePath: '/tmp/user-space/feishu:admin_user',
+        workspacePath: `${TEST_USER_SPACE}/feishu:admin_user`,
       };
 
       const task = {

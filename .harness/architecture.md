@@ -72,9 +72,9 @@
 │  lessons-updater.ts    — 经验写入存储                           │
 │  manual-management.ts  — 手动管理经验                           │
 ├─────────────────────────────────────────────────────────────┤
-│  UserSpace (外部: user-space/)                               │
+│  UserSpace (外部: $USER_SPACE_ROOT)                           │
 │  每用户: AIEOS 协议文件 + 记忆数据 + MCP 配置                    │
-│  (计划迁移到 $USER_SPACE_ROOT 项目外目录)                       │
+│  (已迁移至 ~/.your-ai/user-space/，可通过 USER_SPACE_ROOT 配置) │
 ├─────────────────────────────────────────────────────────────┤
 │  Infra                                                      │
 │  infra/       — database · docker · pm2 · scripts            │

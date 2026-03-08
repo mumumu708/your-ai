@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Logger } from '../../shared/logging/logger';
 import type { LightLLMClient } from '../agents/light-llm-client';
@@ -15,7 +16,10 @@ export interface OnboardingState {
 }
 
 const BOOTSTRAP_FILENAME = 'BOOTSTRAP.md';
-const USER_SPACE_BASE = process.env.USER_SPACE_ROOT ?? 'user-space';
+
+function getUserSpaceBase(): string {
+  return process.env.USER_SPACE_ROOT ?? join(homedir(), '.your-ai', 'user-space');
+}
 
 /**
  * Multi-turn onboarding dialog state machine.
@@ -46,7 +50,7 @@ export class OnboardingManager {
       // which causes FileNotFoundError on the openviking server when the file doesn't exist.
       const localPath = userConfigLoader
         ? join(userConfigLoader.getLocalDir(), BOOTSTRAP_FILENAME)
-        : `${USER_SPACE_BASE}/${userId}/memory/${BOOTSTRAP_FILENAME}`;
+        : `${getUserSpaceBase()}/${userId}/memory/${BOOTSTRAP_FILENAME}`;
       const file = Bun.file(localPath);
       if (await file.exists()) {
         const content = await file.text();
@@ -318,7 +322,7 @@ Never share user data across different user contexts.
   ): Promise<void> {
     const localPath = userConfigLoader
       ? join(userConfigLoader.getLocalDir(), BOOTSTRAP_FILENAME)
-      : `${USER_SPACE_BASE}/${userId}/memory/${BOOTSTRAP_FILENAME}`;
+      : `${getUserSpaceBase()}/${userId}/memory/${BOOTSTRAP_FILENAME}`;
     try {
       const { unlinkSync } = require('node:fs');
       unlinkSync(localPath);
