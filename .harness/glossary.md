@@ -15,7 +15,8 @@
 | **AgentRuntime** | Agent 运行时，根据任务复杂度路由到 Claude Code 或 LightLLM |
 | **ClaudeAgentBridge** | Claude CLI 子进程封装，通过 `claude -p` 执行复杂任务 |
 | **LightLLM** | 轻量 LLM 客户端，兼容 OpenAI API，用于简单任务（DeepSeek/Qwen 等） |
-| **TaskClassifier** | 任务分类器，两层架构：规则匹配（快） + LLM 兜底（慢），输出 simple/complex |
+| **TaskClassifier** | 统一任务分类器，两层架构：规则匹配（快） + LLM 兜底（慢），同时输出 taskType + complexity（UnifiedClassifyResult） |
+| **UnifiedClassifyResult** | 统一分类结果，包含 taskType（chat/harness/scheduled/automation/system）+ complexity（simple/complex）+ reason + classifiedBy（rule/llm）+ costUsd |
 | **KnowledgeRouter** | 知识路由器，构建 system prompt：加载 AIEOS 配置 + 检索相关记忆 + Token 预算分配 |
 | **TokenBudgetAllocator** | Token 预算分配器，在有限上下文窗口内分配各类知识的 token 配额 |
 | **PostResponseAnalyzer** | 回复后分析器，检测用户纠正行为并提取经验教训 |

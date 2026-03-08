@@ -25,7 +25,7 @@
 │    light-llm-client.ts — OpenAI 兼容 API 客户端               │
 │    process-security.ts — 子进程安全控制                         │
 │    agent-lifecycle.ts  — Agent 生命周期管理                     │
-│  classifier/           — TaskClassifier（规则+LLM 两层分类）    │
+│  classifier/           — TaskClassifier（统一分类：规则+LLM→UnifiedClassifyResult）│
 │  memory/               — 记忆系统                              │
 │    config-loader.ts    — 全局 AIEOS 配置加载（config/ 目录）     │
 │    user-config-loader.ts — 用户级配置加载（三级回退）             │
@@ -58,6 +58,7 @@
 │                                                             │
 │  messaging/  — BotMessage/StreamEvent/ChannelAdapter 类型     │
 │  tasking/    — Task/TaskType/TaskResult 类型                  │
+│  classifier/ — UnifiedClassifyResult 等分类器类型              │
 │  errors/     — YourBotError + ERROR_CODES                    │
 │  logging/    — Logger 类 + 日志级别                            │
 │  utils/      — crypto · validators · time 工具函数             │
@@ -106,7 +107,7 @@ User → Channel (Feishu/Telegram/Web)
   ├── OnboardingManager (首次用户 → 引导流程)
   ├── FileUploadHandler (文件上传 → USER.md 处理)
   │
-  └── classifyIntent() → TaskType
+  └── classifyIntent() → UnifiedClassifyResult { taskType, complexity }
         ├── 'chat'       → handleChatTask()
         │                    → SessionManager.resolveSession()
         │                    → KnowledgeRouter.buildContext() (AIEOS + 记忆)

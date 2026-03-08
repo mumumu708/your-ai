@@ -15,6 +15,7 @@ Agent 每次犯错后须追加一条，随代码一起提交。管理员 review 
 | P-009 | CentralController 外部直接实例化 | 必须通过 `CentralController.getInstance(deps)` 获取单例。测试中使用 `resetInstance()` |
 | P-010 | 忘记在新模块的 index.ts 中导出公开 API | 每个 kernel 子模块必须有 index.ts，导出外部需要的类/类型/函数 |
 | P-011 | Harness 任务被路由到 LightLLM（无工具访问） | Harness 任务必须 forceComplex 走 Claude 路径，LightLLM 无法执行 bash/git |
+| P-012 | shared/ 类型文件间循环依赖 | shared/ 中的类型文件互相 import 会造成循环。解决：用 inline 联合类型代替跨文件 import（如 UnifiedClassifyResult 中 taskType 直接写联合字面量而非 import TaskType） |
 
 ---
 
