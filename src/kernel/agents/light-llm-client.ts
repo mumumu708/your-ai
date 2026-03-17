@@ -2,9 +2,13 @@ import { ERROR_CODES } from '../../shared/errors/error-codes';
 import { YourBotError } from '../../shared/errors/yourbot-error';
 import { Logger } from '../../shared/logging/logger';
 
+export type LightLLMContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'high' | 'auto' } };
+
 export interface LightLLMMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | LightLLMContentPart[];
 }
 
 export interface LightLLMRequest {
