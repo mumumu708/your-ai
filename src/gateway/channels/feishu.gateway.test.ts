@@ -134,6 +134,35 @@ describe('FeishuChannel', () => {
     expect(msg.content).toBe('你好');
     expect(msg.conversationId).toBe('oc_456');
     expect(msg.contentType).toBe('text');
+    expect(msg.attachments).toBeUndefined();
+  });
+
+  test('transformToStandardMessage creates attachment for image message', async () => {
+    const rawEvent = {
+      sender: {
+        sender_id: { open_id: 'ou_abc', union_id: 'on_xyz' },
+      },
+      message: {
+        message_id: 'om_img_1',
+        chat_id: 'oc_456',
+        message_type: 'image',
+        content: JSON.stringify({ image_key: 'img_v2_key123' }),
+      },
+    };
+
+    const msg = await channel.transformToStandardMessage(rawEvent);
+    expect(msg.contentType).toBe('image');
+    expect(msg.content).toBe('[图片]');
+    expect(msg.attachments).toBeDefined();
+    expect(msg.attachments).toHaveLength(1);
+    const att = msg.attachments?.[0] as NonNullable<typeof msg.attachments>[0];
+    expect(att.mediaType).toBe('image');
+    expect(att.state).toBe('pending');
+    expect(att.sourceRef).toEqual({
+      channel: 'feishu',
+      messageId: 'om_img_1',
+      fileKey: 'img_v2_key123',
+    });
   });
 
   test('sendStreamChunk sends initial message and updates', async () => {

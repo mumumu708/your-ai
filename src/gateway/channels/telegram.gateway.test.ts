@@ -7,6 +7,9 @@ const mockSendMessage = mock(() =>
   Promise.resolve({ message_id: 100, chat: { id: 123 }, date: 1000, text: 'ok' }),
 );
 const mockEditMessageText = mock(() => Promise.resolve({}));
+const mockGetFileLink = mock(() =>
+  Promise.resolve({ href: 'https://api.telegram.org/file/bot/test.jpg' }),
+);
 let capturedMessageHandler: ((ctx: unknown) => Promise<void>) | null = null;
 
 mock.module('telegraf', () => ({
@@ -14,6 +17,7 @@ mock.module('telegraf', () => ({
     telegram = {
       sendMessage: mockSendMessage,
       editMessageText: mockEditMessageText,
+      getFileLink: mockGetFileLink,
     };
 
     on(event: string, handler: (ctx: unknown) => Promise<void>) {
@@ -150,5 +154,85 @@ describe('TelegramChannel', () => {
     await channel.initialize();
     await channel.shutdown();
     expect(mockStop).toHaveBeenCalledTimes(1);
+  });
+
+  test('transformToStandardMessage creates attachment for photo', async () => {
+    const rawMsg = {
+      message_id: 44,
+      from: { id: 111, first_name: 'Alice' },
+      chat: { id: 222, type: 'private' },
+      photo: [
+        { file_id: 'small', file_unique_id: 's1', width: 100, height: 100 },
+        { file_id: 'large', file_unique_id: 'l1', width: 800, height: 600 },
+      ],
+      caption: 'my photo',
+      date: 1700000000,
+    };
+
+    const msg = await channel.transformToStandardMessage(rawMsg);
+    expect(msg.contentType).toBe('image');
+    expect(msg.content).toBe('my photo');
+    expect(msg.attachments).toBeDefined();
+    expect(msg.attachments).toHaveLength(1);
+    const att = msg.attachments?.[0] as NonNullable<typeof msg.attachments>[0];
+    expect(att.mediaType).toBe('image');
+    expect(att.state).toBe('pending');
+    expect(att.sourceRef).toEqual({
+      channel: 'telegram',
+      fileId: 'large',
+      fileUniqueId: 'l1',
+    });
+  });
+
+  test('transformToStandardMessage has no attachments for text messages', async () => {
+    const rawMsg = {
+      message_id: 45,
+      from: { id: 111, first_name: 'Alice' },
+      chat: { id: 222, type: 'private' },
+      text: 'just text',
+      date: 1700000000,
+    };
+
+    const msg = await channel.transformToStandardMessage(rawMsg);
+    expect(msg.contentType).toBe('text');
+    expect(msg.attachments).toBeUndefined();
+  });
+
+  test('getFileBuffer downloads file via bot API', async () => {
+    const mockArrayBuffer = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]).buffer;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(mockArrayBuffer),
+      }),
+    ) as typeof fetch;
+
+    try {
+      await channel.initialize();
+      const buffer = await channel.getFileBuffer('file123');
+      expect(buffer).toBeInstanceOf(Buffer);
+      expect(buffer.length).toBe(4);
+      expect(mockGetFileLink).toHaveBeenCalledWith('file123');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('getFileBuffer throws on HTTP error', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: false,
+        status: 404,
+      }),
+    ) as typeof fetch;
+
+    try {
+      await channel.initialize();
+      await expect(channel.getFileBuffer('bad_file')).rejects.toThrow();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
