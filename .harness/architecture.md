@@ -48,6 +48,11 @@
 │  skills/               — 技能管理与部署                          │
 │  workspace/            — 用户工作空间初始化 + MCP 配置            │
 │  streaming/            — 流式输出处理                            │
+│  media/                — 多媒体处理（下载·理解·编排）               │
+│    media-types.ts      — 媒体配置常量 + MIME 检测                  │
+│    media-downloader.ts — 从各通道下载/解码媒体并验证                │
+│    media-understanding.ts — 调用 Vision API 生成图片描述           │
+│    media-processor.ts  — 串联下载+理解的编排器                     │
 │  files/                — 文件上传处理 + 配额管理                  │
 │  tasking/              — 任务队列 + 并发控制                     │
 │  security/             — 加密 · RBAC · 限流                     │
@@ -56,7 +61,7 @@
 │  Shared (src/shared/)                                       │
 │  纯类型 · 工具函数 · 零业务依赖                                  │
 │                                                             │
-│  messaging/  — BotMessage/StreamEvent/ChannelAdapter 类型     │
+│  messaging/  — BotMessage/StreamEvent/ChannelAdapter/MediaAttachment 类型│
 │  tasking/    — Task/TaskType/TaskResult 类型                  │
 │  classifier/ — UnifiedClassifyResult 等分类器类型              │
 │  errors/     — YourBotError + ERROR_CODES                    │
