@@ -24,6 +24,7 @@ interface FeedItem {
   pubDateRelative: string; // "3 小时前"
   description: string;     // 纯文本，截断至 500 字符
   source: string;          // 域名
+  sourceCategory: string;  // 源分类（tech_blog, financial_news, tech_news, current_affairs_news 等）
   preScore: number;        // 规则化预评分
 }
 
@@ -43,7 +44,7 @@ interface FetchResult {
 // RSS 源列表 — HN Top 100 + 补充源
 // ============================================================================
 
-const RSS_FEEDS: { url: string; domain: string }[] = [
+const RSS_FEEDS: { url: string; domain: string; sourceCategory?: string }[] = [
   // === HN Popularity Contest Top 100 ===
   // 来源: https://refactoringenglish.com/tools/hn-popularity/
   { url: "http://www.aaronsw.com/2002/feeds/pgessays.rss", domain: "paulgraham.com" },
@@ -310,6 +311,38 @@ const RSS_FEEDS: { url: string; domain: string }[] = [
   { url: "https://decemberpei.cyou/rssbox/wechat-sierzhangjing.xml", domain: "sierzhangjing" },
   { url: "https://decemberpei.cyou/rssbox/wechat-chuanyuanyouzipinglun.xml", domain: "chuanyuanyouzipinglun" },
   { url: "https://decemberpei.cyou/rssbox/wechat-zepinghongguanzhanwang.xml", domain: "zepinghongguanzhanwang" },
+
+  // === 财经资讯 ===
+  { url: "https://www.spglobal.com/content/spglobal/energy/us/en/rss/metals.xml", domain: "spglobal-metals", sourceCategory: "financial_news" },
+  { url: "https://www.spglobal.com/content/spglobal/energy/us/en/rss/coal.xml", domain: "spglobal-coal", sourceCategory: "financial_news" },
+  { url: "https://www.commodity-tv.com/ondemand/channel/copper/rss.xml", domain: "commodity-tv-copper", sourceCategory: "financial_news" },
+  { url: "https://economictimes.indiatimes.com/markets/commodities/rssfeeds/1808152121.cms", domain: "economictimes", sourceCategory: "financial_news" },
+  { url: "https://cmi-gold-silver.com/feed/", domain: "cmi-gold-silver", sourceCategory: "financial_news" },
+  { url: "https://oilprice.com/rss/main", domain: "oilprice.com", sourceCategory: "financial_news" },
+  { url: "https://www.nasdaq.com/feed/rssoutbound?category=Technology", domain: "nasdaq-tech", sourceCategory: "financial_news" },
+  { url: "https://www.nasdaq.com/feed/rssoutbound?category=Stocks", domain: "nasdaq-stocks", sourceCategory: "financial_news" },
+  { url: "https://www.nasdaq.com/feed/nasdaq-original/rss.xml", domain: "nasdaq-original", sourceCategory: "financial_news" },
+  { url: "https://seekingalpha.com/feed.xml", domain: "seekingalpha.com", sourceCategory: "financial_news" },
+  { url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss", domain: "cnbc.com", sourceCategory: "financial_news" },
+  { url: "https://feeds.content.dowjones.io/public/rss/mw_topstories", domain: "marketwatch.com", sourceCategory: "financial_news" },
+  { url: "http://finance.ifeng.com/rss/headnews.xml", domain: "ifeng-finance", sourceCategory: "financial_news" },
+  { url: "http://finance.ifeng.com/rss/stocknews.xml", domain: "ifeng-stock", sourceCategory: "financial_news" },
+
+  // === 科技媒体 ===
+  { url: "https://feeds.arstechnica.com/arstechnica/index/", domain: "arstechnica.com", sourceCategory: "tech_news" },
+  { url: "https://sspai.com/feed", domain: "sspai.com", sourceCategory: "tech_news" },
+  { url: "https://www.wired.com/feed/rss", domain: "wired.com/all", sourceCategory: "tech_news" },
+  { url: "https://techcrunch.com/feed/", domain: "techcrunch.com", sourceCategory: "tech_news" },
+  { url: "https://www.theverge.com/rss/index.xml", domain: "theverge.com", sourceCategory: "tech_news" },
+  { url: "https://www.huxiu.com/rss/0.xml", domain: "huxiu.com", sourceCategory: "tech_news" },
+  { url: "https://36kr.com/feed", domain: "36kr.com", sourceCategory: "tech_news" },
+
+  // === 时事新闻 ===
+  { url: "https://rsshub.app/latepost", domain: "latepost.com", sourceCategory: "current_affairs_news" },
+  { url: "https://www.chinanews.com.cn/rss/world.xml", domain: "chinanews-world", sourceCategory: "current_affairs_news" },
+  { url: "https://www.reutersagency.com/en/reutersbest/reuters-best-rss-feeds/", domain: "reuters.com", sourceCategory: "current_affairs_news" },
+  { url: "https://feeds.bbci.co.uk/news/world/rss.xml", domain: "bbc.com", sourceCategory: "current_affairs_news" },
+  { url: "https://www.chinanews.com.cn/rss/china.xml", domain: "chinanews-china", sourceCategory: "current_affairs_news" },
 ];
 
 // ============================================================================
@@ -324,6 +357,10 @@ const premiumSources = [
   "schneier.com", "ruanyifeng.com", "qbitai.com", "fasterthanli.me",
   "matklad.github.io", "tonsky.me", "lemire.me", "drewdevault.com",
   "brendangregg.com", "martinfowler.com", "research.swtch.com",
+  // 财经与科技媒体
+  "cnbc.com", "marketwatch.com", "arstechnica.com", "techcrunch.com",
+  "theverge.com", "bbc.com", "sspai.com", "huxiu.com", "36kr.com",
+  "latepost.com",
 ];
 
 // ============================================================================
@@ -336,6 +373,7 @@ function preScore(item: FeedItem): number {
 
   // 技术信号词加分（每命中一个 +2，最多 +10）
   const techSignals = [
+    // 技术信号
     "api", "llm", "agent", "benchmark", "open source", "framework",
     "architecture", "security", "vulnerability", "performance",
     "kubernetes", "docker", "rust", "typescript", "python",
@@ -344,6 +382,14 @@ function preScore(item: FeedItem): number {
     "transformer", "diffusion", "neural", "training", "model",
     "开源", "漏洞", "架构", "性能", "模型", "训练", "推理",
     "框架", "算法", "部署", "微调", "向量", "数据库",
+    // 财经信号
+    "stock", "market", "trading", "commodity", "earnings", "financial",
+    "nasdaq", "s&p", "fed", "gdp", "ipo", "merger", "acquisition",
+    "金融", "股票", "市场", "商品", "原油", "黄金", "期货",
+    "财报", "收购", "上市", "融资", "估值",
+    // 新闻信号
+    "breaking", "regulation", "policy", "geopolitical",
+    "突发", "重大", "监管", "政策", "制裁",
   ];
   let techHits = 0;
   for (const kw of techSignals) {
@@ -414,7 +460,7 @@ function relativeTime(date: Date): string {
   return `${diffD} 天前`;
 }
 
-function parseFeed(xml: string, sourceDomain: string): FeedItem[] {
+function parseFeed(xml: string, sourceDomain: string, sourceCategory: string): FeedItem[] {
   const items: FeedItem[] = [];
 
   // RSS 2.0
@@ -433,6 +479,7 @@ function parseFeed(xml: string, sourceDomain: string): FeedItem[] {
         pubDate: pubDate.toISOString(),
         pubDateRelative: relativeTime(pubDate),
         description, source: sourceDomain,
+        sourceCategory,
         preScore: 0,
       });
     }
@@ -459,6 +506,7 @@ function parseFeed(xml: string, sourceDomain: string): FeedItem[] {
           pubDate: pubDate.toISOString(),
           pubDateRelative: relativeTime(pubDate),
           description, source: sourceDomain,
+          sourceCategory,
           preScore: 0,
         });
       }
@@ -497,7 +545,7 @@ async function pooled<T, R>(
 // ============================================================================
 
 async function fetchFeed(
-  feed: { url: string; domain: string },
+  feed: { url: string; domain: string; sourceCategory?: string },
   timeout: number
 ): Promise<FeedItem[]> {
   try {
@@ -510,7 +558,7 @@ async function fetchFeed(
     clearTimeout(timer);
     if (!res.ok) return [];
     const xml = await res.text();
-    return parseFeed(xml, feed.domain);
+    return parseFeed(xml, feed.domain, feed.sourceCategory || "tech_blog");
   } catch {
     return [];
   }
