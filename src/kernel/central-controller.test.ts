@@ -2331,4 +2331,60 @@ describe('CentralController', () => {
       expect(result.success).toBe(true);
     });
   });
+
+  describe('W-01: TaskDispatcher integration', () => {
+    test('当提供 taskStore 时应通过 TaskDispatcher 分派消息', async () => {
+      const mockTaskStore = {
+        create: mock(() => {}),
+        updateStatus: mock(() => {}),
+        getById: mock(() => null),
+        getBySession: mock(() => []),
+        getByUser: mock(() => []),
+        getActive: mock(() => []),
+      } as unknown as import('./tasking/task-store').TaskStore;
+
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        taskStore: mockTaskStore,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      const result = await controller.handleIncomingMessage(message);
+
+      // Dispatcher path returns a task ID
+      expect(result.success).toBe(true);
+      expect(result.taskId).toBeDefined();
+      expect(typeof result.taskId).toBe('string');
+
+      // TaskStore.create should have been called by TaskDispatcher
+      expect(mockTaskStore.create).toHaveBeenCalledTimes(1);
+
+      // Wait for async task execution to complete
+      await new Promise((r) => setTimeout(r, 100));
+
+      // TaskStore should have been updated to running then completed
+      expect(mockTaskStore.updateStatus).toHaveBeenCalled();
+    });
+
+    test('当 taskStore 不可用时应走 fallback 直接 orchestrate 路径', async () => {
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute');
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        // No taskStore — fallback path
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      await controller.handleIncomingMessage(message);
+
+      // Fallback path calls orchestrate → agentRuntime.execute directly
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+    });
+  });
 });

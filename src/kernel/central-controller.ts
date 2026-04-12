@@ -62,6 +62,7 @@ import { StreamHandler } from './streaming/stream-handler';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
 import { classifyExecutionMode } from './tasking/execution-mode-classifier';
 import { QueueAggregator } from './tasking/queue-aggregator';
+import { TaskDispatcher } from './tasking/task-dispatcher';
 import { TaskQueue } from './tasking/task-queue';
 import type { TaskStore } from './tasking/task-store';
 import { WorkspaceManager } from './workspace';
@@ -141,6 +142,7 @@ export class CentralController {
   private readonly frozenContextManager: FrozenContextManager;
   private readonly mcpConfigBuilder: McpConfigBuilder;
   private readonly taskGuidanceBuilder: TaskGuidanceBuilder;
+  private readonly taskDispatcher: TaskDispatcher | undefined;
 
   private constructor(deps?: CentralControllerDeps) {
     // Store optional persistence stores
@@ -254,6 +256,42 @@ export class CentralController {
         downloader: new MediaDownloader({ channelResolver: deps?.channelResolver }),
         understanding: new MediaUnderstanding({ lightLLM: deps?.lightLLM ?? null }),
       });
+
+    // W-01: TaskDispatcher wraps orchestrate() for persistence + session serialization
+    if (this.taskStore) {
+      // biome-ignore lint/style/noNonNullAssertion: assigned to readonly field conditionally in constructor
+      (this as unknown as { taskDispatcher: TaskDispatcher }).taskDispatcher = new TaskDispatcher(
+        this.taskStore,
+        async (_taskRecord, payload, signal) => {
+          const session = await this.sessionManager.resolveSession(
+            payload.message.userId,
+            payload.message.channel,
+            payload.message.conversationId,
+          );
+          const task: Task = {
+            id: _taskRecord.id,
+            traceId: generateTraceId(),
+            type: payload.type as TaskType,
+            message: payload.message,
+            session,
+            priority: this.calculatePriority(payload.type as TaskType),
+            createdAt: _taskRecord.createdAt,
+            signal,
+            metadata: {
+              userId: payload.message.userId,
+              channel: payload.message.channel,
+              conversationId: payload.message.conversationId,
+            },
+          };
+          const result = await this.orchestrate(task);
+          // Adapt TaskResult → string for TaskDispatcher handler contract
+          if (!result.success && result.error) return result.error;
+          const data = result.data as { content?: string } | undefined;
+          return data?.content ?? result.taskId;
+        },
+        { concurrency: 4 },
+      );
+    }
 
     // Wire session close to worktree release + OpenViking commit + evolution scheduling
     this.sessionManager.setOnSessionClose(async (_summary, sessionId, session) => {
@@ -509,12 +547,34 @@ export class CentralController {
         complexity: classifyResult.complexity,
       });
 
+      const sessionKey = `${message.userId}:${message.channel}:${message.conversationId}`;
+
+      // W-01: Dispatch through TaskDispatcher when available (persistence + session serialization)
+      if (this.taskDispatcher) {
+        const taskId = await this.taskDispatcher.dispatch(sessionKey, {
+          type: classifyResult.taskType,
+          message,
+          executionMode: classifyResult.executionMode,
+          source: 'user',
+          metadata: {
+            traceId,
+            classifyResult,
+          },
+        });
+        return {
+          success: true,
+          taskId,
+          data: { channel: message.channel },
+          completedAt: Date.now(),
+        };
+      }
+
+      // Fallback: direct orchestrate (no persistence)
       const abortController = new AbortController();
       this.activeRequests.set(task.id, abortController);
       task.signal = abortController.signal;
 
       try {
-        const sessionKey = `${message.userId}:${message.channel}:${message.conversationId}`;
         const result = await this.sessionSerializer.run(sessionKey, () => this.orchestrate(task));
         return result;
       } finally {
