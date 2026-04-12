@@ -157,7 +157,7 @@ describe('detectErrorSignal', () => {
       { role: 'assistant' as const, content: 'OK', timestamp: Date.now() },
     ];
     // Identical tokens with slight variation — Jaccard > 0.8
-    const result = detectErrorSignal('please translate this code to python language now', history);
+    detectErrorSignal('please translate this code to python language now', history);
     // The identical message is filtered out from comparison, so try a very similar one
     const result2 = detectErrorSignal('please translate this code to python language', history);
     expect(result2).not.toBeNull();

@@ -38,7 +38,7 @@ describe('generateBranchName', () => {
   });
 
   test('slug 不应超过 40 字符（不含哈希）', () => {
-    const longMessage = '/harness add ' + 'very-long-description-'.repeat(10);
+    const longMessage = `/harness add ${'very-long-description-'.repeat(10)}`;
     const branch = generateBranchName(longMessage);
     // agent/feat/ prefix + slug + hash
     const slug = branch.replace(/^agent\/feat\//, '').replace(/-[a-z0-9]+$/, '');
