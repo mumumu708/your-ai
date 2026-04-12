@@ -187,6 +187,14 @@
       "description": "任务调度与状态持久化"
     },
     {
+      "doc": ".harness/design-docs/013-task-scheduling-upgrade.md",
+      "sources": [
+        "src/kernel/tasking/queue-aggregator.ts",
+        "src/kernel/tasking/execution-mode-classifier.ts"
+      ],
+      "description": "任务调度细化（消息聚合 + 执行模式分类）"
+    },
+    {
       "doc": ".harness/design-docs/015-skill-system-upgrade.md",
       "sources": [
         "src/kernel/skills/skill-readiness.ts",
