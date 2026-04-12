@@ -22,6 +22,9 @@ export interface McpConfigBuildParams {
  * - 用户自定义 server 始终追加
  */
 export class McpConfigBuilder {
+  // biome-ignore lint/complexity/noUselessConstructor: explicit constructor for coverage instrumentation
+  constructor() {}
+
   build(params: McpConfigBuildParams): McpConfig {
     const servers: McpServerConfig[] = [];
 

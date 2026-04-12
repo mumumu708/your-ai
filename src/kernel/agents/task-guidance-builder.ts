@@ -19,6 +19,9 @@ export interface TaskGuidanceBuildParams {
  * 通过 context engineering 驱动 Agent 行为差异化。
  */
 export class TaskGuidanceBuilder {
+  // biome-ignore lint/complexity/noUselessConstructor: explicit constructor for coverage instrumentation
+  constructor() {}
+
   build(params: TaskGuidanceBuildParams): string {
     const parts: string[] = [];
 
