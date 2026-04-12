@@ -85,3 +85,34 @@ export interface SearchResult {
   sessionSummary?: string;
   highlight: string;
 }
+
+// ── Task persistence types (DD-017) ──
+
+export type ExecutionMode = 'sync' | 'async' | 'long-horizon';
+
+export interface TaskRecord {
+  id: string;
+  userId: string;
+  sessionId: string;
+  type: string;
+  executionMode: ExecutionMode;
+  source: 'user' | 'system' | 'scheduler';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  description?: string;
+  inboundMessageId?: string;
+  claudeSessionId?: string;
+  createdAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  resultSummary?: string;
+  errorMessage?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TaskPayload {
+  type: string;
+  message: BotMessage;
+  executionMode?: ExecutionMode;
+  source: 'user' | 'system' | 'scheduler';
+  metadata?: Record<string, unknown>;
+}
