@@ -136,7 +136,9 @@ def _build_must_read(scored: list, top_n: int) -> str:
     return "\n".join(lines)
 
 
-def _build_tech_section(scored: list, min_score: int, top_n: int) -> str:
+def _build_tech_section(
+    scored: list, github: list, min_score: int, top_n: int,
+) -> str:
     rest = scored[top_n:]
     tech_articles: dict[str, list] = {cat: [] for cat in TECH_ORDER}
 
@@ -146,7 +148,8 @@ def _build_tech_section(scored: list, min_score: int, top_n: int) -> str:
         if cat in tech_articles and total >= min_score:
             tech_articles[cat].append(art)
 
-    has_tech = any(len(arts) > 0 for arts in tech_articles.values())
+    has_gh = github and len(github) > 0
+    has_tech = has_gh or any(len(arts) > 0 for arts in tech_articles.values())
     if not has_tech:
         return ""
 
@@ -157,6 +160,52 @@ def _build_tech_section(scored: list, min_score: int, top_n: int) -> str:
         sub_title = TECH_SUBCATEGORIES[cat]
         lines.append(f"### {sub_title}")
         lines.append("")
+
+        if cat == "Open Source":
+            # GitHub Trending is the core content; scored Open Source articles supplement
+            if has_gh:
+                for r in github:
+                    name = _safe(r, "name", "")
+                    link = _safe(r, "link", "")
+                    desc = _safe(r, "description", "")
+                    lang = _safe(r, "language", "")
+                    stars_today = _safe(r, "starsToday", "")
+                    note = _safe(r, "note", "")
+                    parts = []
+                    if desc:
+                        parts.append(desc)
+                    meta = []
+                    if lang:
+                        meta.append(lang)
+                    if stars_today:
+                        meta.append(f"今日 +{stars_today} star")
+                    if meta:
+                        parts.append("（" + "，".join(meta) + "）")
+                    if note:
+                        parts.append(note)
+                    comment = "".join(parts)
+                    if comment:
+                        lines.append(f"- [{name}]({link}) — {comment}")
+                    else:
+                        lines.append(f"- [{name}]({link})")
+            # Append scored Open Source articles as supplement
+            if arts:
+                gh_links = {_safe(r, "link", "") for r in (github or [])}
+                for art in arts:
+                    link = _safe(art, "link", "")
+                    if link in gh_links:
+                        continue  # deduplicate against GitHub Trending
+                    display_title = _safe(art, "chineseTitle", _safe(art, "title"))
+                    c = _comment(art)
+                    if c:
+                        lines.append(f"- [{display_title}]({link}) — {c}")
+                    else:
+                        lines.append(f"- [{display_title}]({link})")
+            if not has_gh and not arts:
+                lines.append("今天暂无重大更新。")
+            lines.append("")
+            continue
+
         if not arts:
             lines.append("今天暂无重大更新。")
             lines.append("")
@@ -176,7 +225,6 @@ def _build_tech_section(scored: list, min_score: int, top_n: int) -> str:
 
 def _build_product_section(
     producthunt: list,
-    github: list,
     scored: list,
     min_score: int,
     top_n: int,
@@ -190,10 +238,9 @@ def _build_product_section(
     ]
 
     has_ph = producthunt and len(producthunt) > 0
-    has_gh = github and len(github) > 0
     has_arts = len(product_arts) > 0
 
-    if not has_ph and not has_gh and not has_arts:
+    if not has_ph and not has_arts:
         return ""
 
     lines = ["## 产品速递", ""]
@@ -208,32 +255,6 @@ def _build_product_section(
             upvote_str = f"（{upvotes} 票）" if upvotes else ""
             comment = note if note else tagline
             lines.append(f"- [{name}]({link}){upvote_str} — {comment}")
-
-    if has_gh:
-        for r in github:
-            name = _safe(r, "name", "")
-            link = _safe(r, "link", "")
-            desc = _safe(r, "description", "")
-            lang = _safe(r, "language", "")
-            stars_today = _safe(r, "starsToday", "")
-            note = _safe(r, "note", "")
-            parts = []
-            if desc:
-                parts.append(desc)
-            meta = []
-            if lang:
-                meta.append(lang)
-            if stars_today:
-                meta.append(f"今日 +{stars_today} star")
-            if meta:
-                parts.append("（" + "，".join(meta) + "）")
-            if note:
-                parts.append(note)
-            comment = "".join(parts)
-            if comment:
-                lines.append(f"- [{name}]({link}) — {comment}")
-            else:
-                lines.append(f"- [{name}]({link})")
 
     if has_arts:
         for art in product_arts:
@@ -396,9 +417,9 @@ def main() -> None:
         _build_header(articles_meta),
         _build_highlights(trends),
         _build_must_read(scored, args.top_n),
-        _build_tech_section(scored, args.min_score, args.top_n),
+        _build_tech_section(scored, github, args.min_score, args.top_n),
         _build_product_section(
-            producthunt, github, scored, args.min_score, args.top_n,
+            producthunt, scored, args.min_score, args.top_n,
         ),
         _build_news_section(
             news_data, scored, args.min_score, args.top_n,
