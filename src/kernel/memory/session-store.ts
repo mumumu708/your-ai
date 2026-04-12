@@ -113,6 +113,7 @@ export class SessionStore {
   // ── Message write queue (batched) ──
 
   appendMessage(message: MessageRecord): void {
+    if (this.closed) return;
     this.writeQueue.push(message);
 
     if (this.writeQueue.length >= BATCH_SIZE) {

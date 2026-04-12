@@ -41,6 +41,8 @@ describe('StreamContentFilter', () => {
 
     const cases: Array<[string, string]> = [
       ['memory_search', '🔍 正在搜索记忆...'],
+      ['memory_store', '💾 正在保存记忆...'],
+      ['session_search', '🔍 正在搜索历史会话...'],
       ['skill_view', '📖 正在加载 Skill...'],
       ['web_search', '🌐 正在搜索网络...'],
       ['Read', '📄 正在读取文件...'],
@@ -55,6 +57,18 @@ describe('StreamContentFilter', () => {
       const result = filter.filter({ type: 'tool_use', toolName });
       expect(result?.text).toBe(expected);
     }
+  });
+
+  it('memory_store → save memory status', () => {
+    const filter = new StreamContentFilter();
+    const result = filter.filter({ type: 'tool_use', toolName: 'memory_store' });
+    expect(result).toEqual({ type: 'status', text: '💾 正在保存记忆...', append: false });
+  });
+
+  it('session_search → search history status', () => {
+    const filter = new StreamContentFilter();
+    const result = filter.filter({ type: 'tool_use', toolName: 'session_search' });
+    expect(result).toEqual({ type: 'status', text: '🔍 正在搜索历史会话...', append: false });
   });
 
   it('tool_use with unknown tool name → default message', () => {

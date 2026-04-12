@@ -601,5 +601,29 @@ describe('SessionStore', () => {
       store.close();
       store.close(); // second call should not throw
     });
+
+    test('appendMessage after close is silently ignored', () => {
+      store.createSession({
+        id: 'sess_after_close',
+        userId: 'user_a',
+        channel: 'web',
+        startedAt: BASE,
+      });
+
+      store.close();
+
+      // This call must not throw and must not enqueue anything
+      store.appendMessage({
+        sessionId: 'sess_after_close',
+        userId: 'user_a',
+        role: 'user',
+        content: 'should be dropped',
+        timestamp: BASE + 1,
+      });
+
+      // Queue remains empty; message never persisted
+      const messages = store.getSessionMessages('sess_after_close');
+      expect(messages).toHaveLength(0);
+    });
   });
 });

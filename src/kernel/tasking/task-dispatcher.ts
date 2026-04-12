@@ -18,6 +18,7 @@ export class TaskDispatcher {
   private readonly logger = new Logger('TaskDispatcher');
   private readonly sessionLocks = new Map<string, Promise<void>>();
   private readonly runningTasks = new Map<string, { task: TaskRecord; abort: AbortController }>();
+  private readonly waitingTasks = new Map<string, { task: TaskRecord; abort: AbortController }>();
   private pendingQueue: QueueItem[] = [];
   private running = 0;
   private readonly concurrency: number;
@@ -65,9 +66,15 @@ export class TaskDispatcher {
   private startTask(sessionId: string, task: TaskRecord, payload: TaskPayload): void {
     this.running++;
 
+    const abort = new AbortController();
+    this.waitingTasks.set(task.id, { task, abort });
+
     // Session-level serial: chain after previous promise for this session
     const prevLock = this.sessionLocks.get(sessionId) ?? Promise.resolve();
-    const currentLock = prevLock.then(() => this.executeTask(sessionId, task, payload));
+    const currentLock = prevLock.then(() => {
+      this.waitingTasks.delete(task.id);
+      return this.executeTask(sessionId, task, payload, abort);
+    });
     this.sessionLocks.set(
       sessionId,
       currentLock.catch(() => {}),
@@ -78,8 +85,16 @@ export class TaskDispatcher {
     _sessionId: string,
     task: TaskRecord,
     payload: TaskPayload,
+    abort: AbortController,
   ): Promise<void> {
-    const abort = new AbortController();
+    // Task may have been cancelled while waiting for session lock
+    if (abort.signal.aborted) {
+      this.taskStore.updateStatus(task.id, 'cancelled', { completedAt: Date.now() });
+      this.running--;
+      this.processQueue();
+      return;
+    }
+
     this.runningTasks.set(task.id, { task, abort });
 
     task.status = 'running';
@@ -139,6 +154,13 @@ export class TaskDispatcher {
       }
     }
 
+    for (const [, { task, abort }] of this.waitingTasks) {
+      if (task.sessionId === sessionId) {
+        abort.abort();
+        cancelled++;
+      }
+    }
+
     const before = this.pendingQueue.length;
     this.pendingQueue = this.pendingQueue.filter((item) => {
       if (item.sessionId === sessionId) {
@@ -165,6 +187,14 @@ export class TaskDispatcher {
       const { task } = removed;
       this.taskStore.updateStatus(task.id, 'cancelled', { completedAt: Date.now() });
       return true;
+    }
+
+    // Check waiting-for-lock tasks
+    for (const [, { task, abort }] of this.waitingTasks) {
+      if (task.inboundMessageId === inboundMessageId) {
+        abort.abort();
+        return true;
+      }
     }
 
     // Check running tasks
@@ -202,6 +232,10 @@ export class TaskDispatcher {
   async shutdown(): Promise<void> {
     // Cancel all running tasks
     for (const [, { abort }] of this.runningTasks) {
+      abort.abort();
+    }
+    // Cancel all waiting-for-lock tasks
+    for (const [, { abort }] of this.waitingTasks) {
       abort.abort();
     }
     // Mark all pending as cancelled

@@ -545,6 +545,144 @@ describe('TaskDispatcher', () => {
     });
   });
 
+  describe('cancel while waiting for session lock (CR-03)', () => {
+    test('cancelBySession cancels task waiting for lock and marks it cancelled', async () => {
+      const barriers: Array<{ resolve: (v: string) => void }> = [];
+      const handler: TaskHandler = async (_task, _payload, signal) => {
+        return new Promise<string>((resolve, reject) => {
+          barriers.push({ resolve });
+          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+      };
+
+      const dispatcher = new TaskDispatcher(store, handler, { concurrency: 4 });
+
+      // task1 runs first and holds the session lock
+      const taskId1 = await dispatcher.dispatch(
+        'sess_lock_cancel',
+        makePayload({ message: makeMessage({ id: 'lk_msg_1' }) }),
+      );
+      await vi_wait(() => barriers.length > 0);
+
+      // task2 chains on task1's session lock — it enters waitingTasks
+      const taskId2 = await dispatcher.dispatch(
+        'sess_lock_cancel',
+        makePayload({ message: makeMessage({ id: 'lk_msg_2' }) }),
+      );
+
+      // Cancel both tasks by session (task2 is still waiting for lock)
+      const cancelled = dispatcher.cancelBySession('sess_lock_cancel');
+      expect(cancelled).toBeGreaterThanOrEqual(2);
+
+      // Resolve task1 so the lock chain proceeds
+      barriers[0].resolve('done');
+
+      // task2 should become cancelled (abort signal was set before lock resolved)
+      await vi_wait(() => {
+        const r = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId2) as Record<
+          string,
+          unknown
+        >;
+        return r.status === 'cancelled';
+      });
+
+      const row2 = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId2) as Record<
+        string,
+        unknown
+      >;
+      expect(row2.status).toBe('cancelled');
+      void taskId1;
+    });
+
+    test('cancelByMessageId cancels task waiting for lock', async () => {
+      const barriers: Array<{ resolve: (v: string) => void }> = [];
+      const handler: TaskHandler = async (_task, _payload, signal) => {
+        return new Promise<string>((resolve, reject) => {
+          barriers.push({ resolve });
+          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+      };
+
+      const dispatcher = new TaskDispatcher(store, handler, { concurrency: 4 });
+
+      // task1 holds the session lock
+      await dispatcher.dispatch(
+        'sess_lk2',
+        makePayload({ message: makeMessage({ id: 'lk2_msg_1' }) }),
+      );
+      await vi_wait(() => barriers.length > 0);
+
+      // task2 waits for lock
+      const waitingMsgId = 'lk2_msg_2';
+      const taskId2 = await dispatcher.dispatch(
+        'sess_lk2',
+        makePayload({ message: makeMessage({ id: waitingMsgId }) }),
+      );
+
+      const result = dispatcher.cancelByMessageId(waitingMsgId);
+      expect(result).toBe(true);
+
+      // Resolve task1 so lock chain moves forward
+      barriers[0].resolve('done');
+
+      await vi_wait(() => {
+        const r = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId2) as Record<
+          string,
+          unknown
+        >;
+        return r.status === 'cancelled';
+      });
+
+      const row = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId2) as Record<
+        string,
+        unknown
+      >;
+      expect(row.status).toBe('cancelled');
+    });
+
+    test('shutdown cancels tasks waiting for lock', async () => {
+      const barriers: Array<{ resolve: (v: string) => void }> = [];
+      const handler: TaskHandler = async (_task, _payload, signal) => {
+        return new Promise<string>((resolve, reject) => {
+          barriers.push({ resolve });
+          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+      };
+
+      const dispatcher = new TaskDispatcher(store, handler, { concurrency: 4 });
+
+      await dispatcher.dispatch(
+        'sess_lk3',
+        makePayload({ message: makeMessage({ id: 'lk3_msg_1' }) }),
+      );
+      await vi_wait(() => barriers.length > 0);
+
+      const taskId2 = await dispatcher.dispatch(
+        'sess_lk3',
+        makePayload({ message: makeMessage({ id: 'lk3_msg_2' }) }),
+      );
+
+      // Shutdown — cancels running + waiting
+      // Resolve barrier first so the running task unblocks after abort
+      void dispatcher.shutdown();
+      barriers[0].resolve('done');
+
+      await vi_wait(() => {
+        const r = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId2) as Record<
+          string,
+          unknown
+        >;
+        return r.status === 'cancelled';
+      });
+
+      const row = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId2) as Record<
+        string,
+        unknown
+      >;
+      expect(row.status).toBe('cancelled');
+    });
+  });
+
   describe('getRunningCount / getPendingCount', () => {
     test('should report running and pending counts', async () => {
       const barriers: Array<{ resolve: (v: string) => void }> = [];

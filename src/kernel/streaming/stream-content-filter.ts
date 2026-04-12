@@ -79,6 +79,8 @@ export class StreamContentFilter {
 
     const toolStatusMap: Record<string, string> = {
       memory_search: '🔍 正在搜索记忆...',
+      memory_store: '💾 正在保存记忆...',
+      session_search: '🔍 正在搜索历史会话...',
       skill_view: '📖 正在加载 Skill...',
       web_search: '🌐 正在搜索网络...',
       Read: '📄 正在读取文件...',
