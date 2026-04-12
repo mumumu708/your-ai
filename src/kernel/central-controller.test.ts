@@ -819,6 +819,165 @@ describe('CentralController', () => {
       const content = (result.data as Record<string, unknown>).content as string;
       expect(content).toContain('记住了');
     });
+
+    test('session 关闭后满足反思条件时应通过 TaskDispatcher 提交反思任务', async () => {
+      const sessionManager = new SessionManager();
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'Reply',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const mockSessionRecord = {
+        id: 'sess_reflect_001',
+        userId: 'user_test_001',
+        channel: 'web',
+        startedAt: Date.now() - 10000,
+        messageCount: 5,
+        summary: '会话摘要',
+        reflectionProcessed: false,
+      } as import('../shared/tasking/task.types').SessionRecord;
+
+      const markReflectionProcessed = mock(() => {});
+      const mockSessionStore = {
+        close: mock(() => {}),
+        upsert: mock(() => {}),
+        get: mock(() => null),
+        closeSession: mock(() => {}),
+        markReflectionProcessed,
+        getUnreflectedSessions: mock((userId: string, limit?: number) => {
+          void userId;
+          void limit;
+          // Return enough sessions to trigger reflection (threshold is 5)
+          return [
+            mockSessionRecord,
+            { ...mockSessionRecord, id: 'sess_reflect_002' },
+            { ...mockSessionRecord, id: 'sess_reflect_003' },
+            { ...mockSessionRecord, id: 'sess_reflect_004' },
+            { ...mockSessionRecord, id: 'sess_reflect_005' },
+          ];
+        }),
+      } as unknown as import('./memory/session-store').SessionStore;
+
+      const mockTaskStore = {
+        create: mock(() => {}),
+        updateStatus: mock(() => {}),
+        getById: mock(() => null),
+        getBySession: mock(() => []),
+        getByUser: mock(() => []),
+        getActive: mock(() => []),
+      } as unknown as import('./tasking/task-store').TaskStore;
+
+      const controller = CentralController.getInstance({
+        sessionManager,
+        agentRuntime,
+        taskStore: mockTaskStore,
+        sessionStore: mockSessionStore,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      await controller.handleIncomingMessage(message);
+
+      // Simulate session close
+      const sessionKey = 'user_test_001:web:conv_test_001';
+      const session = sessionManager.getSessionByKey(sessionKey);
+      if (session) {
+        await sessionManager.closeSession(session.id);
+      }
+
+      // Wait for async fire-and-forget dispatch + .then() callback
+      await new Promise((r) => setTimeout(r, 100));
+
+      // markReflectionProcessed should have been called for each session
+      expect(markReflectionProcessed).toHaveBeenCalled();
+    });
+
+    test('session 关闭后反思任务提交失败时不应抛出异常', async () => {
+      const sessionManager = new SessionManager();
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'Reply',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const mockSessionRecord = {
+        id: 'sess_fail_001',
+        userId: 'user_test_001',
+        channel: 'web',
+        startedAt: Date.now() - 10000,
+        messageCount: 5,
+        summary: '会话摘要',
+        reflectionProcessed: false,
+      } as import('../shared/tasking/task.types').SessionRecord;
+
+      const mockSessionStore = {
+        close: mock(() => {}),
+        upsert: mock(() => {}),
+        get: mock(() => null),
+        closeSession: mock(() => {}),
+        markReflectionProcessed: mock(() => {}),
+        getUnreflectedSessions: mock((userId: string, limit?: number) => {
+          void userId;
+          void limit;
+          return [
+            mockSessionRecord,
+            { ...mockSessionRecord, id: 'sess_fail_002' },
+            { ...mockSessionRecord, id: 'sess_fail_003' },
+            { ...mockSessionRecord, id: 'sess_fail_004' },
+            { ...mockSessionRecord, id: 'sess_fail_005' },
+          ];
+        }),
+      } as unknown as import('./memory/session-store').SessionStore;
+
+      // TaskStore: first call (regular dispatch) succeeds, second call (reflection dispatch) fails
+      let createCallCount = 0;
+      const mockTaskStore = {
+        create: mock(() => {
+          createCallCount++;
+          if (createCallCount > 1) throw new Error('reflection dispatch error');
+        }),
+        updateStatus: mock(() => {}),
+        getById: mock(() => null),
+        getBySession: mock(() => []),
+        getByUser: mock(() => []),
+        getActive: mock(() => []),
+      } as unknown as import('./tasking/task-store').TaskStore;
+
+      const controller = CentralController.getInstance({
+        sessionManager,
+        agentRuntime,
+        taskStore: mockTaskStore,
+        sessionStore: mockSessionStore,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      await controller.handleIncomingMessage(message);
+
+      // Simulate session close — should NOT throw despite reflection dispatch failure
+      const sessionKey = 'user_test_001:web:conv_test_001';
+      const session = sessionManager.getSessionByKey(sessionKey);
+      if (session) {
+        // closeSession should resolve without throwing even if reflection dispatch fails
+        let threw = false;
+        try {
+          await sessionManager.closeSession(session.id);
+        } catch {
+          threw = true;
+        }
+        expect(threw).toBe(false);
+      }
+
+      // Wait for async .catch() handler
+      await new Promise((r) => setTimeout(r, 100));
+    });
   });
 
   describe('lightLLM callback in PostResponseAnalyzer', () => {

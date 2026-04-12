@@ -3,7 +3,7 @@ import type { UnifiedClassifyResult } from '../shared/classifier/classifier-type
 import { ERROR_CODES } from '../shared/errors/error-codes';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import { Logger } from '../shared/logging/logger';
-import type { BotMessage } from '../shared/messaging/bot-message.types';
+import type { BotMessage, ChannelType } from '../shared/messaging/bot-message.types';
 import type { IChannel } from '../shared/messaging/channel-adapter.types';
 import type { MediaRef } from '../shared/messaging/media-attachment.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
@@ -28,6 +28,7 @@ import { EvolutionScheduler } from './evolution/evolution-scheduler';
 import { FrozenContextManager } from './evolution/frozen-context-manager';
 import { KnowledgeRouter } from './evolution/knowledge-router';
 import { PostResponseAnalyzer } from './evolution/post-response-analyzer';
+import { ReflectionPromptBuilder } from './evolution/reflection-prompt-builder';
 import { ReflectionTrigger } from './evolution/reflection-trigger';
 import { TokenBudgetAllocator } from './evolution/token-budget-allocator';
 import { FileUploadHandler } from './files/file-upload-handler';
@@ -333,13 +334,55 @@ export class CentralController {
             lastReflectionAt: null, // TODO: track last reflection time per user
             unreflectedSessionCount: unreflected.length,
           });
-          if (shouldReflect) {
-            this.logger.info('触发后台反思', {
-              userId: session.userId,
-              unreflectedCount: unreflected.length,
+          if (shouldReflect && this.taskDispatcher) {
+            // Get session summaries for reflection
+            const sessions = this.sessionStore?.getUnreflectedSessions(session.userId, 10) ?? [];
+            const summaries = sessions.map((s) => ({
+              id: s.id,
+              summary: s.summary || '',
+              startedAt: s.startedAt,
+              channel: s.channel,
+            }));
+
+            // Build reflection prompt
+            const reflectionPromptBuilder = new ReflectionPromptBuilder();
+            const userMessage = reflectionPromptBuilder.buildUserMessage({
+              sessionSummaries: summaries,
             });
-            // Fire-and-forget: spawn reflection as background task via TaskDispatcher
-            // Full integration requires TaskDispatcher to be the primary dispatcher (DD-017)
+
+            // Dispatch as background task (fire-and-forget)
+            this.taskDispatcher
+              .dispatch(`reflection-${session.userId}`, {
+                type: 'system',
+                message: {
+                  id: `reflection-${Date.now()}`,
+                  channel: session.channel as ChannelType,
+                  userId: session.userId,
+                  userName: 'system',
+                  conversationId: `reflection-${session.userId}`,
+                  content: userMessage,
+                  contentType: 'text',
+                  timestamp: Date.now(),
+                  metadata: {},
+                },
+                executionMode: 'async',
+                source: 'system',
+              })
+              .then(() => {
+                // Mark sessions as reflection-processed
+                for (const s of sessions) {
+                  this.sessionStore?.markReflectionProcessed(s.id);
+                }
+                this.logger.info('后台反思任务已提交', {
+                  userId: session.userId,
+                  sessionCount: sessions.length,
+                });
+              })
+              .catch((err) => {
+                this.logger.warn('后台反思任务提交失败', {
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              });
           }
         } catch (err) {
           this.logger.warn('反思触发检查失败', {
@@ -1440,5 +1483,19 @@ export class CentralController {
     this.scheduler.stop();
     this.scheduler.persistJobs();
     this.logger.info('Scheduler 已停止并持久化');
+  }
+
+  /**
+   * Graceful shutdown: flush session store and cancel/drain task dispatcher.
+   */
+  async shutdown(): Promise<void> {
+    if (this.sessionStore) {
+      this.sessionStore.close();
+      this.logger.info('SessionStore 已关闭（写队列已刷新）');
+    }
+    if (this.taskDispatcher) {
+      await this.taskDispatcher.shutdown();
+      this.logger.info('TaskDispatcher 已关闭（运行中任务已取消）');
+    }
   }
 }
