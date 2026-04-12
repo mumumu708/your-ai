@@ -217,6 +217,45 @@ describe('SessionStore', () => {
     test('should handle empty flush gracefully', () => {
       store.flushWriteQueue(); // no-op, should not throw
     });
+
+    test('should flush via timer callback when batch size is not reached', async () => {
+      store.createSession({
+        id: 'sess_timer',
+        userId: 'user_a',
+        channel: 'web',
+        startedAt: BASE,
+      });
+
+      // appendMessage schedules a timer (flush interval) when queue < BATCH_SIZE
+      // We use fake timers to trigger the callback synchronously
+      const originalSetTimeout = globalThis.setTimeout;
+      let timerCallback: (() => void) | null = null;
+      globalThis.setTimeout = ((fn: () => void, _delay: number) => {
+        timerCallback = fn;
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout;
+
+      store.appendMessage({
+        sessionId: 'sess_timer',
+        userId: 'user_a',
+        role: 'user',
+        content: 'timer message',
+        timestamp: BASE + 1,
+      });
+
+      globalThis.setTimeout = originalSetTimeout;
+
+      // Verify message not yet in DB
+      expect(store.getSessionMessages('sess_timer')).toHaveLength(0);
+
+      // Invoke the timer callback directly — this exercises the arrow fn branch
+      expect(timerCallback).not.toBeNull();
+      timerCallback!();
+
+      const messages = store.getSessionMessages('sess_timer');
+      expect(messages).toHaveLength(1);
+      expect(messages[0].content).toBe('timer message');
+    });
   });
 
   describe('FTS search', () => {
