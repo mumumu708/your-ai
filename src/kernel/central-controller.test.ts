@@ -58,6 +58,7 @@ function createMockOVDeps(): Partial<CentralControllerDeps> {
     ovClient: {
       addMessage: async () => {},
       commit: async () => ({ memories_extracted: 0 }),
+      find: async () => [],
     } as unknown as OpenVikingClient,
     contextManager: {
       checkAndFlush: async () => null,
@@ -2279,6 +2280,55 @@ describe('CentralController', () => {
       // Response should include analysis feedback appended
       const data = result.data as { content: string };
       expect(data.content).toContain('User prefers short answers');
+    });
+  });
+
+  describe('retrieveRelevantMemories (W-05)', () => {
+    test('per-turn memory 注入 — ovClient.find 返回结果时映射为 RetrievedMemory', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: '好的，这是项目总结',
+        tokenUsage: { inputTokens: 100, outputTokens: 50 },
+        complexity: 'complex' as const,
+        channel: 'agent_sdk' as const,
+        classificationCostUsd: 0,
+      });
+
+      const mockOvClient = {
+        addMessage: async () => {},
+        commit: async () => ({ memories_extracted: 0 }),
+        find: async () => [
+          {
+            uri: 'viking://mem/1',
+            context_type: 'memory',
+            abstract: '用户喜欢简洁',
+            score: 0.9,
+            match_reason: 'semantic',
+          },
+          {
+            uri: 'viking://mem/2',
+            context_type: 'memory',
+            abstract: '正在做架构升级',
+            score: 0.8,
+            match_reason: 'semantic',
+          },
+        ],
+      } as unknown as OpenVikingClient;
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+        ovClient: mockOvClient,
+        configLoader: {
+          loadAll: async () => ({ soul: '', identity: '', user: '', agents: '' }),
+          loadFile: async () => '',
+          invalidateCache: () => {},
+        } as unknown as ConfigLoader,
+      });
+
+      const message = createMockMessage({ content: '帮我总结一下项目' });
+      const result = await controller.handleIncomingMessage(message);
+      expect(result.success).toBe(true);
     });
   });
 });

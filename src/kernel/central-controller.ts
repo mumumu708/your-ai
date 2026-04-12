@@ -39,6 +39,7 @@ import { OpenVikingClient } from './memory/openviking/openviking-client';
 import type { SessionStore } from './memory/session-store';
 import { UserConfigLoader } from './memory/user-config-loader';
 import { OnboardingManager } from './onboarding';
+import { buildMemorySnapshot } from './prompt/memory-snapshot-builder';
 import { buildPrependContext } from './prompt/prepend-context-builder';
 import { SystemPromptBuilder } from './prompt/system-prompt-builder';
 import { buildTurnContext } from './prompt/turn-context-builder';
@@ -53,6 +54,7 @@ import {
   WorktreePool,
   generateBranchName,
 } from './sessioning';
+import { SkillIndexBuilder } from './skills/skill-index-builder';
 import { StreamContentFilter } from './streaming/stream-content-filter';
 import { StreamHandler } from './streaming/stream-handler';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
@@ -791,10 +793,27 @@ export class CentralController {
     let systemPromptFallback: string | undefined;
     if (!task.session.frozenSystemPrompt) {
       try {
+        // W-03: Build skill index from real SkillIndexBuilder
+        const skillIndexBuilder = new SkillIndexBuilder();
+        const workspaceInfo = this.getWorkspaceInfo();
+        const skillIndex = skillIndexBuilder.build({
+          skills: workspaceInfo.availableSkills.map((name) => ({
+            name,
+            description: name,
+            dir: `skills/builtin/${name}`,
+          })),
+          channel: task.session.channel,
+        });
+
+        // W-04: Build memory snapshot from real builder (empty data until OpenViking integration)
+        const memorySnapshot = buildMemorySnapshot([]);
+
         const frozen = await this.systemPromptBuilder.build({
           userId: task.session.userId,
           channel: task.session.channel,
           workspacePath: task.session.workspacePath,
+          skillIndex,
+          memorySnapshot,
         });
         task.session.frozenSystemPrompt = {
           ...frozen,
@@ -831,7 +850,7 @@ export class CentralController {
 
     // Per-turn context injection
     const turnContext = buildTurnContext({
-      memories: [], // TODO: integrate memory retrieval in DD-018 phase 2
+      memories: await this.retrieveRelevantMemories(task.message.content, task.session.userId),
       taskType: task.classifyResult?.taskType || 'chat',
       executionMode: task.classifyResult?.executionMode || 'sync',
       invokedSkills: task.session.invokedSkills ? [...task.session.invokedSkills] : undefined,
@@ -1179,6 +1198,30 @@ export class CentralController {
       // skills directory may not exist
     }
     return { availableSkills: skills, recentToolsUsed: [] };
+  }
+
+  /**
+   * W-05: Retrieve relevant memories for per-turn context injection.
+   * Graceful degradation: returns empty array if OpenViking is unavailable.
+   */
+  private async retrieveRelevantMemories(
+    query: string,
+    userId: string,
+  ): Promise<Array<{ content: string; updatedAt: number }>> {
+    if (!this.ovClient) return [];
+    try {
+      const results = await this.ovClient.find({
+        query,
+        target_uri: `viking://user/${userId}/memories`,
+        limit: 5,
+      });
+      return (results || []).map((r) => ({
+        content: r.abstract || String(r),
+        updatedAt: Date.now(),
+      }));
+    } catch {
+      return [];
+    }
   }
 
   /**

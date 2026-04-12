@@ -32,6 +32,8 @@ export interface PromptBuildParams {
   userId: string;
   channel: string;
   workspacePath?: string;
+  skillIndex?: string;
+  memorySnapshot?: string;
 }
 
 export interface TurnContextBuildParams {

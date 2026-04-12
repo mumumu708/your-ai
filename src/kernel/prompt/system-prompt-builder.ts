@@ -40,11 +40,11 @@ export class SystemPromptBuilder {
     const fullAgents = await this.configLoader.loadFile('AGENTS.md');
     const protocol = this.extractCoreProtocol(fullAgents);
 
-    // ── L4: Skill Index (placeholder — DD-015 not yet implemented) ──
-    const skillIndex = '# 可用 Skills\n暂无';
+    // ── L4: Skill Index ──
+    const skillIndex = params.skillIndex || '# 可用 Skills\n暂无';
 
     // ── L5: Memory Snapshot ──
-    const memorySnapshot = buildMemorySnapshot([]);
+    const memorySnapshot = params.memorySnapshot ?? buildMemorySnapshot([]);
 
     // ── L6: Runtime Hints ──
     const runtimeHints = this.buildRuntimeHints(params);
