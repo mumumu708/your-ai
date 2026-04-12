@@ -12,6 +12,8 @@
  */
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { Hono } from 'hono';
 import { ChannelManager } from '../gateway/channel-manager';
 import { WebChannel } from '../gateway/channels/web.gateway';
@@ -99,25 +101,36 @@ describe('全链路 E2E 测试', () => {
     // 2. Mock LightLLM — returns schedule classification for schedule-like messages
     const lightLLM = {
       complete: mock(async (params: { messages: Array<{ role: string; content: string }> }) => {
-        const userMsg = params.messages.find((m) => m.role === 'user')?.content ?? '';
-        const isSchedule = /每[天日周月]|定时|提醒我|remind|schedule/i.test(userMsg);
-        const content = isSchedule
-          ? '{"taskType":"scheduled","complexity":"complex","subIntent":"create","reason":"定时任务"}'
-          : '{"taskType":"chat","complexity":"complex","reason":"对话"}';
+        const systemMsg = params.messages.find((m) => m.role === 'system')?.content ?? '';
+        const isClassifierCall = systemMsg.includes('taskType');
+        if (isClassifierCall) {
+          const userMsg = params.messages.find((m) => m.role === 'user')?.content ?? '';
+          const isSchedule = /每[天日周月]|定时|提醒我|remind|schedule/i.test(userMsg);
+          const content = isSchedule
+            ? '{"taskType":"scheduled","complexity":"complex","subIntent":"create","reason":"定时任务"}'
+            : '{"taskType":"chat","complexity":"simple","reason":"对话"}';
+          return {
+            content,
+            model: 'deepseek-chat',
+            usage: { promptTokens: 5, completionTokens: 3, totalCost: 0.0001 },
+          };
+        }
+        // Non-classifier call: actual LLM response
         return {
-          content,
+          content: 'mock light response',
           model: 'deepseek-chat',
           usage: { promptTokens: 5, completionTokens: 3, totalCost: 0.0001 },
         };
       }),
       stream: mock(async function* () {
-        yield { content: 'mock', done: false };
+        yield { content: 'mock light response', done: false };
         yield { content: '', done: true };
       }),
       getDefaultModel: () => 'deepseek-chat',
     } as unknown as LightLLMClient;
 
-    // 3. Core assembly
+    // 3. Core assembly — reset singleton to ensure fresh instance with mock deps
+    CentralController.resetInstance();
     const classifier = new TaskClassifier(lightLLM);
     controller = CentralController.getInstance({
       claudeBridge,
@@ -127,7 +140,8 @@ describe('全链路 E2E 测试', () => {
     });
 
     // Pre-create SOUL.md for E2E test users to bypass onboarding flow
-    const userSpaceBase = process.env.USER_SPACE_ROOT ?? 'user-space';
+    // Must match WorkspaceManager's USER_SPACE_ROOT fallback path
+    const userSpaceBase = process.env.USER_SPACE_ROOT ?? join(homedir(), '.your-ai', 'user-space');
     const e2eUsers = [
       'e2e_user',
       'e2e_http_user',
@@ -278,7 +292,7 @@ describe('全链路 E2E 测试', () => {
       'POST /api/messages 发送 scheduled 消息应该返回注册确认',
       async () => {
         const message = makeBotMessage({
-          content: '每天9点提醒我开会',
+          content: '请帮我设置每天早上9点提醒我参加晨会',
           userId: 'e2e_schedule_user',
         });
 

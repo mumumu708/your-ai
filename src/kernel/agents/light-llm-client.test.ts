@@ -409,6 +409,59 @@ describe('LightLLMClient', () => {
     });
   });
 
+  describe('error body fallback', () => {
+    test('complete: response.text() 抛出时使用 "unknown" 作为 error body', async () => {
+      globalThis.fetch = (async () => ({
+        ok: false,
+        status: 503,
+        text: async () => {
+          throw new Error('text() failed');
+        },
+        json: async () => ({}),
+        body: null,
+      })) as unknown as typeof fetch;
+
+      const client = new LightLLMClient({
+        apiKey: 'test-key',
+        baseUrl: 'https://api.example.com/v1',
+      });
+
+      try {
+        await client.complete({ messages: [{ role: 'user', content: 'Hi' }] });
+        expect(true).toBe(false);
+      } catch (error) {
+        expect(error).toBeInstanceOf(YourBotError);
+        expect((error as YourBotError).context).toMatchObject({ body: 'unknown' });
+      }
+    });
+
+    test('stream: response.text() 抛出时使用 "unknown" 作为 error body', async () => {
+      globalThis.fetch = (async () => ({
+        ok: false,
+        status: 503,
+        text: async () => {
+          throw new Error('text() failed');
+        },
+        json: async () => ({}),
+        body: null,
+      })) as unknown as typeof fetch;
+
+      const client = new LightLLMClient({
+        apiKey: 'test-key',
+        baseUrl: 'https://api.example.com/v1',
+      });
+
+      try {
+        const gen = client.stream({ messages: [{ role: 'user', content: 'Hi' }] });
+        await gen.next();
+        expect(true).toBe(false);
+      } catch (error) {
+        expect(error).toBeInstanceOf(YourBotError);
+        expect((error as YourBotError).context).toMatchObject({ body: 'unknown' });
+      }
+    });
+  });
+
   describe('getDefaultModel', () => {
     test('应该返回配置的默认模型', () => {
       const client = new LightLLMClient({

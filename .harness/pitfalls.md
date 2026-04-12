@@ -24,6 +24,9 @@ Agent 每次犯错后须追加一条，随代码一起提交。管理员 review 
 | P-018 | 一次性任务（空 cron）执行后无限重调度 | 空 cron job `calculateNextRun` 返回 365 天后，但仍会无限重调度。执行后应标记 `status='completed'` 终止循环 |
 | P-019 | executor 重放原始命令而非任务内容 | `taskTemplate.messageContent` 应使用从原文提取的任务内容（如"给我发消息"），而非包含调度前缀的完整命令 |
 | P-020 | 定时任务相关测试消息被 SIMPLE_PATTERNS 规则拦截 | `SCHEDULE_PATTERNS` 已清空，定时任务由 LLM 分类。但中文消息≤10字符会被 `^.{1,10}$` 匹配为 chat+simple，绕过 LLM。测试消息须 >10 字符 |
+| P-021 | Bun V8 隐式构造函数导致函数覆盖率不足 | 无显式 `constructor` 的 TypeScript 类在 Bun 覆盖率中计 FNF+1，但隐式构造函数的 FNH 不增加，导致函数覆盖率 < 100%。解决：将字段初始化移入显式 `constructor()` 中 |
+| P-022 | lint autofix 删除 `!` 导致类型从 T 变为 `T \| undefined` | `@typescript-eslint/no-non-null-assertion` autofix 去掉 `!` 后，若上下文已有 length > 0 保证，应用 `?? fallback` 或 `as NonNullable<...>` 代替，而非直接删除 |
+| P-023 | E2E 测试 mock LightLLM `complete()` 兼作分类器和响应生成 | 相同的 mock `complete()` 同时服务于 TaskClassifier（返回 JSON 分类）和 executeSimple（返回实际响应）。区分方式：检查 system message 是否包含 `taskType` 关键字 |
 
 ---
 
