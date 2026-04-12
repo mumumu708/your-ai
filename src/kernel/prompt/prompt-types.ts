@@ -40,6 +40,8 @@ export interface TurnContextBuildParams {
   memories?: RetrievedMemory[];
   executionMode?: string;
   taskType?: string;
+  /** 外部注入的 task-guidance 文本（优先于内部 hardcoded 生成） */
+  taskGuidance?: string;
   invokedSkills?: string[];
   postCompaction?: boolean;
   mcpServers?: {

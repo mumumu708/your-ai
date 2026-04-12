@@ -24,7 +24,10 @@ export function buildTurnContext(params: TurnContextBuildParams): TurnContext {
   }
 
   // ── Task Guidance ──
-  const guidanceSection = buildTaskGuidance(params.executionMode, params.taskType);
+  // 优先使用外部注入的 taskGuidance（TaskGuidanceBuilder 生成），否则回退到内部 hardcoded 逻辑
+  const guidanceSection = params.taskGuidance
+    ? `<task-guidance>\n${params.taskGuidance}\n</task-guidance>`
+    : buildTaskGuidance(params.executionMode, params.taskType);
   if (guidanceSection) {
     parts.push(guidanceSection);
   }

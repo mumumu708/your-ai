@@ -19,6 +19,8 @@ import { CodexAgentBridge } from './agents/codex-agent-bridge';
 import { IntelligenceGateway } from './agents/intelligence-gateway';
 import type { LightLlmCompletable } from './agents/intelligence-gateway';
 import type { LightLLMClient } from './agents/light-llm-client';
+import { McpConfigBuilder } from './agents/mcp-config-builder';
+import { TaskGuidanceBuilder } from './agents/task-guidance-builder';
 import { TaskClassifier } from './classifier/task-classifier';
 import { type AnalysisItem, routeAnalysis } from './evolution/analysis-router';
 import { ConflictResolver } from './evolution/conflict-resolver';
@@ -137,6 +139,8 @@ export class CentralController {
   private readonly queueAggregator: QueueAggregator;
   private readonly reflectionTrigger: ReflectionTrigger;
   private readonly frozenContextManager: FrozenContextManager;
+  private readonly mcpConfigBuilder: McpConfigBuilder;
+  private readonly taskGuidanceBuilder: TaskGuidanceBuilder;
 
   private constructor(deps?: CentralControllerDeps) {
     // Store optional persistence stores
@@ -238,6 +242,10 @@ export class CentralController {
     this.queueAggregator = new QueueAggregator();
     this.reflectionTrigger = new ReflectionTrigger();
     this.frozenContextManager = new FrozenContextManager();
+
+    // W-06/W-07: McpConfigBuilder + TaskGuidanceBuilder
+    this.mcpConfigBuilder = new McpConfigBuilder();
+    this.taskGuidanceBuilder = new TaskGuidanceBuilder();
 
     // MediaProcessor — handles image/media attachments
     this.mediaProcessor =
@@ -849,10 +857,16 @@ export class CentralController {
     }
 
     // Per-turn context injection
+    const taskGuidance = this.taskGuidanceBuilder.build({
+      taskType: task.classifyResult?.taskType || 'chat',
+      executionMode: task.classifyResult?.executionMode || 'sync',
+      workspacePath: task.session.workspacePath,
+    });
     const turnContext = buildTurnContext({
       memories: await this.retrieveRelevantMemories(task.message.content, task.session.userId),
       taskType: task.classifyResult?.taskType || 'chat',
       executionMode: task.classifyResult?.executionMode || 'sync',
+      taskGuidance,
       invokedSkills: task.session.invokedSkills ? [...task.session.invokedSkills] : undefined,
       postCompaction: task.session.postCompaction,
       mcpServers:
@@ -900,6 +914,11 @@ export class CentralController {
             sessionId: task.session.id,
             claudeSessionId: task.session.claudeSessionId,
             workspacePath,
+            mcpConfig: this.mcpConfigBuilder.build({
+              executionMode: task.classifyResult?.executionMode || 'sync',
+              taskType: task.classifyResult?.taskType || 'chat',
+              userId: task.session.userId,
+            }),
             signal: task.signal,
             streamCallback: streamCallback
               ? async (event) => {
