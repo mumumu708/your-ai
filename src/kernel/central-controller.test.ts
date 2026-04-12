@@ -2387,4 +2387,79 @@ describe('CentralController', () => {
       expect(executeSpy).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('stopScheduler() / shutdown()', () => {
+    afterEach(() => {
+      CentralController.resetInstance();
+    });
+
+    test('stopScheduler() 应调用 scheduler.stop() 和 persistJobs()', () => {
+      CentralController.resetInstance();
+
+      const mockScheduler = {
+        start: mock(() => {}),
+        stop: mock(() => {}),
+        persistJobs: mock(() => {}),
+        loadJobs: mock(() => {}),
+        addJob: mock(() => {}),
+        removeJob: mock(() => {}),
+        getJobs: mock(() => []),
+      } as unknown as Scheduler;
+
+      const controller = CentralController.getInstance({
+        agentRuntime: new AgentRuntime(),
+        scheduler: mockScheduler,
+        ...createMockOVDeps(),
+      });
+
+      controller.stopScheduler();
+
+      expect(mockScheduler.stop).toHaveBeenCalledTimes(1);
+      expect(mockScheduler.persistJobs).toHaveBeenCalledTimes(1);
+    });
+
+    test('当 sessionStore 和 taskDispatcher 均存在时应全部关闭', async () => {
+      CentralController.resetInstance();
+
+      const mockTaskStore = {
+        create: mock(() => {}),
+        updateStatus: mock(() => {}),
+        getById: mock(() => null),
+        getBySession: mock(() => []),
+        getByUser: mock(() => []),
+        getActive: mock(() => []),
+      } as unknown as import('./tasking/task-store').TaskStore;
+
+      const mockSessionStore = {
+        close: mock(() => {}),
+        getUnreflectedSessions: mock(() => []),
+        upsert: mock(() => {}),
+        get: mock(() => null),
+        closeSession: mock(() => {}),
+      } as unknown as import('./memory/session-store').SessionStore;
+
+      const controller = CentralController.getInstance({
+        agentRuntime: new AgentRuntime(),
+        taskStore: mockTaskStore,
+        sessionStore: mockSessionStore,
+        ...createMockOVDeps(),
+      });
+
+      await controller.shutdown();
+
+      expect(mockSessionStore.close).toHaveBeenCalledTimes(1);
+    });
+
+    test('当 sessionStore 和 taskDispatcher 均不存在时 shutdown 应无抛出', async () => {
+      CentralController.resetInstance();
+
+      const controller = CentralController.getInstance({
+        agentRuntime: new AgentRuntime(),
+        // No sessionStore, no taskStore → no taskDispatcher
+        ...createMockOVDeps(),
+      });
+
+      await expect(controller.shutdown()).resolves.toBeUndefined();
+    });
+  });
 });
