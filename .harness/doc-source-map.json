@@ -72,6 +72,7 @@
         "src/gateway/channels/feishu.gateway.ts",
         "src/gateway/channels/feishu-cardkit-client.ts",
         "src/gateway/channels/adapters/feishu-stream-adapter.ts",
+        "src/kernel/streaming/stream-content-filter.ts",
         "src/gateway/channels/telegram.gateway.ts",
         "src/gateway/channels/web.gateway.ts",
         "src/gateway/middleware/pipeline.ts",
