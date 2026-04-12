@@ -420,8 +420,8 @@ describe('LightLLMClient', () => {
 
     test('应该在未传 model 参数时从环境变量读取默认值', () => {
       const client = new LightLLMClient({ apiKey: 'test-key' });
-      // Falls back to LIGHT_LLM_MODEL env var, or 'gpt-4o-mini' if unset
-      const expected = process.env.LIGHT_LLM_MODEL ?? 'gpt-4o-mini';
+      // Falls back to LIGHT_LLM_MODEL env var, or 'glm-4.5-air' if unset
+      const expected = process.env.LIGHT_LLM_MODEL ?? 'glm-4.5-air';
       expect(client.getDefaultModel()).toBe(expected);
     });
   });

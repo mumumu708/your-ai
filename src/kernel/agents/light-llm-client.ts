@@ -45,7 +45,7 @@ export interface LightLLMConfig {
 function loadConfig(): LightLLMConfig {
   const apiKey = process.env.LIGHT_LLM_API_KEY ?? '';
   const baseUrl = process.env.LIGHT_LLM_BASE_URL ?? 'https://api.openai.com/v1';
-  const defaultModel = process.env.LIGHT_LLM_MODEL ?? 'gpt-4o-mini';
+  const defaultModel = process.env.LIGHT_LLM_MODEL ?? 'glm-4.5-air';
 
   return { apiKey, baseUrl, defaultModel };
 }
