@@ -4,6 +4,7 @@ import type { Session } from '../../shared/tasking/task.types';
 import { generateSessionId } from '../../shared/utils/crypto';
 import type { ContextSummary, SessionSummary } from '../memory/memory-types';
 import { SessionMemoryExtractor } from '../memory/session-memory-extractor';
+import type { SessionStore } from '../memory/session-store';
 import { WorkingMemory } from '../memory/working-memory';
 
 export type SessionCloseCallback = (
@@ -17,10 +18,12 @@ export class SessionManager {
   private readonly sessions: Map<string, Session> = new Map();
   private readonly sessionTimeout: number;
   private readonly memoryExtractor = new SessionMemoryExtractor();
+  private readonly sessionStore?: SessionStore;
   private onSessionClose: SessionCloseCallback | null = null;
 
-  constructor(options: { sessionTimeoutMs?: number } = {}) {
+  constructor(options: { sessionTimeoutMs?: number; sessionStore?: SessionStore } = {}) {
     this.sessionTimeout = options.sessionTimeoutMs ?? 1800000; // 30 minutes
+    this.sessionStore = options.sessionStore;
   }
 
   setOnSessionClose(callback: SessionCloseCallback): void {
@@ -55,6 +58,13 @@ export class SessionManager {
       workingMemory: new WorkingMemory({ maxTokens: 100000 }),
     };
     this.sessions.set(key, session);
+    this.sessionStore?.createSession({
+      id: session.id,
+      userId,
+      channel,
+      conversationId,
+      startedAt: session.createdAt,
+    });
     this.logger.info('会话创建', { sessionId: session.id, key });
     return session;
   }
@@ -66,6 +76,15 @@ export class SessionManager {
       session.lastActiveAt = Date.now();
       // Sync to WorkingMemory for automatic compression
       session.workingMemory?.addMessage(message);
+      // Persist to SQLite (batched async write)
+      this.sessionStore?.appendMessage({
+        sessionId: session.id,
+        userId: session.userId,
+        role: message.role,
+        content: message.content,
+        timestamp: message.timestamp,
+        tokenEstimate: Math.ceil(message.content.length / 4),
+      });
     }
   }
 
@@ -145,6 +164,9 @@ export class SessionManager {
       messageCount: session.messages.length,
       keywords: summary.keywords.length,
     });
+
+    // Persist session close to SQLite
+    this.sessionStore?.closeSession(session.id, 'idle_timeout', summary.summary);
 
     if (this.onSessionClose) {
       await this.onSessionClose(summary, session.id, session);
