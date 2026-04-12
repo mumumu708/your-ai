@@ -98,7 +98,8 @@ describe('全链路 E2E 测试', () => {
       defaultModel: 'sonnet',
     });
 
-    // 2. Mock LightLLM — returns schedule classification for schedule-like messages
+    // 2. Mock LightLLM — distinguishes classifier calls (system prompt contains '任务分类器')
+    //    from response generation calls.
     const lightLLM = {
       complete: mock(async (params: { messages: Array<{ role: string; content: string }> }) => {
         const systemMsg = params.messages.find((m) => m.role === 'system')?.content ?? '';
