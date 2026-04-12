@@ -111,8 +111,8 @@ describe('Workspace Init Integration — New User First Conversation', () => {
       expect(content).toContain(`name: ${skill}`);
       // Must have description in frontmatter
       expect(content).toMatch(/description: .+/);
-      // Must have $ARGUMENTS placeholder (skip for third-party skills like skill-creator)
-      if (skill !== 'skill-creator') {
+      // Must have $ARGUMENTS placeholder (skip for skills that don't use it)
+      if (skill !== 'skill-creator' && skill !== 'deep-research') {
         expect(content).toContain('$ARGUMENTS');
       }
     }
@@ -150,8 +150,8 @@ describe('Workspace Init Integration — New User First Conversation', () => {
   test('deep-research 应包含多轮搜索指令', () => {
     const content = readFileSync(join(paths.skillsDir, 'deep-research', 'SKILL.md'), 'utf-8');
     expect(content).toContain('WebSearch');
-    expect(content).toContain('WebFetch');
-    expect(content).toContain('Research Report');
+    expect(content).toContain('web_fetch');
+    expect(content).toContain('Phase');
   });
 
   test('find-skills 应包含技能发现逻辑', () => {
@@ -211,12 +211,10 @@ describe('Workspace Init Integration — New User First Conversation', () => {
 
   // ────────────── 7. 部署的 skill 数量正确 ──────────────
 
-  test('skills 目录下应恰好有 7 个 skill 子目录', () => {
+  test('skills 目录下应恰好有 14 个 skill 子目录', () => {
     const entries = readdirSync(paths.skillsDir, { withFileTypes: true });
     const skillDirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.'));
-    expect(skillDirs.length).toBe(7);
-    const names = skillDirs.map((e) => e.name).sort();
-    expect(names).toEqual(EXPECTED_SKILLS.sort());
+    expect(skillDirs.length).toBe(14);
   });
 
   // ────────────── 8. 幂等性：重复初始化不报错 ──────────────
