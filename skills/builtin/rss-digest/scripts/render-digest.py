@@ -70,16 +70,14 @@ def _extract_date(fetched_at: str) -> str:
 
 
 def _comment(art: dict) -> str:
-    """从推荐理由或摘要中提取简短点评。"""
+    """从推荐理由或摘要中提取简短点评（仅使用 AI 生成的中文字段）。"""
     rec = _safe(art, "recommendation", "")
     if rec:
         return rec
     summary = _safe(art, "summary", "")
     if summary:
         return summary[:100] + ("..." if len(summary) > 100 else "")
-    desc = _safe(art, "description", "")
-    if desc:
-        return desc[:80] + ("..." if len(desc) > 80 else "")
+    # 不 fallback 到原始 description，避免英文残留
     return ""
 
 
@@ -92,11 +90,29 @@ def _build_header(articles_meta: dict) -> str:
 
 
 def _build_highlights(trends: dict) -> str:
-    """趋势导语。"""
+    """趋势导语 + 趋势列表。"""
     highlights = _safe(trends, "highlights", "")
-    if not highlights:
+    trend_list = _safe(trends, "trends", [])
+    if not highlights and not trend_list:
         return ""
-    return f"{highlights}\n"
+
+    lines = []
+    if highlights:
+        lines.append(f"> {highlights}")
+        lines.append("")
+    if trend_list:
+        lines.append("**今日趋势**")
+        lines.append("")
+        for t in trend_list:
+            title = _safe(t, "title", "")
+            desc = _safe(t, "description", "")
+            if title:
+                if desc:
+                    lines.append(f"- **{title}** — {desc}")
+                else:
+                    lines.append(f"- **{title}**")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def _build_must_read(scored: list, top_n: int) -> str:
@@ -107,14 +123,14 @@ def _build_must_read(scored: list, top_n: int) -> str:
         lines.append("")
         return "\n".join(lines)
 
-    for art in top_articles:
+    for idx, art in enumerate(top_articles, 1):
         chinese_title = _safe(art, "chineseTitle", _safe(art, "title"))
         link = _safe(art, "link", "")
         c = _comment(art)
         if c:
-            lines.append(f"- [{chinese_title}]({link}) — {c}")
+            lines.append(f"{idx}. [{chinese_title}]({link}) — {c}")
         else:
-            lines.append(f"- [{chinese_title}]({link})")
+            lines.append(f"{idx}. [{chinese_title}]({link})")
 
     lines.append("")
     return "\n".join(lines)
@@ -346,8 +362,8 @@ def main() -> None:
     parser.add_argument(
         "--min-score",
         type=int,
-        default=15,
-        help="分类列表最低分阈值（默认 15）",
+        default=12,
+        help="分类列表最低分阈值（默认 12）",
     )
     parser.add_argument(
         "--top-n",

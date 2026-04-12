@@ -13,3 +13,5 @@ openviking-data/*
 
 # Harness worktrees
 .worktrees/
+
+graphify-out/
