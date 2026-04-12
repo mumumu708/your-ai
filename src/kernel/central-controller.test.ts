@@ -3,14 +3,17 @@ import type { LessonsLearnedUpdater } from '../lessons/lessons-updater';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import type { BotMessage } from '../shared/messaging/bot-message.types';
 import type { IChannel } from '../shared/messaging/channel-adapter.types';
+import type { MediaAttachment } from '../shared/messaging/media-attachment.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import { AgentRuntime } from './agents/agent-runtime';
+import type { AgentBridgeResult } from './agents/claude-agent-bridge';
 import type { LightLLMClient } from './agents/light-llm-client';
 import { CentralController } from './central-controller';
 import type { CentralControllerDeps } from './central-controller';
 import type { EvolutionScheduler } from './evolution/evolution-scheduler';
 import type { KnowledgeRouter } from './evolution/knowledge-router';
 import type { PostResponseAnalyzer } from './evolution/post-response-analyzer';
+import type { MediaProcessor } from './media/media-processor';
 import type { ConfigLoader } from './memory/config-loader';
 import type { ContextManager } from './memory/context-manager';
 import type { EntityManager } from './memory/graph/entity-manager';
@@ -353,9 +356,82 @@ describe('CentralController', () => {
       expect((result.data as { content: string }).content).toContain('没有活跃的定时任务');
     });
 
-    test('subIntent=list 时应返回任务列表', async () => {
+    test('subIntent=list 且无活跃任务时应提示空列表', async () => {
       const scheduler = new Scheduler();
       spyOn(scheduler, 'listJobs').mockReturnValue([]);
+      const controller = CentralController.getInstance({ scheduler, ...createMockOVDeps() });
+
+      const session = {
+        id: 'sess_001',
+        userId: 'user_001',
+        channel: 'web',
+        conversationId: 'conv_001',
+        status: 'active' as const,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        agentConfig: { maxContextTokens: 100000 },
+        messages: [],
+      };
+
+      const task = {
+        id: 'task_list',
+        traceId: 'trace_list',
+        type: 'scheduled' as const,
+        message: createMockMessage({ content: '查���定时任务' }),
+        session,
+        priority: 10,
+        createdAt: Date.now(),
+        metadata: { userId: 'user_001', channel: 'web', conversationId: 'conv_001' },
+        classifyResult: {
+          taskType: 'scheduled' as const,
+          subIntent: 'list',
+          complexity: 'complex' as const,
+          reason: 'test',
+          confidence: 0.75,
+          classifiedBy: 'llm' as const,
+          costUsd: 0,
+        },
+      };
+
+      const result = await controller.orchestrate(task);
+      expect(result.success).toBe(true);
+      expect((result.data as { content: string }).content).toContain('没有活跃的定时任务');
+    });
+
+    test('subIntent=list 且有活跃任务时应返回任务列表', async () => {
+      const scheduler = new Scheduler();
+      spyOn(scheduler, 'listJobs').mockReturnValue([
+        {
+          id: 'job_001',
+          userId: 'user_001',
+          channel: 'web',
+          cronExpression: '0 9 * * *',
+          description: '每天早上提醒我喝水',
+          status: 'active',
+          nextRunAt: Date.now() + 86400000,
+          taskTemplate: {},
+        },
+        {
+          id: 'job_002',
+          userId: 'user_001',
+          channel: 'web',
+          cronExpression: '0 18 * * 5',
+          description: '周五下午提醒周报',
+          status: 'paused',
+          nextRunAt: Date.now() + 172800000,
+          taskTemplate: {},
+        },
+        {
+          id: 'job_003',
+          userId: 'user_001',
+          channel: 'web',
+          cronExpression: '0 0 * * *',
+          description: '已完成的任务',
+          status: 'completed',
+          nextRunAt: 0,
+          taskTemplate: {},
+        },
+      ]);
       const controller = CentralController.getInstance({ scheduler, ...createMockOVDeps() });
 
       const session = {
@@ -392,7 +468,11 @@ describe('CentralController', () => {
 
       const result = await controller.orchestrate(task);
       expect(result.success).toBe(true);
-      expect((result.data as { content: string }).content).toContain('没有活跃的定时任务');
+      const content = (result.data as { content: string }).content;
+      expect(content).toContain('每天早上提醒我喝水');
+      expect(content).toContain('周五下午提醒周报');
+      // completed job should be filtered out
+      expect(content).not.toContain('已完成的任务');
     });
 
     test('应该对系统任务返回成功结果', async () => {
@@ -1849,6 +1929,196 @@ describe('CentralController', () => {
       expect(result.success).toBe(true);
       expect(closeSessionSpy).not.toHaveBeenCalled();
       expect(executeSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('媒体附件处理', () => {
+    test('带附件的消息应通过 mediaProcessor 处理并追加描述', async () => {
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'reply with media',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const processedAttachment: MediaAttachment = {
+        id: 'att_001',
+        mediaType: 'image',
+        state: 'processed',
+        mimeType: 'image/jpeg',
+        description: '一张猫的图片',
+      };
+
+      const mockMediaProcessor = {
+        processAttachments: async () => [processedAttachment],
+        toMediaRef: (a: MediaAttachment) => ({
+          mediaType: a.mediaType,
+          mimeType: a.mimeType,
+          description: a.description ?? '[图片]',
+        }),
+      } as unknown as MediaProcessor;
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        mediaProcessor: mockMediaProcessor,
+        ...createMockOVDeps(),
+      });
+
+      const attachment: MediaAttachment = {
+        id: 'att_001',
+        mediaType: 'image',
+        state: 'pending',
+        mimeType: 'image/jpeg',
+      };
+
+      const message = createMockMessage({
+        content: '看看这张图',
+        attachments: [attachment],
+      });
+
+      const result = await controller.handleIncomingMessage(message);
+      expect(result.success).toBe(true);
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+
+      // Verify the session content was updated with the image description
+      const callArgs = executeSpy.mock.calls[0][0];
+      expect(
+        callArgs.context.messages.some(
+          (m: { role: string; content: string }) =>
+            m.role === 'user' && m.content.includes('一张猫的图片'),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe('IntelligenceGateway 集成', () => {
+    /** 构建一个最小 ClaudeAgentBridge mock，execute 返回预设结果 */
+    function makeMockBridge(content: string): CentralControllerDeps['claudeBridge'] {
+      return {
+        execute: async (): Promise<AgentBridgeResult> => ({
+          content,
+          toolsUsed: [],
+          turns: 1,
+          usage: { inputTokens: 10, outputTokens: 5, costUsd: 0 },
+          claudeSessionId: undefined,
+        }),
+      } as unknown as CentralControllerDeps['claudeBridge'];
+    }
+
+    /** 构建最小 LightLLM mock */
+    function makeMockLightLLM(responseContent: string): CentralControllerDeps['lightLLM'] {
+      return {
+        complete: async () => ({
+          content: responseContent,
+          usage: { promptTokens: 5, completionTokens: 3 },
+        }),
+      } as unknown as CentralControllerDeps['lightLLM'];
+    }
+
+    test('提供 claudeBridge + lightLLM 时应经由 IntelligenceGateway 处理消息', async () => {
+      const agentRuntime = new AgentRuntime();
+      const agentExecuteSpy = spyOn(agentRuntime, 'execute');
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        claudeBridge: makeMockBridge('gateway-reply'),
+        lightLLM: makeMockLightLLM('gateway quick answer'),
+        ...createMockOVDeps(),
+      });
+
+      // Simple chat message — gateway should handle directly
+      const message = createMockMessage({ content: 'Hi' });
+      const result = await controller.handleIncomingMessage(message);
+
+      expect(result.success).toBe(true);
+      // AgentRuntime.execute should NOT be called when gateway handles it
+      expect(agentExecuteSpy).not.toHaveBeenCalled();
+      const data = result.data as { content: string };
+      expect(data.content).toBe('gateway quick answer');
+    });
+
+    test('IntelligenceGateway 有 streamCallback 时应调用流式包装函数', async () => {
+      const streamEvents: StreamEvent[] = [];
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+
+      // Use a complex message so the gateway delegates to agentBridge,
+      // which triggers the async (event) => { streamCallback(event) } wrapper
+      const mockBridge: CentralControllerDeps['claudeBridge'] = {
+        execute: async (params) => {
+          // Trigger the streamCallback that was passed in
+          if (params.onStream) {
+            params.onStream({ type: 'text_delta', text: 'streamed' });
+            params.onStream({ type: 'done' });
+          }
+          return {
+            content: 'streamed reply',
+            toolsUsed: [],
+            turns: 1,
+            usage: { inputTokens: 10, outputTokens: 5, costUsd: 0 },
+            claudeSessionId: undefined,
+          } as AgentBridgeResult;
+        },
+      } as unknown as CentralControllerDeps['claudeBridge'];
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        claudeBridge: mockBridge,
+        lightLLM: makeMockLightLLM('需要工具'), // non-simple so gateway delegates
+        streamCallback: (_userId, event) => {
+          streamEvents.push(event);
+        },
+        ...createMockOVDeps(),
+      });
+
+      // Use a complex message (contains tool keyword) to force gateway->agentBridge delegation
+      const message = createMockMessage({ content: '帮我分析文件' });
+      const result = await controller.handleIncomingMessage(message);
+
+      expect(result.success).toBe(true);
+    });
+
+    test('IntelligenceGateway 失败时应回退到 AgentRuntime', async () => {
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'fallback-reply',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      // claudeBridge that throws
+      const failingBridge: CentralControllerDeps['claudeBridge'] = {
+        execute: async () => {
+          throw new Error('bridge failed');
+        },
+      } as unknown as CentralControllerDeps['claudeBridge'];
+
+      // lightLLM that also throws (so gateway.handle() throws)
+      const failingLightLLM: CentralControllerDeps['lightLLM'] = {
+        complete: async () => {
+          throw new Error('llm failed');
+        },
+      } as unknown as CentralControllerDeps['lightLLM'];
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        claudeBridge: failingBridge,
+        lightLLM: failingLightLLM,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: 'Hi' });
+      const result = await controller.handleIncomingMessage(message);
+
+      expect(result.success).toBe(true);
+      // Should have fallen back to AgentRuntime
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+      const data = result.data as { content: string };
+      expect(data.content).toBe('fallback-reply');
     });
   });
 });

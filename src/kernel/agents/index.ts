@@ -8,6 +8,9 @@ export type {
   AgentBridge,
 } from './agent-bridge';
 
+// Claude Bridge Adapter — 旧接口适配新接口
+export { ClaudeBridgeAdapter } from './claude-bridge-adapter';
+
 // Fallback 容错包装
 export { AgentBridgeWithFallback } from './agent-bridge-fallback';
 

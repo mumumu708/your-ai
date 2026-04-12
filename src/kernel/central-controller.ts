@@ -11,8 +11,11 @@ import type { TaskResult } from '../shared/tasking/task-result.types';
 import type { Session, Task, TaskType } from '../shared/tasking/task.types';
 import { isAdminUser } from '../shared/utils/admin';
 import { generateTaskId, generateTraceId } from '../shared/utils/crypto';
-import { AgentRuntime } from './agents/agent-runtime';
+import { AgentRuntime, type EnhancedAgentResult } from './agents/agent-runtime';
 import type { ClaudeAgentBridge } from './agents/claude-agent-bridge';
+import { ClaudeBridgeAdapter } from './agents/claude-bridge-adapter';
+import { IntelligenceGateway } from './agents/intelligence-gateway';
+import type { LightLlmCompletable } from './agents/intelligence-gateway';
 import type { LightLLMClient } from './agents/light-llm-client';
 import { TaskClassifier } from './classifier/task-classifier';
 import { ConflictResolver } from './evolution/conflict-resolver';
@@ -120,6 +123,7 @@ export class CentralController {
   private readonly sessionStore?: SessionStore;
   private readonly taskStore?: TaskStore;
   private readonly systemPromptBuilder: SystemPromptBuilder;
+  private readonly intelligenceGateway?: IntelligenceGateway;
 
   private constructor(deps?: CentralControllerDeps) {
     // Store optional persistence stores
@@ -194,6 +198,16 @@ export class CentralController {
     this.sessionSerializer = deps?.sessionSerializer ?? new SessionSerializer();
     this.harnessMutex = deps?.harnessMutex ?? new HarnessMutex();
     this.worktreePool = deps?.worktreePool ?? new WorktreePool();
+
+    // IntelligenceGateway — Layer 1 快速预处理（DD-014）
+    // 仅在 claudeBridge 和 lightLLM 都可用时启用
+    if (deps?.claudeBridge && lightLLM) {
+      const claudeAdapter = new ClaudeBridgeAdapter(deps.claudeBridge);
+      this.intelligenceGateway = new IntelligenceGateway(
+        lightLLM as unknown as LightLlmCompletable,
+        claudeAdapter,
+      );
+    }
 
     // OnboardingManager — guides new users through setup
     this.onboardingManager = new OnboardingManager(deps?.lightLLM ?? null);
@@ -773,21 +787,85 @@ export class CentralController {
 
     const workspacePath = options?.cwdOverride ?? task.session.workspacePath;
 
-    // Execute via AgentRuntime
-    const result = await this.agentRuntime.execute({
-      agentId: 'default',
-      context: {
-        sessionId: task.session.id,
-        messages: contextMessages,
-        systemPrompt: finalSystemPrompt,
-        workspacePath,
-        claudeSessionId: task.session.claudeSessionId,
-      },
-      signal: task.signal,
-      streamCallback,
-      forceComplex: options?.forceComplex,
-      classifyResult: task.classifyResult,
-    });
+    // Assemble prependContext for gateway (first message only)
+    const prependContext =
+      isFirstMessage && task.session.prependContext ? task.session.prependContext : '';
+
+    // Execute via IntelligenceGateway (with AgentRuntime fallback)
+    let result: EnhancedAgentResult;
+
+    if (this.intelligenceGateway) {
+      try {
+        const gatewayResult = await this.intelligenceGateway.handle({
+          message: task.message.content,
+          complexity: task.classifyResult?.complexity || 'complex',
+          taskType: task.classifyResult?.taskType || 'chat',
+          hasAttachments: (task.message.attachments?.length ?? 0) > 0,
+          agentParams: {
+            systemPrompt: finalSystemPrompt,
+            prependContext,
+            userMessage: task.message.content,
+            sessionId: task.session.id,
+            claudeSessionId: task.session.claudeSessionId,
+            workspacePath,
+            signal: task.signal,
+            streamCallback: streamCallback
+              ? async (event) => {
+                  streamCallback(event);
+                }
+              : undefined,
+            executionMode: 'sync', // TODO: derive from ExecutionModeClassifier (DD-014)
+            classifyResult: task.classifyResult as Record<string, unknown> | undefined,
+            maxTurns: task.classifyResult?.taskType === 'harness' ? 100 : 30,
+          },
+        });
+
+        // Map to EnhancedAgentResult for backward compatibility
+        result = {
+          content: gatewayResult.content,
+          tokenUsage: gatewayResult.tokenUsage,
+          toolsUsed: gatewayResult.toolsUsed,
+          claudeSessionId: gatewayResult.claudeSessionId,
+          complexity: gatewayResult.handledBy === 'gateway' ? 'simple' : 'complex',
+          channel: gatewayResult.handledBy === 'gateway' ? 'light_llm' : 'agent_sdk',
+          classificationCostUsd: task.classifyResult?.costUsd ?? 0,
+        };
+      } catch (gatewayError) {
+        this.logger.warn('IntelligenceGateway 失败，回退到 AgentRuntime', {
+          error: gatewayError instanceof Error ? gatewayError.message : String(gatewayError),
+        });
+        result = await this.agentRuntime.execute({
+          agentId: 'default',
+          context: {
+            sessionId: task.session.id,
+            messages: contextMessages,
+            systemPrompt: finalSystemPrompt,
+            workspacePath,
+            claudeSessionId: task.session.claudeSessionId,
+          },
+          signal: task.signal,
+          streamCallback,
+          forceComplex: options?.forceComplex,
+          classifyResult: task.classifyResult,
+        });
+      }
+    } else {
+      // No gateway available — use AgentRuntime directly
+      result = await this.agentRuntime.execute({
+        agentId: 'default',
+        context: {
+          sessionId: task.session.id,
+          messages: contextMessages,
+          systemPrompt: finalSystemPrompt,
+          workspacePath,
+          claudeSessionId: task.session.claudeSessionId,
+        },
+        signal: task.signal,
+        streamCallback,
+        forceComplex: options?.forceComplex,
+        classifyResult: task.classifyResult,
+      });
+    }
 
     if (streamResultPromise) {
       await streamResultPromise;
