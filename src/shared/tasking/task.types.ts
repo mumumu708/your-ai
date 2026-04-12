@@ -36,6 +36,18 @@ export interface Session {
   harnessWorktreePath?: string;
   harnessBranch?: string;
   harnessGroupChatId?: string;
+  // DD-018: Session-level frozen prompt + per-turn context state
+  frozenSystemPrompt?: {
+    content: string;
+    totalTokens: number;
+    builtAt: number;
+    sections: Record<string, string>;
+  };
+  prependContext?: string;
+  invokedSkills?: Set<string>;
+  activeMcpServers?: Set<string>;
+  previousMcpServers?: Set<string>;
+  postCompaction?: boolean;
 }
 
 export interface Task {

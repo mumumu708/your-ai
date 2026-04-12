@@ -31,6 +31,9 @@ import { OpenVikingClient } from './memory/openviking/openviking-client';
 import type { SessionStore } from './memory/session-store';
 import { UserConfigLoader } from './memory/user-config-loader';
 import { OnboardingManager } from './onboarding';
+import { buildPrependContext } from './prompt/prepend-context-builder';
+import { SystemPromptBuilder } from './prompt/system-prompt-builder';
+import { buildTurnContext } from './prompt/turn-context-builder';
 import { JobStore } from './scheduling/job-store';
 import { nlToCron } from './scheduling/nl-to-cron';
 import { ScheduleCancelManager } from './scheduling/schedule-cancel-manager';
@@ -116,6 +119,7 @@ export class CentralController {
   private channelResolver?: (channelType: string) => IChannel | undefined;
   private readonly sessionStore?: SessionStore;
   private readonly taskStore?: TaskStore;
+  private readonly systemPromptBuilder: SystemPromptBuilder;
 
   private constructor(deps?: CentralControllerDeps) {
     // Store optional persistence stores
@@ -197,6 +201,9 @@ export class CentralController {
     // FileUploadHandler — handles USER.md uploads
     this.fileUploadHandler = new FileUploadHandler();
     this.channelResolver = deps?.channelResolver;
+
+    // SystemPromptBuilder — session-level frozen prompt (DD-018)
+    this.systemPromptBuilder = new SystemPromptBuilder(deps?.configLoader ?? this.configLoader);
 
     // MediaProcessor — handles image/media attachments
     this.mediaProcessor =
@@ -678,19 +685,91 @@ export class CentralController {
     );
     const anchor = await this.contextManager.checkAndFlush(task.session.id, estimatedTokens);
 
-    // Build knowledge-routed system prompt
-    const resolvedContext = await this.knowledgeRouter.buildContext(
-      task.message.userId,
-      task.message.content,
-      contextMessages,
-      'complex',
-      {
-        summaries,
-        workspaceInfo: this.getWorkspaceInfo(),
-        anchorText: anchor ?? undefined,
-        configLoader: task.session.userConfigLoader,
-      },
-    );
+    // DEPRECATED: Build knowledge-routed system prompt (kept as fallback)
+    // const resolvedContext = await this.knowledgeRouter.buildContext(
+    //   task.message.userId,
+    //   task.message.content,
+    //   contextMessages,
+    //   'complex',
+    //   {
+    //     summaries,
+    //     workspaceInfo: this.getWorkspaceInfo(),
+    //     anchorText: anchor ?? undefined,
+    //     configLoader: task.session.userConfigLoader,
+    //   },
+    // );
+
+    // ── DD-018: Session-level frozen prompt + per-turn context ──
+    // Build frozen system prompt once per session (or rebuild after compaction)
+    let systemPromptFallback: string | undefined;
+    if (!task.session.frozenSystemPrompt) {
+      try {
+        const frozen = await this.systemPromptBuilder.build({
+          userId: task.session.userId,
+          channel: task.session.channel,
+          workspacePath: task.session.workspacePath,
+        });
+        task.session.frozenSystemPrompt = {
+          ...frozen,
+          sections: frozen.sections as unknown as Record<string, string>,
+        };
+
+        // Build prepend context (first user message, OVERRIDE semantics)
+        const userConfig = (await task.session.userConfigLoader?.loadFile?.('USER.md')) || '';
+        const agentsConfig = (await task.session.userConfigLoader?.loadFile?.('AGENTS.md')) || '';
+        task.session.prependContext = buildPrependContext({
+          agentsConfig,
+          userConfig,
+        });
+      } catch (err) {
+        this.logger.warn('SystemPromptBuilder 失败，回退到 KnowledgeRouter', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // Fallback to KnowledgeRouter
+        const resolvedContext = await this.knowledgeRouter.buildContext(
+          task.message.userId,
+          task.message.content,
+          contextMessages,
+          'complex',
+          {
+            summaries,
+            workspaceInfo: this.getWorkspaceInfo(),
+            anchorText: anchor ?? undefined,
+            configLoader: task.session.userConfigLoader,
+          },
+        );
+        systemPromptFallback = resolvedContext.systemPrompt;
+      }
+    }
+
+    // Per-turn context injection
+    const turnContext = buildTurnContext({
+      memories: [], // TODO: integrate memory retrieval in DD-018 phase 2
+      taskType: task.classifyResult?.taskType || 'chat',
+      executionMode: 'sync', // TODO: derive from ExecutionModeClassifier (DD-014) once integrated
+      invokedSkills: task.session.invokedSkills ? [...task.session.invokedSkills] : undefined,
+      postCompaction: task.session.postCompaction,
+      mcpServers:
+        task.session.activeMcpServers || task.session.previousMcpServers
+          ? {
+              current: task.session.activeMcpServers ? [...task.session.activeMcpServers] : [],
+              previous: task.session.previousMcpServers ? [...task.session.previousMcpServers] : [],
+            }
+          : undefined,
+    });
+
+    // Assemble final system prompt: frozen prompt (or fallback) + turn context
+    const isFirstMessage = task.session.messages.length <= 1;
+    const frozenContent = task.session.frozenSystemPrompt?.content ?? systemPromptFallback ?? '';
+    const prependBlock =
+      isFirstMessage && task.session.prependContext ? `${task.session.prependContext}\n\n` : '';
+    const finalSystemPrompt =
+      frozenContent +
+      (turnContext.content
+        ? `\n\n${prependBlock}${turnContext.content}`
+        : prependBlock
+          ? `\n\n${prependBlock}`
+          : '');
 
     const workspacePath = options?.cwdOverride ?? task.session.workspacePath;
 
@@ -700,7 +779,7 @@ export class CentralController {
       context: {
         sessionId: task.session.id,
         messages: contextMessages,
-        systemPrompt: resolvedContext.systemPrompt,
+        systemPrompt: finalSystemPrompt,
         workspacePath,
         claudeSessionId: task.session.claudeSessionId,
       },
