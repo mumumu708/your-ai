@@ -65,8 +65,8 @@ describe('HarnessMutex', () => {
     const p2 = mutex.run(async () => 'should-not-run');
 
     const result = await Promise.allSettled([p1, p2]);
-    expect(result[0]!.status).toBe('fulfilled');
-    expect(result[1]!.status).toBe('rejected');
+    expect(result[0]?.status).toBe('fulfilled');
+    expect(result[1]?.status).toBe('rejected');
   });
 
   test('应该保证 FIFO 顺序', async () => {

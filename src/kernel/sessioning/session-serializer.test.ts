@@ -106,8 +106,8 @@ describe('SessionSerializer', () => {
     const p2 = serializer.run('session-1', async () => 'should-not-run');
 
     const result = await Promise.allSettled([p1, p2]);
-    expect(result[0]!.status).toBe('fulfilled');
-    expect(result[1]!.status).toBe('rejected');
+    expect(result[0]?.status).toBe('fulfilled');
+    expect(result[1]?.status).toBe('rejected');
   });
 
   test('getQueueDepth 应该返回等待队列深度', async () => {

@@ -420,7 +420,7 @@ export class ClaudeAgentBridge {
    */
   private buildPrompt(messages: Array<{ role: 'user' | 'assistant'; content: string }>): string {
     if (messages.length === 1) {
-      return messages[0]!.content;
+      return messages[0]?.content;
     }
 
     // Walk from newest to oldest, accumulating token budget

@@ -89,8 +89,8 @@ export class SessionMemoryExtractor {
       return this.emptySummary(sessionId, userId);
     }
 
-    const startedAt = messages[0]!.timestamp;
-    const endedAt = messages[messages.length - 1]!.timestamp;
+    const startedAt = messages[0]?.timestamp;
+    const endedAt = messages[messages.length - 1]?.timestamp;
 
     // Combine all user content for analysis
     const userContent = messages

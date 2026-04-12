@@ -128,7 +128,7 @@ describe('TelegramChannel', () => {
       received.push(msg);
     });
 
-    await capturedMessageHandler!({
+    await capturedMessageHandler?.({
       message: {
         message_id: 99,
         from: { id: 555, first_name: 'Test' },
@@ -146,7 +146,7 @@ describe('TelegramChannel', () => {
     await channel.initialize();
 
     // Passing invalid message should trigger catch block
-    await capturedMessageHandler!({ message: null });
+    await capturedMessageHandler?.({ message: null });
     // Should not throw — error is caught and logged
   });
 

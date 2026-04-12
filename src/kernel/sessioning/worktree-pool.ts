@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Logger } from '../../shared/logging/logger';
-import { type GitOperations, BunGitOperations } from './git-operations';
+import { BunGitOperations, type GitOperations } from './git-operations';
 
 const DEFAULT_MAX_CONCURRENT = 5;
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
