@@ -87,12 +87,8 @@ type YamlValue = string | string[] | YamlObject | YamlValue[];
  */
 export function parseSimpleYaml(yaml: string): YamlObject | null {
   const lines = yaml.split('\n');
-  try {
-    const { result } = parseBlock(lines, 0, 0);
-    return result;
-  } catch {
-    return null;
-  }
+  const { result } = parseBlock(lines, 0, 0);
+  return result;
 }
 
 interface BlockResult {
@@ -119,11 +115,10 @@ function parseBlock(lines: string[], startLine: number, minIndent: number): Bloc
 
     const trimmedLine = line.trim();
 
-    // Block sequence item at current level: `- something`
-    if (trimmedLine.startsWith('- ') && !trimmedLine.includes(':')) {
-      // This is part of a sequence being collected by the parent
-      break;
-    }
+    // Block sequence item at current level: `- something` (no colon = scalar, not object)
+    // This is part of a sequence being collected by the parent — stop here.
+    const isScalarSeqItem = trimmedLine.startsWith('- ') && !trimmedLine.includes(':');
+    if (isScalarSeqItem) break;
 
     // Key-value pair
     const colonIdx = trimmedLine.indexOf(':');
