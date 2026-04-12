@@ -149,6 +149,14 @@ describe('StreamContentFilter', () => {
     expect(filter.getToolStatusLine()).toBeNull();
   });
 
+  it('unknown event type → null (default branch)', () => {
+    const filter = new StreamContentFilter();
+    // Cast to bypass type-checking — exercises the default branch of the switch
+    const event = { type: 'unknown_event_type' } as unknown as Parameters<typeof filter.filter>[0];
+
+    expect(filter.filter(event)).toBeNull();
+  });
+
   it('full stream session: text → tool → tool_result → text → done', () => {
     const filter = new StreamContentFilter();
     const results: Array<ReturnType<typeof filter.filter>> = [];

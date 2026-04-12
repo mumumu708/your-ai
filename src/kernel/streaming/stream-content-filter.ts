@@ -24,7 +24,11 @@ export interface FilteredStreamEvent {
  * Stateful: tracks current tool status line per stream session.
  */
 export class StreamContentFilter {
-  private toolStatusLine: string | null = null;
+  private toolStatusLine: string | null;
+
+  constructor() {
+    this.toolStatusLine = null;
+  }
 
   filter(event: StreamEvent): FilteredStreamEvent | null {
     switch (event.type) {
