@@ -185,6 +185,16 @@
         "src/shared/tasking/task.types.ts"
       ],
       "description": "任务调度与状态持久化"
+    },
+    {
+      "doc": ".harness/design-docs/015-skill-system-upgrade.md",
+      "sources": [
+        "src/kernel/skills/skill-readiness.ts",
+        "src/kernel/skills/skill-frontmatter.ts",
+        "src/kernel/skills/skill-index-builder.ts",
+        "src/kernel/skills/index.ts"
+      ],
+      "description": "Skill 系统升级（渐进式披露 + 就绪检查）"
     }
   ]
 }
