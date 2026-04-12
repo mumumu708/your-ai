@@ -149,6 +149,15 @@
         "src/shared/tasking/task.types.ts"
       ],
       "description": "Session 历史持久化（SQLite FTS）"
+    },
+    {
+      "doc": ".harness/design-docs/017-async-task-executor.md",
+      "sources": [
+        "src/kernel/tasking/task-store.ts",
+        "src/kernel/tasking/task-dispatcher.ts",
+        "src/shared/tasking/task.types.ts"
+      ],
+      "description": "任务调度与状态持久化"
     }
   ]
 }

@@ -54,7 +54,11 @@
 │    media-understanding.ts — 调用 Vision API 生成图片描述           │
 │    media-processor.ts  — 串联下载+理解的编排器                     │
 │  files/                — 文件上传处理 + 配额管理                  │
-│  tasking/              — 任务队列 + 并发控制                     │
+│  tasking/              — 任务调度 + 持久化 + 并发控制              │
+│    task-store.ts       — SQLite 任务持久化（CRUD + 启动恢复）      │
+│    task-dispatcher.ts  — 会话串行 + 跨会话并发调度器                │
+│    task-queue.ts       — (旧) 任务队列（待废弃）                   │
+│    concurrency-controller.ts — (旧) 并发控制（待废弃）             │
 │  security/             — 加密 · RBAC · 限流                     │
 │  monitoring/           — 审计日志 · 告警规则 · 工具调用监控        │
 ├─────────────────────────────────────────────────────────────┤
@@ -62,7 +66,7 @@
 │  纯类型 · 工具函数 · 零业务依赖                                  │
 │                                                             │
 │  messaging/  — BotMessage/StreamEvent/ChannelAdapter/MediaAttachment 类型│
-│  tasking/    — Task/TaskType/TaskResult 类型                  │
+│  tasking/    — Task/TaskType/TaskResult/TaskRecord/TaskPayload 类型│
 │  classifier/ — UnifiedClassifyResult 等分类器类型              │
 │  errors/     — YourBotError + ERROR_CODES                    │
 │  logging/    — Logger 类 + 日志级别                            │

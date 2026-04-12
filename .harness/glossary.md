@@ -36,3 +36,8 @@
 | **check:all** | 全量质量检查命令，包含 lint + 架构检查 + 测试 |
 | **MCP** | Model Context Protocol，AI Agent 的工具协议，mcp-servers/ 通过 stdio 通信 |
 | **Biome** | 代码 lint + 格式化工具，替代 ESLint + Prettier |
+| **TaskStore** | SQLite 任务持久化层，负责任务 CRUD、启动恢复（markInterruptedOnStartup）、历史清理 |
+| **TaskDispatcher** | 统一任务调度器，入队即持久化 + 会话级串行（session lock promise chain）+ 跨会话并发（可配置上限）+ AbortController 取消链路 |
+| **TaskRecord** | 任务持久化记录，包含 id/userId/sessionId/type/executionMode/status/description 等完整生命周期字段 |
+| **TaskPayload** | 任务负载，包含 type/message/executionMode/source/metadata，由消息通道或 API 构造后传入 dispatch() |
+| **ExecutionMode** | 任务执行模式：sync（同步）/ async（异步）/ long-horizon（长时间后台） |
