@@ -28,6 +28,7 @@ import { ConfigLoader } from './memory/config-loader';
 import { ContextManager } from './memory/context-manager';
 import { EntityManager } from './memory/graph/entity-manager';
 import { OpenVikingClient } from './memory/openviking/openviking-client';
+import type { SessionStore } from './memory/session-store';
 import { UserConfigLoader } from './memory/user-config-loader';
 import { OnboardingManager } from './onboarding';
 import { JobStore } from './scheduling/job-store';
@@ -44,6 +45,7 @@ import {
 import { StreamHandler } from './streaming/stream-handler';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
 import { TaskQueue } from './tasking/task-queue';
+import type { TaskStore } from './tasking/task-store';
 import { WorkspaceManager } from './workspace';
 
 export interface CentralControllerDeps {
@@ -75,6 +77,8 @@ export interface CentralControllerDeps {
   sessionSerializer?: SessionSerializer;
   harnessMutex?: HarnessMutex;
   worktreePool?: WorktreePool;
+  sessionStore?: SessionStore;
+  taskStore?: TaskStore;
 }
 
 export class CentralController {
@@ -110,9 +114,16 @@ export class CentralController {
   private readonly fileUploadHandler: FileUploadHandler;
   private readonly mediaProcessor: MediaProcessor;
   private channelResolver?: (channelType: string) => IChannel | undefined;
+  private readonly sessionStore?: SessionStore;
+  private readonly taskStore?: TaskStore;
 
   private constructor(deps?: CentralControllerDeps) {
-    this.sessionManager = deps?.sessionManager ?? new SessionManager();
+    // Store optional persistence stores
+    this.sessionStore = deps?.sessionStore;
+    this.taskStore = deps?.taskStore;
+
+    this.sessionManager =
+      deps?.sessionManager ?? new SessionManager({ sessionStore: this.sessionStore });
     this.scheduler = deps?.scheduler ?? new Scheduler(new JobStore());
     this.scheduleCancelManager = new ScheduleCancelManager(this.scheduler);
     this.taskQueue = deps?.taskQueue ?? new TaskQueue();

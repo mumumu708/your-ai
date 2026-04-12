@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
+import { closeSessionDatabase, getSessionDatabase } from '../../infra/database/session-db';
 import { ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
 import { LightLLMClient } from '../kernel/agents/light-llm-client';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
+import { SessionStore } from '../kernel/memory/session-store';
+import { TaskStore } from '../kernel/tasking/task-store';
 import { WorkspaceManager } from '../kernel/workspace';
 import { Logger } from '../shared/logging/logger';
 import type { ChannelType } from '../shared/messaging';
@@ -57,12 +60,19 @@ const lightLLM = bootstrapLightLLM();
 const classifier = new TaskClassifier(lightLLM);
 const workspaceManager = new WorkspaceManager();
 
+// Initialize session database and persistence stores
+const sessionDb = getSessionDatabase();
+const sessionStore = new SessionStore(sessionDb);
+const taskStore = new TaskStore(sessionDb);
+
 // Create controller first (singleton), channelResolver will be set after channelManager is created
 const controller = CentralController.getInstance({
   claudeBridge,
   lightLLM,
   classifier,
   workspaceManager,
+  sessionStore,
+  taskStore,
 });
 
 const router = new MessageRouter(controller);
@@ -216,6 +226,7 @@ function setupGracefulShutdown(): void {
     controller.stopScheduler();
     await channelManager.shutdownAll();
     CentralController.resetInstance();
+    closeSessionDatabase();
     logger.info('所有通道已关闭，进程退出');
     process.exit(0);
   };

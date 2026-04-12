@@ -171,6 +171,7 @@
     {
       "doc": ".harness/design-docs/016-session-history-persistence.md",
       "sources": [
+        "infra/database/session-db.ts",
         "src/kernel/memory/session-store.ts",
         "src/kernel/sessioning/session-manager.ts",
         "src/shared/tasking/task.types.ts"
