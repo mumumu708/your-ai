@@ -18,10 +18,14 @@ import { IntelligenceGateway } from './agents/intelligence-gateway';
 import type { LightLlmCompletable } from './agents/intelligence-gateway';
 import type { LightLLMClient } from './agents/light-llm-client';
 import { TaskClassifier } from './classifier/task-classifier';
+// DD-012: routeAnalysis will be used once PostResponseAnalyzer returns structured items
+// import { routeAnalysis } from './evolution/analysis-router';
 import { ConflictResolver } from './evolution/conflict-resolver';
 import { EvolutionScheduler } from './evolution/evolution-scheduler';
+import { FrozenContextManager } from './evolution/frozen-context-manager';
 import { KnowledgeRouter } from './evolution/knowledge-router';
 import { PostResponseAnalyzer } from './evolution/post-response-analyzer';
+import { ReflectionTrigger } from './evolution/reflection-trigger';
 import { TokenBudgetAllocator } from './evolution/token-budget-allocator';
 import { FileUploadHandler } from './files/file-upload-handler';
 import { MediaDownloader } from './media/media-downloader';
@@ -48,8 +52,12 @@ import {
   WorktreePool,
   generateBranchName,
 } from './sessioning';
+// DD-018: StreamContentFilter will be wired into stream pipeline in future refactoring
+// import { StreamContentFilter } from './streaming/stream-content-filter';
 import { StreamHandler } from './streaming/stream-handler';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
+import { classifyExecutionMode } from './tasking/execution-mode-classifier';
+import { QueueAggregator } from './tasking/queue-aggregator';
 import { TaskQueue } from './tasking/task-queue';
 import type { TaskStore } from './tasking/task-store';
 import { WorkspaceManager } from './workspace';
@@ -124,6 +132,9 @@ export class CentralController {
   private readonly taskStore?: TaskStore;
   private readonly systemPromptBuilder: SystemPromptBuilder;
   private readonly intelligenceGateway?: IntelligenceGateway;
+  private readonly queueAggregator: QueueAggregator;
+  private readonly reflectionTrigger: ReflectionTrigger;
+  private readonly frozenContextManager: FrozenContextManager;
 
   private constructor(deps?: CentralControllerDeps) {
     // Store optional persistence stores
@@ -219,6 +230,11 @@ export class CentralController {
     // SystemPromptBuilder — session-level frozen prompt (DD-018)
     this.systemPromptBuilder = new SystemPromptBuilder(deps?.configLoader ?? this.configLoader);
 
+    // DD-013/DD-017: Auxiliary modules for queue aggregation, reflection, and frozen context
+    this.queueAggregator = new QueueAggregator();
+    this.reflectionTrigger = new ReflectionTrigger();
+    this.frozenContextManager = new FrozenContextManager();
+
     // MediaProcessor — handles image/media attachments
     this.mediaProcessor =
       deps?.mediaProcessor ??
@@ -257,6 +273,29 @@ export class CentralController {
           sessionId,
           error: err instanceof Error ? err.message : String(err),
         });
+      }
+
+      // DD-012: Check if background reflection should trigger
+      if (this.sessionStore && session) {
+        try {
+          const unreflected = this.sessionStore.getUnreflectedSessions(session.userId);
+          const shouldReflect = this.reflectionTrigger.shouldReflect({
+            lastReflectionAt: null, // TODO: track last reflection time per user
+            unreflectedSessionCount: unreflected.length,
+          });
+          if (shouldReflect) {
+            this.logger.info('后台反思条件满足，待实现异步执行', {
+              userId: session.userId,
+              unreflectedCount: unreflected.length,
+            });
+            // TODO: dispatch async reflection task via TaskDispatcher (DD-017)
+          }
+        } catch (err) {
+          this.logger.warn('反思触发检查失败', {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
     });
   }
@@ -342,6 +381,11 @@ export class CentralController {
           completedAt: Date.now(),
         };
       }
+
+      // TODO DD-017: Use queueAggregator to merge pending messages before task execution.
+      // When TaskDispatcher replaces direct orchestrate() calls, aggregate queued messages here:
+      // const pending = this.taskQueue.getPending(sessionKey);
+      // if (pending.length > 1) { const aggregated = await this.queueAggregator.aggregate(pending); }
 
       // --- File upload detection ---
       if (
@@ -500,7 +544,18 @@ export class CentralController {
   }
 
   async classifyIntent(message: BotMessage): Promise<UnifiedClassifyResult> {
-    return this.classifier.classify(message.content, { userId: message.userId });
+    const result = await this.classifier.classify(message.content, { userId: message.userId });
+
+    // DD-014: Enrich with execution mode classification
+    const executionMode = classifyExecutionMode({
+      taskType: result.taskType,
+      complexity: result.complexity,
+      source: 'user',
+      content: message.content,
+    });
+    result.executionMode = executionMode;
+
+    return result;
   }
 
   calculatePriority(taskType: TaskType): number {
@@ -671,6 +726,9 @@ export class CentralController {
     }
 
     // Build stream callback
+    // TODO: Wire StreamContentFilter into stream pipeline to convert raw StreamEvents
+    // into FilteredStreamEvents (content/status/error/done). Requires stream adapter refactoring.
+    // const _streamFilter = new StreamContentFilter();
     let streamCallback: ((event: StreamEvent) => void) | undefined;
     let streamResultPromise: Promise<unknown> | undefined;
 
@@ -760,7 +818,7 @@ export class CentralController {
     const turnContext = buildTurnContext({
       memories: [], // TODO: integrate memory retrieval in DD-018 phase 2
       taskType: task.classifyResult?.taskType || 'chat',
-      executionMode: 'sync', // TODO: derive from ExecutionModeClassifier (DD-014) once integrated
+      executionMode: task.classifyResult?.executionMode || 'sync',
       invokedSkills: task.session.invokedSkills ? [...task.session.invokedSkills] : undefined,
       postCompaction: task.session.postCompaction,
       mcpServers:
@@ -814,7 +872,7 @@ export class CentralController {
                   streamCallback(event);
                 }
               : undefined,
-            executionMode: 'sync', // TODO: derive from ExecutionModeClassifier (DD-014)
+            executionMode: task.classifyResult?.executionMode || 'sync',
             classifyResult: task.classifyResult as Record<string, unknown> | undefined,
             maxTurns: task.classifyResult?.taskType === 'harness' ? 100 : 30,
           },
@@ -897,6 +955,11 @@ export class CentralController {
     if (feedbackText) {
       responseContent += `\n\n---\n${feedbackText}`;
     }
+
+    // TODO DD-012: Route analysis items via routeAnalysis() once PostResponseAnalyzer
+    // returns structured AnalysisItem[]. Currently analyzer returns plain text feedback.
+    // Future: const routed = routeAnalysis(analysisItems);
+    //         routed.memories → memory store, routed.skillCandidates → skill extraction
 
     // Sync assistant message to OpenViking session
     try {
