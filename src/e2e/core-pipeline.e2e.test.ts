@@ -10,7 +10,7 @@
  * 运行：~/.bun/bin/bun test src/e2e/
  * 飞书：FEISHU_APP_ID=xxx FEISHU_APP_SECRET=xxx ~/.bun/bin/bun test src/e2e/
  */
-import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { ChannelManager } from '../gateway/channel-manager';
