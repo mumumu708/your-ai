@@ -50,3 +50,38 @@ export interface Task {
   metadata: TaskMetadata;
   classifyResult?: UnifiedClassifyResult;
 }
+
+// ── Session persistence types ──
+
+export interface SessionRecord {
+  id: string;
+  userId: string;
+  channel: string;
+  conversationId?: string;
+  startedAt: number;
+  endedAt?: number;
+  endReason?: string;
+  messageCount: number;
+  summary?: string;
+  reflectionProcessed: boolean;
+}
+
+export interface MessageRecord {
+  id?: number;
+  sessionId: string;
+  userId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  tokenEstimate?: number;
+}
+
+export interface SearchResult {
+  sessionId: string;
+  role: string;
+  content: string;
+  timestamp: number;
+  channel: string;
+  sessionSummary?: string;
+  highlight: string;
+}

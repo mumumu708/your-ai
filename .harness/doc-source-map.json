@@ -140,6 +140,15 @@
         "src/kernel/classifier/task-classifier.ts"
       ],
       "description": "Scheduler 生命周期与持久化"
+    },
+    {
+      "doc": ".harness/design-docs/016-session-history-persistence.md",
+      "sources": [
+        "src/kernel/memory/session-store.ts",
+        "src/kernel/sessioning/session-manager.ts",
+        "src/shared/tasking/task.types.ts"
+      ],
+      "description": "Session 历史持久化（SQLite FTS）"
     }
   ]
 }
