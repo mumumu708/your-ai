@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { MemorySnapshotBuilder } from './memory-snapshot-builder';
 import { SYSTEM_PROMPT_BUDGET, estimateTokens } from './prompt-types';
 import { SystemPromptBuilder } from './system-prompt-builder';
 
@@ -41,10 +40,8 @@ function mockConfigLoader(overrides?: Partial<Record<string, string>>) {
 }
 
 describe('SystemPromptBuilder', () => {
-  const memoryBuilder = new MemorySnapshotBuilder();
-
   test('构建包含所有 6 个 section', async () => {
-    const builder = new SystemPromptBuilder(mockConfigLoader(), memoryBuilder);
+    const builder = new SystemPromptBuilder(mockConfigLoader());
     const result = await builder.build({
       userId: 'u1',
       channel: 'feishu',
@@ -59,7 +56,7 @@ describe('SystemPromptBuilder', () => {
   });
 
   test('sections 组装顺序固定: identity → soul → protocol → skill → memory → runtime', async () => {
-    const builder = new SystemPromptBuilder(mockConfigLoader(), memoryBuilder);
+    const builder = new SystemPromptBuilder(mockConfigLoader());
     const result = await builder.build({
       userId: 'u1',
       channel: 'web',
@@ -79,7 +76,7 @@ describe('SystemPromptBuilder', () => {
   });
 
   test('runtime hints 包含通道能力', async () => {
-    const builder = new SystemPromptBuilder(mockConfigLoader(), memoryBuilder);
+    const builder = new SystemPromptBuilder(mockConfigLoader());
     const result = await builder.build({
       userId: 'u1',
       channel: 'feishu',
@@ -91,7 +88,7 @@ describe('SystemPromptBuilder', () => {
   });
 
   test('未知通道不包含通道能力行', async () => {
-    const builder = new SystemPromptBuilder(mockConfigLoader(), memoryBuilder);
+    const builder = new SystemPromptBuilder(mockConfigLoader());
     const result = await builder.build({
       userId: 'u1',
       channel: 'unknown-channel',
@@ -101,7 +98,7 @@ describe('SystemPromptBuilder', () => {
   });
 
   test('token 数正确估算', async () => {
-    const builder = new SystemPromptBuilder(mockConfigLoader(), memoryBuilder);
+    const builder = new SystemPromptBuilder(mockConfigLoader());
     const result = await builder.build({
       userId: 'u1',
       channel: 'web',
@@ -111,7 +108,7 @@ describe('SystemPromptBuilder', () => {
   });
 
   test('extractCoreProtocol 提取目标 sections', () => {
-    const builder = new SystemPromptBuilder(mockConfigLoader(), memoryBuilder);
+    const builder = new SystemPromptBuilder(mockConfigLoader());
     const fullAgents = [
       '# Agents Protocol',
       '## Memory 交互协议',
@@ -138,17 +135,14 @@ describe('SystemPromptBuilder', () => {
   });
 
   test('extractCoreProtocol AGENTS.md 为空时返回空字符串', () => {
-    const builder = new SystemPromptBuilder(mockConfigLoader(), memoryBuilder);
+    const builder = new SystemPromptBuilder(mockConfigLoader());
     expect(builder.extractCoreProtocol('')).toBe('');
   });
 
   test('超出预算时按优先级裁剪', async () => {
     // 制造一个超大的 SOUL.md 来超出预算
     const hugeSoul = `# Soul\n${'这是一条非常重要的灵魂规则。\n'.repeat(500)}`;
-    const builder = new SystemPromptBuilder(
-      mockConfigLoader({ 'SOUL.md': hugeSoul }),
-      memoryBuilder,
-    );
+    const builder = new SystemPromptBuilder(mockConfigLoader({ 'SOUL.md': hugeSoul }));
 
     const result = await builder.build({
       userId: 'u1',
@@ -174,7 +168,6 @@ describe('SystemPromptBuilder', () => {
           'x'.repeat(4000),
         ].join('\n'),
       }),
-      memoryBuilder,
     );
 
     const result = await builder.build({
@@ -196,10 +189,7 @@ describe('SystemPromptBuilder', () => {
   test('trimToBudget 处理小 section（< 100 tokens）直接清空', async () => {
     // runtimeHints is small (< 100 tokens), should be directly cleared
     const hugeSoul = `# Soul\n${'规则内容。'.repeat(1200)}`;
-    const builder = new SystemPromptBuilder(
-      mockConfigLoader({ 'SOUL.md': hugeSoul }),
-      memoryBuilder,
-    );
+    const builder = new SystemPromptBuilder(mockConfigLoader({ 'SOUL.md': hugeSoul }));
 
     const result = await builder.build({
       userId: 'u1',
@@ -210,7 +200,7 @@ describe('SystemPromptBuilder', () => {
   });
 
   test('assemble 跳过空 section', () => {
-    const builder = new SystemPromptBuilder(mockConfigLoader(), memoryBuilder);
+    const builder = new SystemPromptBuilder(mockConfigLoader());
     const content = builder.assemble({
       identity: 'ID',
       soul: '',

@@ -17,7 +17,9 @@
         "src/kernel/sessioning/branch-name-generator.ts",
         "src/kernel/scheduling/scheduler.ts",
         "src/kernel/scheduling/job-store.ts",
-        "src/kernel/scheduling/schedule-cancel-manager.ts"
+        "src/kernel/scheduling/schedule-cancel-manager.ts",
+        "src/kernel/prompt/system-prompt-builder.ts",
+        "src/kernel/prompt/index.ts"
       ],
       "description": "架构概览"
     },
@@ -129,6 +131,18 @@
         "config/AGENTS.md"
       ],
       "description": "新用户引导系统"
+    },
+    {
+      "doc": ".harness/design-docs/018-system-prompt-builder.md",
+      "sources": [
+        "src/kernel/prompt/system-prompt-builder.ts",
+        "src/kernel/prompt/prepend-context-builder.ts",
+        "src/kernel/prompt/turn-context-builder.ts",
+        "src/kernel/prompt/memory-snapshot-builder.ts",
+        "src/kernel/prompt/prompt-types.ts",
+        "src/kernel/prompt/index.ts"
+      ],
+      "description": "System Prompt 组装器"
     },
     {
       "doc": ".harness/design-docs/009-scheduler-lifecycle.md",

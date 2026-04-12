@@ -1,15 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { MemorySnapshotBuilder } from './memory-snapshot-builder';
+import { buildMemorySnapshot } from './memory-snapshot-builder';
+import { estimateTokens } from './prompt-types';
 
-describe('MemorySnapshotBuilder', () => {
-  const builder = new MemorySnapshotBuilder();
-
+describe('buildMemorySnapshot', () => {
   test('空输入返回空字符串', () => {
-    expect(builder.build([])).toBe('');
+    expect(buildMemorySnapshot([])).toBe('');
   });
 
   test('按 category 分组格式化', () => {
-    const result = builder.build([
+    const result = buildMemorySnapshot([
       { content: '偏好中文回复', category: 'preference' },
       { content: '使用 TypeScript', category: 'fact' },
       { content: '正在开发 AI 助手项目', category: 'context' },
@@ -25,7 +24,7 @@ describe('MemorySnapshotBuilder', () => {
   });
 
   test('无 category 默认归入 fact', () => {
-    const result = builder.build([{ content: '无分类记忆' }]);
+    const result = buildMemorySnapshot([{ content: '无分类记忆' }]);
 
     expect(result).toContain('## 关键事实');
     expect(result).toContain('- 无分类记忆');
@@ -39,25 +38,37 @@ describe('MemorySnapshotBuilder', () => {
       category: 'fact' as const,
     }));
 
-    const result = builder.build(memories);
+    const result = buildMemorySnapshot(memories);
     expect(result).toContain('- 事实 5');
     expect(result).not.toContain('- 事实 6');
   });
 
   test('超长内容被截断到 800 token 以内', () => {
-    // 800 tokens * 4 chars/token = 3200 chars
-    const longMemories = Array.from({ length: 50 }, (_, i) => ({
-      content: `${'这是一段很长的记忆内容'.repeat(5)} — 记忆编号 ${i + 1}`,
-      category: 'fact' as const,
-    }));
+    // Each memory item is ~700 chars, 5 items per category * 3 categories = way over 800 tokens
+    const longContent = '这是一段很长的记忆内容，需要被截断。'.repeat(40); // ~640 chars
+    const longMemories = [
+      ...Array.from({ length: 5 }, (_, i) => ({
+        content: `${longContent} pref-${i}`,
+        category: 'preference' as const,
+      })),
+      ...Array.from({ length: 5 }, (_, i) => ({
+        content: `${longContent} fact-${i}`,
+        category: 'fact' as const,
+      })),
+      ...Array.from({ length: 5 }, (_, i) => ({
+        content: `${longContent} ctx-${i}`,
+        category: 'context' as const,
+      })),
+    ];
 
-    const result = builder.build(longMemories);
-    // estimateTokens: ceil(len/4) ≤ 800 → len ≤ 3200
+    const result = buildMemorySnapshot(longMemories);
+    // 800 tokens * 4 chars/token = 3200 chars max
     expect(result.length).toBeLessThanOrEqual(3200);
+    expect(estimateTokens(result)).toBeLessThanOrEqual(800);
   });
 
   test('只有偏好类记忆时只显示偏好 section', () => {
-    const result = builder.build([{ content: '喜欢简洁回复', category: 'preference' }]);
+    const result = buildMemorySnapshot([{ content: '喜欢简洁回复', category: 'preference' }]);
 
     expect(result).toContain('## 用户偏好');
     expect(result).not.toContain('## 关键事实');
@@ -65,7 +76,7 @@ describe('MemorySnapshotBuilder', () => {
   });
 
   test('多种 category 混合时按正确顺序排列', () => {
-    const result = builder.build([
+    const result = buildMemorySnapshot([
       { content: '上下文信息', category: 'context' },
       { content: '偏好信息', category: 'preference' },
       { content: '事实信息', category: 'fact' },

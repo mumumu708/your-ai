@@ -1,6 +1,6 @@
 import { Logger } from '../../shared/logging/logger';
 import type { ConfigLoader } from '../memory/config-loader';
-import type { MemorySnapshotBuilder } from './memory-snapshot-builder';
+import { buildMemorySnapshot } from './memory-snapshot-builder';
 import {
   CHANNEL_CAPABILITIES,
   type FrozenSystemPrompt,
@@ -27,10 +27,7 @@ const TRIM_ORDER: (keyof PromptSections)[] = [
 export class SystemPromptBuilder {
   private readonly logger = new Logger('SystemPromptBuilder');
 
-  constructor(
-    private readonly configLoader: ConfigLoader,
-    private readonly memorySnapshotBuilder: MemorySnapshotBuilder,
-  ) {}
+  constructor(private readonly configLoader: ConfigLoader) {}
 
   async build(params: PromptBuildParams): Promise<FrozenSystemPrompt> {
     // ── L1: Identity ──
@@ -47,7 +44,7 @@ export class SystemPromptBuilder {
     const skillIndex = '# 可用 Skills\n暂无';
 
     // ── L5: Memory Snapshot ──
-    const memorySnapshot = this.memorySnapshotBuilder.build([]);
+    const memorySnapshot = buildMemorySnapshot([]);
 
     // ── L6: Runtime Hints ──
     const runtimeHints = this.buildRuntimeHints(params);
