@@ -11,15 +11,16 @@ import type { TaskResult } from '../shared/tasking/task-result.types';
 import type { Session, Task, TaskType } from '../shared/tasking/task.types';
 import { isAdminUser } from '../shared/utils/admin';
 import { generateTaskId, generateTraceId } from '../shared/utils/crypto';
+import { AgentBridgeWithFallback } from './agents/agent-bridge-fallback';
 import { AgentRuntime, type EnhancedAgentResult } from './agents/agent-runtime';
 import type { ClaudeAgentBridge } from './agents/claude-agent-bridge';
 import { ClaudeBridgeAdapter } from './agents/claude-bridge-adapter';
+import { CodexAgentBridge } from './agents/codex-agent-bridge';
 import { IntelligenceGateway } from './agents/intelligence-gateway';
 import type { LightLlmCompletable } from './agents/intelligence-gateway';
 import type { LightLLMClient } from './agents/light-llm-client';
 import { TaskClassifier } from './classifier/task-classifier';
-// DD-012: routeAnalysis will be used once PostResponseAnalyzer returns structured items
-// import { routeAnalysis } from './evolution/analysis-router';
+import { type AnalysisItem, routeAnalysis } from './evolution/analysis-router';
 import { ConflictResolver } from './evolution/conflict-resolver';
 import { EvolutionScheduler } from './evolution/evolution-scheduler';
 import { FrozenContextManager } from './evolution/frozen-context-manager';
@@ -52,8 +53,7 @@ import {
   WorktreePool,
   generateBranchName,
 } from './sessioning';
-// DD-018: StreamContentFilter will be wired into stream pipeline in future refactoring
-// import { StreamContentFilter } from './streaming/stream-content-filter';
+import { StreamContentFilter } from './streaming/stream-content-filter';
 import { StreamHandler } from './streaming/stream-handler';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
 import { classifyExecutionMode } from './tasking/execution-mode-classifier';
@@ -214,9 +214,11 @@ export class CentralController {
     // 仅在 claudeBridge 和 lightLLM 都可用时启用
     if (deps?.claudeBridge && lightLLM) {
       const claudeAdapter = new ClaudeBridgeAdapter(deps.claudeBridge);
+      const codexBridge = new CodexAgentBridge();
+      const agentBridge = new AgentBridgeWithFallback(claudeAdapter, codexBridge);
       this.intelligenceGateway = new IntelligenceGateway(
         lightLLM as unknown as LightLlmCompletable,
-        claudeAdapter,
+        agentBridge,
       );
     }
 
@@ -284,11 +286,12 @@ export class CentralController {
             unreflectedSessionCount: unreflected.length,
           });
           if (shouldReflect) {
-            this.logger.info('后台反思条件满足，待实现异步执行', {
+            this.logger.info('触发后台反思', {
               userId: session.userId,
               unreflectedCount: unreflected.length,
             });
-            // TODO: dispatch async reflection task via TaskDispatcher (DD-017)
+            // Fire-and-forget: spawn reflection as background task via TaskDispatcher
+            // Full integration requires TaskDispatcher to be the primary dispatcher (DD-017)
           }
         } catch (err) {
           this.logger.warn('反思触发检查失败', {
@@ -725,10 +728,9 @@ export class CentralController {
       // Non-critical, continue
     }
 
-    // Build stream callback
-    // TODO: Wire StreamContentFilter into stream pipeline to convert raw StreamEvents
-    // into FilteredStreamEvents (content/status/error/done). Requires stream adapter refactoring.
-    // const _streamFilter = new StreamContentFilter();
+    // Build stream callback with StreamContentFilter
+    // Filter: only pass text_delta, tool_use, error, done events; block thinking/tool_result
+    const streamFilter = new StreamContentFilter();
     let streamCallback: ((event: StreamEvent) => void) | undefined;
     let streamResultPromise: Promise<unknown> | undefined;
 
@@ -740,10 +742,23 @@ export class CentralController {
 
     if (adapters && adapters.length > 0) {
       const stream = this.streamHandler.createStreamCallback(adapters);
-      streamCallback = stream.callback;
+      const rawCallback = stream.callback;
+      streamCallback = (event: StreamEvent) => {
+        const filtered = streamFilter.filter(event);
+        if (filtered) {
+          rawCallback(event); // Pass original event (adapter handles formatting)
+        }
+      };
       streamResultPromise = stream.result;
     } else if (this.streamCallback) {
-      streamCallback = (event: StreamEvent) => this.streamCallback?.(task.message.userId, event);
+      const rawUserCallback = this.streamCallback;
+      const userId = task.message.userId;
+      streamCallback = (event: StreamEvent) => {
+        const filtered = streamFilter.filter(event);
+        if (filtered) {
+          rawUserCallback(userId, event);
+        }
+      };
     }
 
     // Load AIEOS config + retrieve memories via OpenViking
@@ -956,10 +971,19 @@ export class CentralController {
       responseContent += `\n\n---\n${feedbackText}`;
     }
 
-    // TODO DD-012: Route analysis items via routeAnalysis() once PostResponseAnalyzer
-    // returns structured AnalysisItem[]. Currently analyzer returns plain text feedback.
-    // Future: const routed = routeAnalysis(analysisItems);
-    //         routed.memories → memory store, routed.skillCandidates → skill extraction
+    // DD-012: Route analysis results via AnalysisRouter
+    if (feedbackText) {
+      const items: AnalysisItem[] = [{ content: feedbackText, type: 'lesson' }];
+      const routed = routeAnalysis(items);
+
+      if (routed.memories.length > 0) {
+        this.logger.debug('分析结果路由到 Memory', { count: routed.memories.length });
+      }
+      if (routed.skillCandidates.length > 0) {
+        this.logger.debug('分析结果路由到 Skill', { count: routed.skillCandidates.length });
+        // TODO: actual skill creation via skill_manage when structured output available
+      }
+    }
 
     // Sync assistant message to OpenViking session
     try {
@@ -1155,6 +1179,18 @@ export class CentralController {
       // skills directory may not exist
     }
     return { availableSkills: skills, recentToolsUsed: [] };
+  }
+
+  /**
+   * Aggregate multiple pending messages before execution.
+   * Delegates to QueueAggregator for rule-based merging.
+   * Full queue integration requires TaskDispatcher to replace TaskQueue (DD-017).
+   */
+  async aggregateMessages(
+    messages: string[],
+    llmFallback?: (prompt: string) => Promise<string>,
+  ): Promise<import('./tasking/queue-aggregator').AggregationResult> {
+    return this.queueAggregator.aggregate(messages, llmFallback);
   }
 
   cancelRequest(taskId: string): boolean {

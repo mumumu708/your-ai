@@ -11,6 +11,9 @@ export type {
 // Claude Bridge Adapter — 旧接口适配新接口
 export { ClaudeBridgeAdapter } from './claude-bridge-adapter';
 
+// Codex Agent Bridge
+export { CodexAgentBridge } from './codex-agent-bridge';
+
 // Fallback 容错包装
 export { AgentBridgeWithFallback } from './agent-bridge-fallback';
 

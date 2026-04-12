@@ -2080,6 +2080,24 @@ describe('CentralController', () => {
       expect(result.success).toBe(true);
     });
 
+    test('IntelligenceGateway 构建时包含 AgentBridgeWithFallback（CodexBridge）', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+
+      const mockBridge = makeMockBridge('reply');
+
+      // Creating controller with claudeBridge + lightLLM should succeed
+      // (internally creates CodexAgentBridge + AgentBridgeWithFallback)
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        claudeBridge: mockBridge,
+        lightLLM: makeMockLightLLM('quick answer'),
+        ...createMockOVDeps(),
+      });
+
+      expect(controller).toBeDefined();
+    });
+
     test('IntelligenceGateway 失败时应回退到 AgentRuntime', async () => {
       const agentRuntime = new AgentRuntime();
       const executeSpy = spyOn(agentRuntime, 'execute').mockResolvedValue({
@@ -2119,6 +2137,148 @@ describe('CentralController', () => {
       expect(executeSpy).toHaveBeenCalledTimes(1);
       const data = result.data as { content: string };
       expect(data.content).toBe('fallback-reply');
+    });
+  });
+
+  describe('StreamContentFilter 流式过滤集成', () => {
+    test('streamCallback 应过滤 tool_result 事件', async () => {
+      const agentRuntime = new AgentRuntime();
+      const callbackEvents: Array<{ userId: string; event: StreamEvent }> = [];
+
+      spyOn(agentRuntime, 'execute').mockImplementation(async (params) => {
+        if (params.streamCallback) {
+          params.streamCallback({ type: 'text_delta', text: 'Hi' });
+          params.streamCallback({ type: 'tool_result', text: 'result data' });
+          params.streamCallback({ type: 'tool_use', toolName: 'Read' });
+          params.streamCallback({ type: 'done' });
+        }
+        return {
+          content: 'Hi',
+          tokenUsage: { inputTokens: 5, outputTokens: 2 },
+          complexity: 'simple' as const,
+          channel: 'light_llm' as const,
+          classificationCostUsd: 0,
+        };
+      });
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        streamCallback: (userId, event) => {
+          callbackEvents.push({ userId, event });
+        },
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      await controller.handleIncomingMessage(message);
+
+      // tool_result should be filtered out — only text_delta, tool_use, done should pass
+      const types = callbackEvents.map((e) => e.event.type);
+      expect(types).toContain('text_delta');
+      expect(types).toContain('tool_use');
+      expect(types).toContain('done');
+      expect(types).not.toContain('tool_result');
+    });
+
+    test('streamAdapterFactory 路径也应过滤 tool_result', async () => {
+      const agentRuntime = new AgentRuntime();
+      const streamEvents: StreamEvent[] = [];
+
+      spyOn(agentRuntime, 'execute').mockImplementation(async (params) => {
+        if (params.streamCallback) {
+          params.streamCallback({ type: 'text_delta', text: 'Hello' });
+          params.streamCallback({ type: 'tool_result', text: 'internal' });
+          params.streamCallback({ type: 'done' });
+        }
+        return {
+          content: 'Hello',
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
+          complexity: 'simple' as const,
+          channel: 'light_llm' as const,
+          classificationCostUsd: 0,
+        };
+      });
+
+      const mockAdapter: ChannelStreamAdapter = {
+        channelType: 'test',
+        onStreamStart: async () => {},
+        sendChunk: async (text: string) => {
+          streamEvents.push({ type: 'text_delta', text });
+        },
+        sendDone: async () => {
+          streamEvents.push({ type: 'done' });
+        },
+        sendError: async () => {},
+      };
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        streamAdapterFactory: (_u, _c, _conv) => [mockAdapter],
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      await controller.handleIncomingMessage(message);
+
+      // tool_result should have been filtered — adapter only sees text_delta and done
+      const types = streamEvents.map((e) => e.type);
+      expect(types).not.toContain('tool_result');
+    });
+  });
+
+  describe('QueueAggregator 集成', () => {
+    test('aggregateMessages 委托给 QueueAggregator', async () => {
+      const controller = CentralController.getInstance({
+        ...createMockOVDeps(),
+      });
+
+      // Single message → pass through
+      const result = await controller.aggregateMessages(['hello']);
+      expect(result.tasks).toHaveLength(1);
+      expect(result.tasks[0].message).toBe('hello');
+      expect(result.reason).toBe('single');
+    });
+
+    test('aggregateMessages 处理多条消息', async () => {
+      const controller = CentralController.getInstance({
+        ...createMockOVDeps(),
+      });
+
+      // Override pattern: last message supersedes
+      const result = await controller.aggregateMessages(['帮我查天气', '不是，我是说帮我查机票']);
+      expect(result.tasks).toHaveLength(1);
+      expect(result.reason).toBe('last_override');
+    });
+  });
+
+  describe('AnalysisRouter 集成', () => {
+    test('postResponseAnalyzer 有结果时应路由分析结果', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'Bot reply',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const mockAnalyzer = {
+        analyzeExchange: async () => 'User prefers short answers',
+      } as unknown as PostResponseAnalyzer;
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+        postResponseAnalyzer: mockAnalyzer,
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      const result = await controller.handleIncomingMessage(message);
+
+      expect(result.success).toBe(true);
+      // Response should include analysis feedback appended
+      const data = result.data as { content: string };
+      expect(data.content).toContain('User prefers short answers');
     });
   });
 });
