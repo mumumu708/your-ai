@@ -594,7 +594,7 @@ export class CentralController {
 
       // W-01: Dispatch through TaskDispatcher when available (persistence + session serialization)
       if (this.taskDispatcher) {
-        const taskId = await this.taskDispatcher.dispatch(sessionKey, {
+        const { taskId, result } = await this.taskDispatcher.dispatchAndAwait(sessionKey, {
           type: classifyResult.taskType,
           message,
           executionMode: classifyResult.executionMode,
@@ -607,7 +607,7 @@ export class CentralController {
         return {
           success: true,
           taskId,
-          data: { channel: message.channel },
+          data: { content: result, channel: message.channel },
           completedAt: Date.now(),
         };
       }

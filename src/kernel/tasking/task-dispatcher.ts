@@ -22,6 +22,10 @@ export class TaskDispatcher {
   private pendingQueue: QueueItem[] = [];
   private running = 0;
   private readonly concurrency: number;
+  private readonly completionCallbacks = new Map<
+    string,
+    { resolve: (result: string) => void; reject: (error: Error) => void }
+  >();
 
   constructor(
     private readonly taskStore: TaskStore,
@@ -53,6 +57,39 @@ export class TaskDispatcher {
     this.enqueue(sessionId, task, payload);
 
     return task.id;
+  }
+
+  /**
+   * Dispatch a task and wait for it to complete, returning the handler result.
+   * Use this for the main user message path where the caller needs the result to reply.
+   * Use dispatch() for fire-and-forget cases (scheduler, reflection).
+   */
+  async dispatchAndAwait(
+    sessionId: string,
+    payload: TaskPayload,
+  ): Promise<{ taskId: string; result: string }> {
+    const task: TaskRecord = {
+      id: crypto.randomUUID(),
+      userId: payload.message.userId,
+      sessionId,
+      type: payload.type,
+      executionMode: payload.executionMode ?? 'sync',
+      source: payload.source,
+      status: 'pending',
+      description: payload.message.content.slice(0, 200),
+      inboundMessageId: payload.message.id,
+      createdAt: Date.now(),
+      metadata: payload.metadata,
+    };
+    this.taskStore.create(task);
+
+    return new Promise<{ taskId: string; result: string }>((resolve, reject) => {
+      this.completionCallbacks.set(task.id, {
+        resolve: (result) => resolve({ taskId: task.id, result }),
+        reject,
+      });
+      this.enqueue(sessionId, task, payload);
+    });
   }
 
   private enqueue(sessionId: string, task: TaskRecord, payload: TaskPayload): void {
@@ -90,6 +127,13 @@ export class TaskDispatcher {
     // Task may have been cancelled while waiting for session lock
     if (abort.signal.aborted) {
       this.taskStore.updateStatus(task.id, 'cancelled', { completedAt: Date.now() });
+
+      const cancelCallback = this.completionCallbacks.get(task.id);
+      if (cancelCallback) {
+        cancelCallback.reject(new Error('Task was cancelled'));
+        this.completionCallbacks.delete(task.id);
+      }
+
       this.running--;
       this.processQueue();
       return;
@@ -111,6 +155,12 @@ export class TaskDispatcher {
         completedAt: task.completedAt,
         resultSummary: task.resultSummary,
       });
+
+      const successCallback = this.completionCallbacks.get(task.id);
+      if (successCallback) {
+        successCallback.resolve(result);
+        this.completionCallbacks.delete(task.id);
+      }
     } catch (error) {
       task.completedAt = Date.now();
       if (abort.signal.aborted) {
@@ -123,6 +173,12 @@ export class TaskDispatcher {
           completedAt: task.completedAt,
           errorMessage: task.errorMessage,
         });
+      }
+
+      const failCallback = this.completionCallbacks.get(task.id);
+      if (failCallback) {
+        failCallback.reject(error instanceof Error ? error : new Error(String(error)));
+        this.completionCallbacks.delete(task.id);
       }
     } finally {
       this.runningTasks.delete(task.id);

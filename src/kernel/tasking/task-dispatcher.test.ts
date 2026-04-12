@@ -713,6 +713,110 @@ describe('TaskDispatcher', () => {
     });
   });
 
+  describe('dispatchAndAwait', () => {
+    test('should return taskId and handler result on success', async () => {
+      const handler: TaskHandler = async () => 'hello from handler';
+      const dispatcher = new TaskDispatcher(store, handler);
+
+      const { taskId, result } = await dispatcher.dispatchAndAwait('sess_1', makePayload());
+
+      expect(taskId).toBeDefined();
+      expect(result).toBe('hello from handler');
+
+      const row = db
+        .prepare('SELECT status, result_summary FROM tasks WHERE id = ?')
+        .get(taskId) as Record<string, unknown>;
+      expect(row.status).toBe('completed');
+      expect(row.result_summary).toBe('hello from handler');
+    });
+
+    test('should reject when handler throws', async () => {
+      const handler: TaskHandler = async () => {
+        throw new Error('handler failure');
+      };
+      const dispatcher = new TaskDispatcher(store, handler);
+
+      await expect(dispatcher.dispatchAndAwait('sess_1', makePayload())).rejects.toThrow(
+        'handler failure',
+      );
+    });
+
+    test('should reject when task is cancelled while waiting for session lock', async () => {
+      const barriers: Array<{ resolve: (v: string) => void }> = [];
+      const handler: TaskHandler = async (_task, _payload, signal) => {
+        return new Promise<string>((resolve, reject) => {
+          barriers.push({ resolve });
+          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+      };
+
+      const dispatcher = new TaskDispatcher(store, handler, { concurrency: 4 });
+
+      // task1 holds session lock — use catch to prevent unhandled rejection
+      const task1Promise = dispatcher
+        .dispatchAndAwait(
+          'sess_await_cancel',
+          makePayload({ message: makeMessage({ id: 'aw_msg_1' }) }),
+        )
+        .catch(() => 'task1-rejected');
+      await vi_wait(() => barriers.length > 0);
+
+      // task2 queues behind task1's session lock
+      const task2Promise = dispatcher.dispatchAndAwait(
+        'sess_await_cancel',
+        makePayload({ message: makeMessage({ id: 'aw_msg_2' }) }),
+      );
+
+      // Cancel all tasks in the session — both get aborted
+      dispatcher.cancelBySession('sess_await_cancel');
+
+      // Allow task1's handler to process the abort (resolve the barrier so finally runs)
+      barriers[0].resolve('done');
+
+      // task1 was aborted, so it rejects — but we caught it above
+      const task1Result = await task1Promise;
+      expect(task1Result).toBe('task1-rejected');
+
+      // task2 should also reject (cancelled while waiting for lock)
+      await expect(task2Promise).rejects.toThrow();
+    });
+
+    test('should return correct result when task is queued behind another', async () => {
+      const barriers: Array<{ resolve: (v: string) => void }> = [];
+      let callCount = 0;
+
+      const handler: TaskHandler = async () => {
+        callCount++;
+        const myCall = callCount;
+        return new Promise<string>((resolve) => {
+          barriers.push({ resolve: () => resolve(`result_${myCall}`) });
+        });
+      };
+
+      const dispatcher = new TaskDispatcher(store, handler, { concurrency: 4 });
+
+      // Two tasks in the same session — task2 must wait for task1
+      const p1 = dispatcher.dispatchAndAwait(
+        'sess_queue',
+        makePayload({ message: makeMessage({ id: 'q_msg_1' }) }),
+      );
+      const p2 = dispatcher.dispatchAndAwait(
+        'sess_queue',
+        makePayload({ message: makeMessage({ id: 'q_msg_2' }) }),
+      );
+
+      await vi_wait(() => barriers.length >= 1);
+      barriers[0].resolve('');
+
+      await vi_wait(() => barriers.length >= 2);
+      barriers[1].resolve('');
+
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect(r1.result).toBe('result_1');
+      expect(r2.result).toBe('result_2');
+    });
+  });
+
   describe('execution mode passthrough', () => {
     test('should store executionMode from payload', async () => {
       const handler: TaskHandler = async () => 'done';
