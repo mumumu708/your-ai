@@ -65,6 +65,12 @@ const sessionDb = getSessionDatabase();
 const sessionStore = new SessionStore(sessionDb);
 const taskStore = new TaskStore(sessionDb);
 
+// Mark any tasks that were 'running' in a previous process as interrupted
+const interrupted = taskStore.markInterruptedOnStartup();
+if (interrupted > 0) {
+  logger.warn(`Marked ${interrupted} running tasks as interrupted on startup`);
+}
+
 // Create controller first (singleton), channelResolver will be set after channelManager is created
 const controller = CentralController.getInstance({
   claudeBridge,
