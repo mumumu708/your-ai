@@ -96,22 +96,33 @@ describe('全链路 E2E 测试', () => {
       defaultModel: 'sonnet',
     });
 
-    // 2. Mock LightLLM — returns schedule classification for schedule-like messages
+    // 2. Mock LightLLM — distinguishes classifier calls (system prompt contains '任务分类器')
+    //    from response generation calls.
     const lightLLM = {
       complete: mock(async (params: { messages: Array<{ role: string; content: string }> }) => {
-        const userMsg = params.messages.find((m) => m.role === 'user')?.content ?? '';
-        const isSchedule = /每[天日周月]|定时|提醒我|remind|schedule/i.test(userMsg);
-        const content = isSchedule
-          ? '{"taskType":"scheduled","complexity":"complex","subIntent":"create","reason":"定时任务"}'
-          : '{"taskType":"chat","complexity":"complex","reason":"对话"}';
+        const sysMsg = params.messages.find((m) => m.role === 'system')?.content ?? '';
+        const isClassifierCall = sysMsg.includes('任务分类器');
+        if (isClassifierCall) {
+          const userMsg = params.messages.find((m) => m.role === 'user')?.content ?? '';
+          const isSchedule = /每[天日周月]|定时|提醒我|remind|schedule/i.test(userMsg);
+          const content = isSchedule
+            ? '{"taskType":"scheduled","complexity":"complex","subIntent":"create","reason":"定时任务"}'
+            : '{"taskType":"chat","complexity":"complex","reason":"对话"}';
+          return {
+            content,
+            model: 'deepseek-chat',
+            usage: { promptTokens: 5, completionTokens: 3, totalCost: 0.0001 },
+          };
+        }
+        // Response generation call (non-stream simple path)
         return {
-          content,
+          content: 'mock light response',
           model: 'deepseek-chat',
           usage: { promptTokens: 5, completionTokens: 3, totalCost: 0.0001 },
         };
       }),
       stream: mock(async function* () {
-        yield { content: 'mock', done: false };
+        yield { content: 'mock light response', done: false };
         yield { content: '', done: true };
       }),
       getDefaultModel: () => 'deepseek-chat',
@@ -278,7 +289,7 @@ describe('全链路 E2E 测试', () => {
       'POST /api/messages 发送 scheduled 消息应该返回注册确认',
       async () => {
         const message = makeBotMessage({
-          content: '每天9点提醒我开会',
+          content: '请每天上午9点提醒我参加晨会',
           userId: 'e2e_schedule_user',
         });
 
