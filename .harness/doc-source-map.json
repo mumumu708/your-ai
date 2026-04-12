@@ -106,6 +106,18 @@
       "description": "Agent 引擎"
     },
     {
+      "doc": ".harness/design-docs/014-unified-agent-execution.md",
+      "sources": [
+        "src/kernel/agents/agent-bridge.ts",
+        "src/kernel/agents/agent-bridge-fallback.ts",
+        "src/kernel/agents/intelligence-gateway.ts",
+        "src/kernel/agents/task-guidance-builder.ts",
+        "src/kernel/agents/mcp-config-builder.ts",
+        "src/kernel/agents/index.ts"
+      ],
+      "description": "统一执行 Agent 两层架构（DD-014）"
+    },
+    {
       "doc": ".harness/design-docs/006-evolution-system.md",
       "sources": [
         "src/kernel/evolution/knowledge-router.ts",

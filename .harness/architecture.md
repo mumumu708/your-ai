@@ -25,6 +25,13 @@
 │    light-llm-client.ts — OpenAI 兼容 API 客户端               │
 │    process-security.ts — 子进程安全控制                         │
 │    agent-lifecycle.ts  — Agent 生命周期管理                     │
+│    --- DD-014 新增（与旧模块并存） ---                           │
+│    agent-bridge.ts     — 统一 AgentBridge 接口定义（DD-014）    │
+│    agent-bridge-fallback.ts — AgentBridge 容错包装（Claude→Codex）│
+│    intelligence-gateway.ts — Layer 1 快速预处理层               │
+│    task-guidance-builder.ts — 任务指引生成器                     │
+│    mcp-config-builder.ts — 动态 MCP 配置构建器                  │
+│    index.ts            — barrel export                         │
 │  classifier/           — TaskClassifier（统一分类：规则+LLM→UnifiedClassifyResult）│
 │  memory/               — 记忆系统                              │
 │    config-loader.ts    — 全局 AIEOS 配置加载（config/ 目录）     │
