@@ -2,6 +2,7 @@ import type { Server, ServerWebSocket } from 'bun';
 import { ERROR_CODES } from '../../shared/errors/error-codes';
 import { YourBotError } from '../../shared/errors/yourbot-error';
 import type { BotMessage, BotResponse, ChannelType, StreamEvent } from '../../shared/messaging';
+import type { MediaAttachment } from '../../shared/messaging/media-attachment.types';
 import { generateId } from '../../shared/utils/crypto';
 import type { AuthContext } from '../middleware/middleware.types';
 import { BaseChannel } from './base-channel';
@@ -117,11 +118,27 @@ export class WebChannel extends BaseChannel {
     const data = rawMessage as Record<string, unknown>;
     const contentType = (data.contentType as BotMessage['contentType']) ?? 'text';
     const metadata = (data.metadata as Record<string, unknown>) ?? {};
+    const attachments: MediaAttachment[] = [];
 
     // Support base64 file upload: { contentType: 'file', fileName: '...', fileContent: '<base64>' }
     if (contentType === 'file' && data.fileName) {
       metadata.fileName = data.fileName as string;
       metadata.fileContentBase64 = (data.fileContent as string) ?? '';
+    }
+
+    // Support base64 image upload: { contentType: 'image', fileContent: '<base64>', mimeType: '...' }
+    if (contentType === 'image' && data.fileContent) {
+      attachments.push({
+        id: generateId('media'),
+        mediaType: 'image',
+        state: 'pending',
+        mimeType: (data.mimeType as string) ?? 'image/jpeg',
+        sourceRef: {
+          channel: 'web',
+          base64: data.fileContent as string,
+          fileName: data.fileName as string | undefined,
+        },
+      });
     }
 
     return {
@@ -137,6 +154,7 @@ export class WebChannel extends BaseChannel {
       contentType,
       timestamp: (data.timestamp as number) ?? Date.now(),
       metadata,
+      ...(attachments.length > 0 ? { attachments } : {}),
     };
   }
 

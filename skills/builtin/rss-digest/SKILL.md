@@ -1,69 +1,72 @@
 ---
 name: rss-digest
 description: |
-  每日要闻生成器 — 从 RSS 订阅源、Product Hunt、GitHub Trending、Google News、播客等多渠道抓取数据，经 AI 评分、分类、摘要、翻译后生成结构化全中文每日要闻报告。
+  Daily Briefing Generator — Fetches data from RSS feeds, Product Hunt, GitHub Trending, Google News, podcasts and other sources, then applies AI scoring, categorization, summarization and translation to produce a structured daily briefing report in Chinese.
 
-  当用户提到以下场景时触发此 Skill：
-  - 生成每日要闻、技术日报、RSS 日报、每日资讯
-  - 抓取 RSS 源并生成摘要/报告
-  - 获取技术圈 / 产品圈 / 新闻圈的最新动态
-  - 技术文章自动分类、评分、摘要
-  - "帮我看看今天有什么新闻"
-  - "生成一份每日要闻"
-  - "今天有什么值得关注的"
-  - "技术资讯汇总"
-  - "帮我看看 Product Hunt 上有什么新产品"
-  - "GitHub Trending 今天有什么"
-  即使用户没有明确提到 RSS，只要涉及批量获取资讯、生成摘要报告、趋势分析，都应触发此 Skill。
+  Trigger this Skill when the user mentions any of the following scenarios:
+  - Generate a daily briefing, tech digest, RSS digest, or daily news roundup
+  - Fetch RSS feeds and generate summaries/reports
+  - Get the latest updates from tech / product / news circles
+  - Auto-categorize, score, and summarize tech articles
+  - "What's new today?"
+  - "Generate a daily briefing"
+  - "Anything worth paying attention to today?"
+  - "Tech news roundup"
+  - "What's new on Product Hunt?"
+  - "What's trending on GitHub today?"
+  Even if the user doesn't explicitly mention RSS, this Skill should trigger whenever the request involves batch news gathering, summary report generation, or trend analysis.
 ---
 
-# 每日要闻生成器
+# Daily Briefing Generator
 
-## 架构概述
+## Architecture Overview
 
-本 Skill 采用 **脚本 + Agent 协作** 的分层架构：
+This Skill uses a **Script + Agent collaboration** layered architecture:
 
-- **脚本层**（`scripts/rss-digest.ts`）：RSS 抓取、XML 解析、时间过滤、去重、规则预评分，输出候选文章 JSON
-- **Agent 层**（本文档描述的流程）：web_search / web_fetch 补充抓取、AI 评分、分类、中文摘要、趋势总结
-- **渲染层**（`scripts/render-digest.py`）：纯模板引擎，读取 JSON 数据 → 输出 Markdown 每日要闻
+- **Script layer** (`scripts/rss-digest.ts`): RSS fetching, XML parsing, time filtering, deduplication, rule-based pre-scoring — outputs candidate articles as JSON
+- **Agent layer** (the workflow described in this document): supplementary fetching via web_search / web_fetch, AI scoring, categorization, Chinese summaries, trend analysis
+- **Rendering layer** (`scripts/render-digest.py`): Pure template engine that reads JSON data → outputs Markdown daily briefing
 
-脚本不调用任何 AI API。排版渲染不调用 AI。所有智能处理由 Agent 自身完成。
+Scripts make no AI API calls. Rendering makes no AI calls. All intelligent processing is done by the Agent itself.
 
 ---
 
-## 执行流水线
+## Execution Pipeline
 
-收到用户请求后，按以下步骤顺序执行：
+Upon receiving a user request, execute the following steps in order:
 
-### Step 1: RSS 抓取 + 预过滤
+### Step 1: RSS Fetching + Pre-filtering
 
-运行脚本获取原始文章并通过规则预评分筛选候选文章：
+Run the script to fetch raw articles and filter candidates via rule-based pre-scoring:
 
 ```bash
 SKILL_PATH="<skill-path>"
-# 优先用 bun，fallback 到 npx tsx
+# Prefer bun > npx tsx > node (pre-compiled JS)
 if command -v bun &>/dev/null; then
   RUNNER="bun run"
-elif command -v npx &>/dev/null; then
-  RUNNER="npx tsx"
+  SCRIPT="$SKILL_PATH/scripts/rss-digest.ts"
+elif command -v tsx &>/dev/null; then
+  RUNNER="tsx"
+  SCRIPT="$SKILL_PATH/scripts/rss-digest.ts"
 else
-  echo "❌ 需要 bun 或 Node.js 18+ 环境" && exit 1
+  RUNNER="node"
+  SCRIPT="$SKILL_PATH/scripts/rss-digest.js"
 fi
-$RUNNER "$SKILL_PATH/scripts/rss-digest.ts" --hours <N> --top <M> --output articles.json
+$RUNNER "$SCRIPT" --hours <N> --top 150 --output articles.json
 ```
 
-参数说明：
+Parameters:
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--hours` | 时间窗口（小时） | 48 |
-| `--top` | 预评分后保留的候选文章数 | 80 |
-| `--output` | 输出 JSON 文件路径 | stdout |
-| `--concurrency` | 并发抓取数 | 10 |
-| `--timeout` | 单源超时（ms） | 15000 |
-| `--min-desc-length` | 最短描述长度，过滤纯链接 | 60 |
+| Parameter           | Description                                             | Default |
+| ------------------- | ------------------------------------------------------- | ------- |
+| `--hours`           | Time window (hours)                                     | 24      |
+| `--top`             | Number of candidate articles retained after pre-scoring | 150     |
+| `--output`          | Output JSON file path                                   | stdout  |
+| `--concurrency`     | Concurrent fetch count                                  | 10      |
+| `--timeout`         | Per-source timeout (ms)                                 | 15000   |
+| `--min-desc-length` | Minimum description length, filters link-only posts     | 60      |
 
-脚本输出 JSON 结构：
+Script output JSON structure:
 
 ```json
 {
@@ -80,7 +83,7 @@ $RUNNER "$SKILL_PATH/scripts/rss-digest.ts" --hours <N> --top <M> --output artic
       "title": "Article title",
       "link": "https://...",
       "pubDate": "2026-01-01T10:00:00Z",
-      "pubDateRelative": "2 小时前",
+      "pubDateRelative": "2 hours ago",
       "description": "Plain text excerpt...",
       "source": "simonwillison.net",
       "sourceCategory": "tech_blog",
@@ -90,133 +93,133 @@ $RUNNER "$SKILL_PATH/scripts/rss-digest.ts" --hours <N> --top <M> --output artic
 }
 ```
 
-脚本已按 preScore 降序排列。进度日志走 stderr，JSON 走 stdout 或文件。
+Articles are sorted by preScore in descending order. Progress logs go to stderr; JSON goes to stdout or file.
 
 ---
 
-### Step 2: 抓取 Product Hunt 数据（AI 相关，Top 3–5）
+### Step 2: Fetch Product Hunt Data (AI-related, Top 3–5)
 
-目标：获取今天 Product Hunt 排行榜上 **Top 3–5 的 AI 相关产品**。
+Goal: Get the **Top 3–5 AI-related products** from today's Product Hunt leaderboard.
 
-1. 使用 `web_fetch` 访问 `https://www.producthunt.com/feed`。
-2. 从排行榜中挑选 **Top 3–5 AI 相关产品**（AI 工具、LLM 封装、ML 基础设施、AI Agent、AIGC 等）。如果 AI 相关产品不足 3 个，用排名靠前的非 AI 产品补足，并标注非 AI。
-3. 对每个产品收集：
-   - 产品名称
-   - 一句话标语
-   - 点赞数（如有）
-   - 产品页面链接：`https://www.producthunt.com/posts/{slug}`
-4. 写一句简短点评，说明该产品为何值得关注。
+1. Use `web_fetch` to access `https://www.producthunt.com/feed`.
+2. Select **Top 3–5 AI-related products** from the leaderboard (AI tools, LLM wrappers, ML infrastructure, AI Agents, AIGC, etc.). If fewer than 3 AI-related products are available, supplement with top-ranked non-AI products and label them as non-AI.
+3. For each product, collect:
+   - Product name
+   - One-line tagline
+   - Upvote count (if available)
+   - Product page link: `https://www.producthunt.com/posts/{slug}`
+4. Write a brief commentary explaining why the product is worth noting.
 
-将结果写入 `producthunt.json`：
+Write results to `producthunt.json`:
 
 ```json
 [
   {
-    "name": "产品名称",
-    "tagline": "一句话标语",
+    "name": "Product name",
+    "tagline": "One-line tagline",
     "upvotes": 123,
     "link": "https://www.producthunt.com/posts/xxx",
     "isAI": true,
-    "note": "简短点评"
+    "note": "Brief commentary"
   }
 ]
 ```
 
 ---
 
-### Step 3: 抓取 GitHub Trending 数据（Top 5）
+### Step 3: Fetch GitHub Trending Data (Top 5)
 
-目标：获取 GitHub Trending 每日热门仓库 **Top 5**。
+Goal: Get the **Top 5** daily trending repositories from GitHub Trending.
 
-1. 使用 `web_fetch` 访问 `https://github.com/trending?since=daily`。
-2. 提取 **Top 5** 仓库信息：
-   - 全名（`owner/repo`）
-   - 描述
-   - 主要语言
-   - 总 Star 数
-   - 今日新增 Star 数
-3. 链接：`https://github.com/{owner}/{repo}`
-4. 如果与用户兴趣相关（AI Agent、TypeScript、Python、LangChain、医疗科技等），添加简短相关性说明。
+1. Use `web_fetch` to access `https://github.com/trending?since=daily`.
+2. Extract **Top 5** repository details:
+   - Full name (`owner/repo`)
+   - Description
+   - Primary language
+   - Total star count
+   - Stars gained today
+3. Link: `https://github.com/{owner}/{repo}`
+4. If relevant to user interests (AI Agents, TypeScript, Python, LangChain, health tech, etc.), add a brief relevance note.
 
-将结果写入 `github-trending.json`：
+Write results to `github-trending.json`:
 
 ```json
 [
   {
     "name": "owner/repo",
-    "description": "仓库描述",
+    "description": "Repository description",
     "language": "Python",
     "stars": 12345,
     "starsToday": 234,
     "link": "https://github.com/owner/repo",
-    "note": "相关性说明（可选）"
+    "note": "Relevance note (optional)"
   }
 ]
 ```
 
 ---
 
-### Step 4: 抓取新闻与播客
+### Step 4: Fetch News & Podcasts
 
-这是最具编辑性的步骤，从多个来源收集新闻，然后严格策展。
+This is the most editorial step — collect news from multiple sources, then curate strictly.
 
-#### 4a: Google News — 重大突发新闻
+#### 4a: Google News — Major Breaking News
 
-1. 使用 `web_fetch` 访问 `https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans`。
-2. 扫描**国内外重大事件**——地缘政治变动、重大政策变化、自然灾害、重大经济事件、里程碑式科技监管等。
-3. 只收录真正重大的新闻，跳过日常政治报道和软新闻。
+1. Use `web_fetch` to access `https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans`.
+2. Scan for **major domestic and international events** — geopolitical shifts, major policy changes, natural disasters, significant economic events, landmark tech regulation, etc.
+3. Only include truly significant news; skip routine political coverage and soft news.
 
-#### 4b: 阿里巴巴 & 字节跳动企业动态
+#### 4b: Alibaba & ByteDance Corporate Updates
 
-1. 使用 `web_search` 搜索 `阿里巴巴 新闻 today {YYYY-MM-DD}` 或类似时效性查询。
-2. 使用 `web_search` 搜索 `字节跳动 新闻 today {YYYY-MM-DD}` 或类似时效性查询。
-3. 关注：财报、重大产品发布、人事变动、监管行动、收购、裁员、影响股价的事件。
-4. 如无实质性新闻，完全跳过此子章节——不要凑数。
+1. Use `web_search` to search for `Alibaba news today {YYYY-MM-DD}` or similar time-sensitive queries.
+2. Use `web_search` to search for `ByteDance news today {YYYY-MM-DD}` or similar time-sensitive queries.
+3. Focus on: earnings reports, major product launches, executive changes, regulatory actions, acquisitions, layoffs, stock-moving events.
+4. If there is no substantive news, skip this subsection entirely — do not pad with filler.
 
-#### 4c: AI 与健康新闻
+#### 4c: AI & Health News
 
-1. 使用 `web_search` 搜索 `AI coding news today` 和 `AI healthcare latest`（英文）。
-2. 关注：FDA 批准的 AI 医疗设备、重大研究突破（如临床数据基础模型）、数字健康 AI 领域的重大融资、监管动态。
+1. Use `web_search` to search for `AI coding news today` and `AI healthcare latest`.
+2. Focus on: FDA-approved AI medical devices, major research breakthroughs (e.g., clinical data foundation models), significant funding in digital health AI, regulatory developments.
 
-#### 4d: 策展规则（必须遵守）
+#### 4d: Curation Rules (Must Follow)
 
-在定稿新闻列表前，严格执行以下过滤：
+Before finalizing the news list, strictly apply these filters:
 
-- **时效性**：事件必须发生在今天或即将发生。不要收录昨天或更早的新闻，除非是隔夜爆发且仍在发展中的。
-- **重要性**：用户是否值得被打断来了解这件事？如果不是，跳过。
-- **去重**：对照用户近期的要闻产出（使用 `conversation_search` 搜索关键词"要闻"查找近期报告）。不要收录近期要闻中已出现的新闻。如不确定，可收录但标注为发展中的。
-- **结果**：各子类别合计 **3–8 条新闻**。宁少勿凑。
+- **Timeliness**: Events must have occurred today or be imminent. Do not include yesterday's or older news, unless it broke overnight and is still developing.
+- **Significance**: Would the user want to be interrupted to learn about this? If not, skip it.
+- **Deduplication**: Cross-check against the user's recent briefing output (use `conversation_search` to search for the keyword "briefing" to find recent reports). Do not include news already covered in recent briefings. If uncertain, include it but mark as developing.
+- **Result**: Across all subcategories, aim for **3–8 news items** total. Less is better than padding.
 
-#### 4e: 抓取播客更新
+#### 4e: Fetch Podcast Updates
 
-1. 使用 `web_fetch` 访问以下播客页面，检查是否有更新：
-   - [硅谷101](https://www.xiaoyuzhoufm.com/podcast/5e5c52c9418a84a04625e6cc)
-   - [罗永浩的十字路口](https://www.xiaoyuzhoufm.com/podcast/68981df29e7bcd326eb91d88)
-   - [十字路口 Crossing](https://www.xiaoyuzhoufm.com/podcast/60502e253c92d4f62c2a9577)
-   - [晚点聊](https://www.xiaoyuzhoufm.com/podcast/61933ace1b4320461e91fd55)
-   - [elsewhere别处发生](https://www.xiaoyuzhoufm.com/podcast/68ff657d9c745a6e69da8fcf)
+1. Use `web_fetch` to visit the following podcast pages and check for updates:
+   - [Silicon Valley 101](https://www.xiaoyuzhoufm.com/podcast/5e5c52c9418a84a04625e6cc)
+   - [Luo Yonghao's Crossroads](https://www.xiaoyuzhoufm.com/podcast/68981df29e7bcd326eb91d88)
+   - [Crossing](https://www.xiaoyuzhoufm.com/podcast/60502e253c92d4f62c2a9577)
+   - [LatePost Chat](https://www.xiaoyuzhoufm.com/podcast/61933ace1b4320461e91fd55)
+   - [elsewhere](https://www.xiaoyuzhoufm.com/podcast/68ff657d9c745a6e69da8fcf)
 
-2. 只收录最近 48 小时内更新的播客。
+2. Only include podcasts updated within the last 48 hours.
 
-将新闻和播客结果写入 `news.json`：
+Write news and podcast results to `news.json`:
 
 ```json
 {
   "news": [
     {
-      "title": "新闻标题",
+      "title": "News headline",
       "link": "https://...",
-      "source": "来源",
+      "source": "Source name",
       "category": "breaking / corporate / ai_health",
-      "summary": "一句话摘要"
+      "summary": "One-sentence summary"
     }
   ],
   "podcasts": [
     {
-      "name": "播客名称",
-      "episode": "最新一期标题",
+      "name": "Podcast name",
+      "episode": "Latest episode title",
       "link": "https://...",
-      "summary": "简短描述"
+      "summary": "Brief description"
     }
   ]
 }
@@ -224,116 +227,130 @@ $RUNNER "$SKILL_PATH/scripts/rss-digest.ts" --hours <N> --top <M> --output artic
 
 ---
 
-### Step 5: AI 评分 + 分类 + 摘要（两阶段合并）
+### Step 5: AI Scoring + Categorization + Summarization (Two-phase Merge)
 
-读取 articles.json，结合 Step 2–4 的数据，执行两阶段处理。**所有文本输出使用中文。**
+Read articles.json, combine with data from Steps 2–4, and execute two-phase processing.
 
-#### 阶段 A — 全量评分
+**Language rule: ALL generated text must be in Chinese.** This includes chineseTitle, summary, recommendation, keywords, trend highlights, and every piece of user-facing text. English source material must be translated. There should be zero English sentences in the final output (proper nouns, brand names, and technical terms like "LLM", "GPT-4" are acceptable in English).
 
-对所有候选文章（通常 ≤80 篇）进行评分和分类。每批处理 **20 篇**。
+#### Phase A — Full Scoring
 
-对每篇文章从三个维度打分（1-10）：
+Score and categorize all candidate articles (typically ≤80). Process in batches of **20 articles**.
 
-| 维度 | 说明 |
-|------|------|
-| relevance | 对技术从业者和关注时事的专业人士的相关度 |
-| quality | 内容深度、洞察力、技术含量（纯链接/转发/碎片信息给低分） |
-| timeliness | 话题的新闻性和及时性 |
+Score each article on three dimensions (1–10):
 
-同时将每篇文章归入以下分类之一：
+| Dimension  | Description                                                                              |
+| ---------- | ---------------------------------------------------------------------------------------- |
+| relevance  | Relevance to tech practitioners and news-aware professionals                             |
+| quality    | Content depth, insight, technical substance (low scores for link-only/reposts/fragments) |
+| timeliness | Newsworthiness and recency of the topic                                                  |
 
-| 分类 | 覆盖范围 |
-|------|----------|
-| AI / ML | AI、机器学习、LLM、深度学习 |
-| Engineering | 软件工程、架构、编程语言、系统设计 |
-| Tools | 开发工具、新发布的库/框架 |
-| Security | 安全、隐私、漏洞、加密 |
-| Open Source | 开源项目、开源趋势 |
-| Product | 产品发布、产品评测、用户体验 |
-| News | 时事新闻、行业动态、企业新闻、财经 |
-| Other | 不属于以上分类的内容 |
+Also assign each article to one of these categories. **Read the article's actual content, not just keywords in the title.** A title mentioning "算力" or "AI" does not automatically make it AI/ML — the article might be about policy, business, or infrastructure.
 
-为每篇文章提取 **2-4 个中文关键词**。
+| Category    | Belongs here                                                                   | Does NOT belong here (common mistakes)                                    |
+| ----------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| AI / ML     | Technical AI research, model training, LLM capabilities, ML frameworks         | Government AI policy → News; AI company funding → News; smart city → News |
+| Engineering | Software architecture, programming techniques, system design, coding practices | Hardware manufacturing → Product/News; 3D printing → Product/News         |
+| Tools       | Developer tools, newly released libraries/frameworks, IDE plugins              | Non-developer products → Product                                          |
+| Security    | Vulnerabilities, CVEs, privacy techniques, cryptography                        | Data privacy regulations → News                                           |
+| Open Source | Open source projects, community trends, license changes                        | A company open-sourcing a product → Product                               |
+| Product     | Product launches, hardware, consumer tech, reviews, UX                         | —                                                                         |
+| News        | Government policy, funding/financing, corporate moves, regulations, geopolitics, industry trends | —                                                  |
+| Other       | Content that doesn't fit the above categories                                  | —                                                                         |
 
-#### 阶段 B — Top N 摘要
+**Classification decision tree** (apply in order):
+1. Is this about government policy, regulation, corporate financing, or geopolitical events? → **News**
+2. Is this about a tangible product launch, hardware, or consumer tech? → **Product**
+3. Is this a technical deep-dive into AI/ML algorithms, models, or training? → **AI / ML**
+4. Is this about software engineering practices, architecture, or coding? → **Engineering**
+5. Is this a developer tool or framework release? → **Tools**
+6. Is this about security vulnerabilities or cryptography? → **Security**
+7. Is this about open source communities or projects? → **Open Source**
+8. None of the above → **Other**
 
-阶段 A 完成后，按 `totalScore = relevance + quality + timeliness` 降序排列，取 **Top N**（默认 15，用户可指定）生成：
+Extract **2–4 Chinese keywords** for each article.
 
-- **chineseTitle**：中文标题（自然流畅，非逐字翻译；中文原标题直接使用）
-- **summary**：**中文**结构化摘要（4-6 句），覆盖：核心问题 → 关键论点/发现 → 结论/影响
-- **recommendation**：1-2 句**中文**推荐理由
+Generate **`chineseTitle`** (Chinese title) for every article — not just the Top N. For originally Chinese articles, use the original title directly. For English articles, translate naturally (not word-for-word). This ensures the final briefing is fully Chinese regardless of which articles pass the score threshold.
 
-#### 输出格式（严格约束）
+#### Phase B — Top N Summarization
 
-阶段 A + B 的结果合并写入 **一个** JSON 文件 `scored.json`。
+After Phase A, sort by `totalScore = relevance + quality + timeliness` in descending order, take the **Top N** (default 15, user-configurable) and generate additional fields:
 
-格式为**扁平数组**，禁止嵌套包裹。每个元素结构如下：
+- **summary**: Chinese structured summary (4–6 sentences) covering: core issue → key arguments/findings → conclusion/impact. **Must be in Chinese even if the source is English.**
+- **recommendation**: 1–2 sentence Chinese recommendation explaining why it's worth reading. **Must be in Chinese.**
+
+#### Output Format (Strict Constraints)
+
+Merge Phase A + B results into **one** JSON file `scored.json`.
+
+Format as a **flat array** — no nested wrappers. Each element structure:
 
 ```json
 [
   {
-    "title": "原标题",
+    "title": "Original title",
     "link": "https://...",
     "source": "simonwillison.net",
     "pubDate": "2026-01-01T10:00:00Z",
-    "pubDateRelative": "2 小时前",
-    "description": "原始描述",
+    "pubDateRelative": "2 hours ago",
+    "description": "Original description",
     "relevance": 8,
     "quality": 7,
     "timeliness": 9,
     "totalScore": 24,
     "category": "AI / ML",
     "keywords": ["AI Agent", "调试框架"],
-    "chineseTitle": "微软推出 AgentRx：AI Agent 系统化调试框架",
-    "summary": "微软研究院发布了 AgentRx 框架...",
-    "recommendation": "对于正在构建 AI Agent 的团队..."
+    "chineseTitle": "微软发布 AgentRx：AI Agent 系统性调试框架",
+    "summary": "微软研究院发布了 AgentRx 框架……（仅 Top N 有此字段）",
+    "recommendation": "对于构建 AI Agent 的团队……（仅 Top N 有此字段）"
   }
 ]
 ```
 
-**格式硬约束（违反视为 Bug）**：
-1. 顶层必须是 JSON 数组 `[...]`，禁止 `{"articles": [...]}`、`{"batch": ...}` 等包裹
-2. 评分字段 `relevance`、`quality`、`timeliness`、`totalScore` 直接平铺，禁止嵌套为 `scores` 或 `score` 对象
-3. `totalScore` 必须等于 `relevance + quality + timeliness`
-4. Top N 之外的文章没有 `chineseTitle`、`summary`、`recommendation` 字段
-5. `keywords` 为中文关键词数组
-6. 所有文章按 `totalScore` 降序排列
+**Format Hard Constraints (Violations Are Bugs)**:
 
-**处理流程**：
+1. Top level must be a JSON array `[...]` — `{"articles": [...]}`, `{"batch": ...}` and other wrappers are forbidden
+2. Scoring fields `relevance`, `quality`, `timeliness`, `totalScore` must be flat — nesting into a `scores` or `score` object is forbidden
+3. `totalScore` must equal `relevance + quality + timeliness`
+4. **Every article must have a `chineseTitle` field** (Chinese title). Articles outside the Top N must not have `summary` or `recommendation` fields.
+5. `keywords` is an array of Chinese keywords
+6. All articles sorted by `totalScore` in descending order
 
-1. 读取 articles.json 中的 articles 数组
-2. 分批（每批 20 篇）评分，将每批结果追加到内存数组中
-3. 全部评完后排序，对 Top N 在同一次处理中生成摘要
-4. 将完整数组一次性写入 `scored.json`
+**Processing Flow**:
+
+1. Read the articles array from articles.json
+2. Score in batches (20 articles per batch), generating scores + category + keywords + `chineseTitle` for every article
+3. After all scoring is complete, sort and generate `summary` + `recommendation` for Top N only in a single pass
+4. Write the complete array to `scored.json` in one operation
 
 ---
 
-### Step 6: 趋势总结
+### Step 6: Trend Summary
 
-基于 scored.json 中的 Top N 文章，结合 Step 2–4 的数据，用**中文**归纳：
+Based on the Top N articles in scored.json, combined with data from Steps 2–4, summarize in **Chinese**:
 
 ```json
 {
-  "highlights": "3-5 句话的宏观趋势总结段落",
+  "highlights": "A paragraph of 3-5 sentences summarizing macro trends",
   "trends": [
     {
-      "title": "趋势标题",
-      "description": "趋势简要描述"
+      "title": "Trend title",
+      "description": "Brief trend description"
     }
   ]
 }
 ```
 
-- `highlights`：用一段话总结今天的宏观动向（渲染为每日要闻开头的导语）
-- `trends`：2-4 个具体趋势，每个包含标题和描述
+- `highlights`: A concise paragraph (2–3 sentences) summarizing today's macro picture. This is rendered as a blockquote lead-in, so keep it punchy and informative.
+- `trends`: 2–4 specific trends, each with a short title and a 1-sentence description. These are rendered as a bold-title bullet list below the highlights.
 
-将结果写入 `trends.json`。
+Write results to `trends.json`.
 
 ---
 
-### Step 7: 排版渲染
+### Step 7: Rendering
 
-使用 Python 脚本将数据组装为 Markdown 每日要闻：
+Use the Python script to assemble data into a Markdown daily briefing:
 
 ```bash
 python3 "$SKILL_PATH/scripts/render-digest.py" \
@@ -344,161 +361,167 @@ python3 "$SKILL_PATH/scripts/render-digest.py" \
   --github github-trending.json \
   --news news.json \
   --output "daily-briefing-$(date +%Y-%m-%d).md" \
-  --min-score 15
+  --min-score 12
 ```
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--articles` | Step 1 的原始抓取数据 | 必填 |
-| `--scored` | Step 5 的评分结果 | 必填 |
-| `--trends` | Step 6 的趋势总结 | 必填 |
-| `--producthunt` | Step 2 的 Product Hunt 数据 | 必填 |
-| `--github` | Step 3 的 GitHub Trending 数据 | 必填 |
-| `--news` | Step 4 的新闻与播客数据 | 必填 |
-| `--output` | 输出 Markdown 文件路径 | 必填 |
-| `--min-score` | 分类列表最低显示分数 | 15 |
-| `--top-n` | 今日必读篇数 | 5 |
+| Parameter       | Description                             | Default  |
+| --------------- | --------------------------------------- | -------- |
+| `--articles`    | Raw fetch data from Step 1              | Required |
+| `--scored`      | Scoring results from Step 5             | Required |
+| `--trends`      | Trend summary from Step 6               | Required |
+| `--producthunt` | Product Hunt data from Step 2           | Required |
+| `--github`      | GitHub Trending data from Step 3        | Required |
+| `--news`        | News and podcast data from Step 4       | Required |
+| `--output`      | Output Markdown file path               | Required |
+| `--min-score`   | Minimum score for category list display | 12       |
+| `--top-n`       | Number of must-read articles            | 5        |
 
-脚本自动生成以下板块：
+The script automatically generates these sections:
 
-| 板块 | 内容 |
-|------|------|
-| 今日必读 | Top N 深度展示（中文标题超链接 + 1-2 句点评） |
-| 技术 | 按子分类分组：AI/ML、Engineering、Tools、Security、Open Source |
-| 产品速递 | Product Hunt AI 产品 + GitHub Trending 仓库 + RSS 中 Product 分类文章 |
-| 新闻资讯 | 重大新闻、企业动态、AI 健康新闻 + RSS 中 News 分类文章 |
-| 播客更新 | 最近更新的播客（如有） |
-| 其他 | 有价值但不属于以上分类的内容（无则省略） |
+| Section         | Content                                                                          |
+| --------------- | -------------------------------------------------------------------------------- |
+| Must Read       | Top N in-depth showcase (Chinese title hyperlink + 1–2 sentence commentary)      |
+| Tech            | Grouped by subcategory: AI/ML, Engineering, Tools, Security, Open Source         |
+| Product Express | Product Hunt AI products + GitHub Trending repos + RSS Product-category articles |
+| News            | Breaking news, corporate updates, AI health news + RSS News-category articles    |
+| Podcast Updates | Recently updated podcasts (if any)                                               |
+| Other           | Valuable content that doesn't fit above categories (omitted if none)             |
 
 ---
 
-## 输出格式规范
+## Output Format Specification
 
-### Markdown 模板
+### Markdown Template
 
 ```markdown
 # 每日要闻 | {YYYY-MM-DD}
 
-（趋势导语，如有）
+> （趋势导语：2–3 句话概括今日全局）
+
+**今日趋势**
+
+- **趋势标题** — 一句话描述
+- **趋势标题** — 一句话描述
 
 ## 今日必读
 
-- [中文标题](链接) — 1-2 句点评。
+- [Chinese title](link) — 1–2 sentence commentary.
 
-## 技术
+## Tech
 
-### AI、机器学习、LLM、深度学习
+### AI, Machine Learning, LLM, Deep Learning
 
-- [中文标题](链接) — 1-2 句点评。
+- [Chinese title](link) — 1–2 sentence commentary.
 
-### 软件工程、架构、编程语言、系统设计
+### Software Engineering, Architecture, Programming Languages, System Design
 
-- [中文标题](链接) — 1-2 句点评。
+- [Chinese title](link) — 1–2 sentence commentary.
 
-### 开发工具
+### Developer Tools
 
-- [中文标题](链接) — 1-2 句点评。
+- [Chinese title](link) — 1–2 sentence commentary.
 
-### 安全、隐私、漏洞、加密
+### Security, Privacy, Vulnerabilities, Cryptography
 
-- [中文标题](链接) — 1-2 句点评。
+- [Chinese title](link) — 1–2 sentence commentary.
 
-### 开源趋势
+### Open Source Trends
 
-- [中文标题](链接) — 1-2 句点评。
+- [Chinese title](link) — 1–2 sentence commentary.
 
-## 产品速递
+## Product Express
 
-- [产品名](链接) — 标语。点评。
+- [Product name](link) — Tagline. Commentary.
 
-## 新闻资讯
+## News
 
-- [新闻标题](链接) — 1-2 句摘要。
+- [News headline](link) — 1–2 sentence summary.
 
-## 播客更新
+## Podcast Updates
 
-- [播客名 — 最新一期标题](链接) — 简短描述。
+- [Podcast name — Latest episode title](link) — Brief description.
 
-## 其他
+## Other
 
-- [标题](链接) — 1-2 句点评。
+- [Title](link) — 1–2 sentence commentary.
 ```
 
-### 格式规则
+### Formatting Rules
 
-- **标题层级**：一级模块用 `#`，二级模块用 `##`，三级用 `###`，条目使用列表。适配飞书 / Word 导出。
-- **链接**：每个产品、仓库、新闻标题本身必须是可点击链接。绝不将 URL 放在脚注或"来源"块中。
-- **简洁性**：每条点评最多 1–2 句话。
-- **无凑数内容**：若某章节无值得关注内容，使用"今天暂无重大更新"等一句话说明，而非填充。
-- **中文标点**：所有中文叙述使用全角标点（，。：！？、）。
-- **不使用引用或代码标签**：要闻为简报而非研究报告，来源通过标题超链接体现。
-
----
-
-## 输出与交付
-
-每日要闻生成后：
-
-1. 将完整 Markdown 内容保存为文件 `daily-briefing-{YYYY-MM-DD}.md`
-2. 将文件上传供用户下载
-3. 向用户展示 **"今日必读"** 部分作为预览
-4. 如果用户要求上传飞书，使用 upload_to_feishu_tool 工具上传
+- **Heading levels**: Top-level modules use `#`, second-level use `##`, third-level use `###`, items use lists. Compatible with Feishu / Word export.
+- **Links**: Every product, repository, and news headline must be a clickable link. Never put URLs in footnotes or "source" blocks.
+- **Conciseness**: Each commentary is at most 1–2 sentences.
+- **No filler content**: If a section has nothing noteworthy, use a single sentence like "No major updates today" rather than padding.
+- **Chinese punctuation**: All Chinese prose uses full-width punctuation (，。：！？、).
+- **No code blocks in the briefing body**: The briefing is a digest, not a research report — sources are conveyed through title hyperlinks.
+- **No raw HTML**: If any description or summary contains HTML tags or CSS fragments, it's a bug. All content must be pure plain text or Markdown.
 
 ---
 
-## 数据源
+## Output & Delivery
 
-### RSS 源
+After the daily briefing is generated:
 
-280+ 个 RSS 源，涵盖：
-
-- **HN Popularity Contest Top 100**：Hacker News 最受欢迎个人博客
-- **AI 资讯聚合**：CloudFlare AI Insight Daily、smol.ai News
-- **GitHub Trending**：每日热门开源项目
-- **中文技术博客**：量子位、爱范儿、阮一峰、美团技术等
-- **中文 Twitter 博主**：15 位活跃技术博主
-- **AI 公司官方**：OpenAI、Anthropic、Google、Meta、NVIDIA、Cursor 等
-- **华人 AI 研究者**：李飞飞、吴恩达、Jerry Liu 等
-- **微信公众号**：机器之心、新智元、36氪等 53 个公众号
-- **财经资讯**：CNBC、MarketWatch、纳斯达克、S&P Global、Seeking Alpha 等
-- **科技媒体**：Ars Technica、Wired、TechCrunch、The Verge、少数派、虎嗅、36氪等
-- **时事新闻**：BBC、路透社、中国新闻网等
-
-### web_fetch 数据源
-
-- Product Hunt 每日排行榜
-- GitHub Trending 每日热门仓库
-- Google News 中文版
-- 小宇宙播客平台（硅谷101、晚点聊等）
-
-### web_search 数据源
-
-- 阿里巴巴 / 字节跳动企业动态
-- AI coding / AI healthcare 最新新闻
-
-完整 RSS 源列表见 `scripts/rss-digest.ts` 中的 `RSS_FEEDS` 数组。
+1. Save the complete Markdown content as `daily-briefing-{YYYY-MM-DD}.md`
+2. Upload the file for user download
+3. Show the user the **"Must Read"** section as a preview
+4. If the user requests Feishu upload, use the upload_to_feishu_tool to upload
 
 ---
 
-## 用户可调参数
+## Data Sources
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| 时间窗口 | 只看最近 N 小时的文章 | 48 小时 |
-| Top N | 生成详细摘要的文章数 | 15 |
-| 候选池 | 预评分保留的候选文章数 | 80 |
-| 最低展示分 | 分类列表最低显示分数 | 15/30 |
-| 输出格式 | Markdown / 飞书文档 | Markdown |
-| 关注领域 | 侧重某些分类的评分权重 | 无偏好（均衡） |
+### RSS Feeds
+
+280+ RSS feeds covering:
+
+- **HN Popularity Contest Top 100**: Hacker News most popular personal blogs
+- **AI News Aggregators**: CloudFlare AI Insight Daily, smol.ai News
+- **GitHub Trending**: Daily trending open source projects
+- **Chinese Tech Blogs**: Quantumbit, ifanr, Ruan Yifeng, Meituan Tech, etc.
+- **Chinese Twitter Bloggers**: 15 active tech bloggers
+- **AI Company Official**: OpenAI, Anthropic, Google, Meta, NVIDIA, Cursor, etc.
+- **Chinese AI Researchers**: Fei-Fei Li, Andrew Ng, Jerry Liu, etc.
+- **WeChat Official Accounts**: Jiqizhixin, Xinzhiyuan, 36Kr, etc. (53 accounts)
+- **Finance News**: CNBC, MarketWatch, Nasdaq, S&P Global, Seeking Alpha, etc.
+- **Tech Media**: Ars Technica, Wired, TechCrunch, The Verge, SSPAI, Huxiu, 36Kr, etc.
+- **Current Affairs**: BBC, Reuters, China News Service, etc.
+
+### web_fetch Sources
+
+- Product Hunt daily leaderboard
+- GitHub Trending daily popular repositories
+- Google News Chinese edition
+- Xiaoyuzhou podcast platform (Silicon Valley 101, LatePost Chat, etc.)
+
+### web_search Sources
+
+- Alibaba / ByteDance corporate updates
+- AI coding / AI healthcare latest news
+
+The complete RSS feed list is in the `RSS_FEEDS` array in `scripts/rss-digest.ts`.
 
 ---
 
-## 注意事项
+## User-configurable Parameters
 
-- 脚本兼容 Bun 和 Node.js 18+（通过 npx tsx），优先使用 Bun
-- 脚本的进度日志走 stderr，不会污染 JSON 数据输出
-- 文章不足 5 篇时脚本会自动扩大时间窗口
-- `--min-desc-length` 过滤纯链接推文，提高信噪比
-- 排版脚本为纯 Python（零依赖），不需要 AI 调用
-- **所有面向用户的文本输出为中文**（摘要、标题翻译、推荐理由、趋势总结、关键词）
-- Step 2–4 依赖 `web_fetch` 和 `web_search` 工具，如工具不可用则跳过对应步骤，渲染脚本会自动处理缺失数据
+| Parameter             | Description                                             | Default                  |
+| --------------------- | ------------------------------------------------------- | ------------------------ |
+| Time window           | Only look at articles from the last N hours             | 48 hours                 |
+| Top N                 | Number of articles to generate detailed summaries for   | 15                       |
+| Candidate pool        | Number of candidate articles retained after pre-scoring | 150                      |
+| Minimum display score | Minimum score for category list display                 | 12                       |
+| Output format         | Markdown / Feishu document                              | Markdown                 |
+| Focus areas           | Scoring weight bias toward certain categories           | No preference (balanced) |
+
+---
+
+## Notes
+
+- Script is compatible with Bun, tsx, and plain Node.js 18+ (via pre-compiled `rss-digest.js`); Bun is preferred
+- Script progress logs go to stderr and do not pollute JSON data output
+- When fewer than 5 articles are found, the script automatically expands the time window
+- `--min-desc-length` filters link-only tweets, improving signal-to-noise ratio
+- The rendering script is pure Python (zero dependencies) and requires no AI calls
+- **All user-facing text output is in Chinese** (summaries, title translations, recommendations, trend summaries, keywords)
+- Steps 2–4 depend on `web_fetch` and `web_search` tools; if these tools are unavailable, skip the corresponding steps — the rendering script automatically handles missing data

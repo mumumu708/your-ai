@@ -195,5 +195,37 @@ describe('WebChannel', () => {
     expect(msg.channel).toBe('web');
     expect(msg.userId).toBe('u1');
     expect(msg.content).toBe('test');
+    expect(msg.attachments).toBeUndefined();
+  });
+
+  test('transformToStandardMessage creates attachment for image', async () => {
+    const msg = await channel.transformToStandardMessage({
+      userId: 'u1',
+      contentType: 'image',
+      fileContent: 'base64data',
+      mimeType: 'image/png',
+      fileName: 'photo.png',
+    });
+    expect(msg.contentType).toBe('image');
+    expect(msg.attachments).toBeDefined();
+    expect(msg.attachments).toHaveLength(1);
+    const att = msg.attachments?.[0] as NonNullable<typeof msg.attachments>[0];
+    expect(att.mediaType).toBe('image');
+    expect(att.state).toBe('pending');
+    expect(att.mimeType).toBe('image/png');
+    expect(att.sourceRef).toEqual({
+      channel: 'web',
+      base64: 'base64data',
+      fileName: 'photo.png',
+    });
+  });
+
+  test('transformToStandardMessage no attachment when image without fileContent', async () => {
+    const msg = await channel.transformToStandardMessage({
+      userId: 'u1',
+      contentType: 'image',
+    });
+    expect(msg.contentType).toBe('image');
+    expect(msg.attachments).toBeUndefined();
   });
 });

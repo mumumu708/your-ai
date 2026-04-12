@@ -5,6 +5,7 @@ import { YourBotError } from '../shared/errors/yourbot-error';
 import { Logger } from '../shared/logging/logger';
 import type { BotMessage } from '../shared/messaging/bot-message.types';
 import type { IChannel } from '../shared/messaging/channel-adapter.types';
+import type { MediaRef } from '../shared/messaging/media-attachment.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import type { TaskResult } from '../shared/tasking/task-result.types';
 import type { Session, Task, TaskType } from '../shared/tasking/task.types';
@@ -20,6 +21,9 @@ import { KnowledgeRouter } from './evolution/knowledge-router';
 import { PostResponseAnalyzer } from './evolution/post-response-analyzer';
 import { TokenBudgetAllocator } from './evolution/token-budget-allocator';
 import { FileUploadHandler } from './files/file-upload-handler';
+import { MediaDownloader } from './media/media-downloader';
+import { MediaProcessor } from './media/media-processor';
+import { MediaUnderstanding } from './media/media-understanding';
 import { ConfigLoader } from './memory/config-loader';
 import { ContextManager } from './memory/context-manager';
 import { EntityManager } from './memory/graph/entity-manager';
@@ -66,6 +70,7 @@ export interface CentralControllerDeps {
   knowledgeRouter?: KnowledgeRouter;
   postResponseAnalyzer?: PostResponseAnalyzer;
   workspaceManager?: WorkspaceManager;
+  mediaProcessor?: MediaProcessor;
   channelResolver?: (channelType: string) => IChannel | undefined;
   sessionSerializer?: SessionSerializer;
   harnessMutex?: HarnessMutex;
@@ -103,6 +108,7 @@ export class CentralController {
   private readonly worktreePool: WorktreePool;
   private readonly classifier: TaskClassifier;
   private readonly fileUploadHandler: FileUploadHandler;
+  private readonly mediaProcessor: MediaProcessor;
   private channelResolver?: (channelType: string) => IChannel | undefined;
 
   private constructor(deps?: CentralControllerDeps) {
@@ -180,6 +186,14 @@ export class CentralController {
     // FileUploadHandler — handles USER.md uploads
     this.fileUploadHandler = new FileUploadHandler();
     this.channelResolver = deps?.channelResolver;
+
+    // MediaProcessor — handles image/media attachments
+    this.mediaProcessor =
+      deps?.mediaProcessor ??
+      new MediaProcessor({
+        downloader: new MediaDownloader({ channelResolver: deps?.channelResolver }),
+        understanding: new MediaUnderstanding({ lightLLM: deps?.lightLLM ?? null }),
+      });
 
     // Wire session close to worktree release + OpenViking commit + evolution scheduling
     this.sessionManager.setOnSessionClose(async (_summary, sessionId, session) => {
@@ -585,16 +599,41 @@ export class CentralController {
 
     const sessionKey = `${task.message.userId}:${task.message.channel}:${task.message.conversationId}`;
 
+    // --- Media processing ---
+    let mediaRefs: MediaRef[] | undefined;
+    if (task.message.attachments?.length) {
+      try {
+        const processed = await this.mediaProcessor.processAttachments(task.message.attachments, {
+          runUnderstanding: true,
+        });
+        mediaRefs = processed
+          .filter((a) => a.state === 'processed' || a.state === 'downloaded')
+          .map((a) => this.mediaProcessor.toMediaRef(a));
+      } catch (error) {
+        this.logger.warn('媒体处理失败，继续纯文本处理', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Append descriptions to text content (for session storage and Claude CLI path)
+    let sessionContent = task.message.content;
+    if (mediaRefs?.length) {
+      const descriptions = mediaRefs.map((r) => `[图片: ${r.description}]`).join('\n');
+      sessionContent = sessionContent ? `${sessionContent}\n${descriptions}` : descriptions;
+    }
+
     // Add user message to session history
     this.sessionManager.addMessage(sessionKey, {
       role: 'user',
-      content: task.message.content,
+      content: sessionContent,
       timestamp: task.message.timestamp,
+      mediaRefs,
     });
 
     // Also sync to OpenViking session
     try {
-      await this.ovClient.addMessage(task.session.id, 'user', task.message.content);
+      await this.ovClient.addMessage(task.session.id, 'user', sessionContent);
     } catch {
       // Non-critical, continue
     }
@@ -662,6 +701,13 @@ export class CentralController {
 
     if (streamResultPromise) {
       await streamResultPromise;
+    }
+
+    // Clear base64 data from mediaRefs to prevent memory bloat in session history
+    if (mediaRefs?.length) {
+      for (const ref of mediaRefs) {
+        ref.base64Data = undefined;
+      }
     }
 
     if (result.toolsUsed && result.toolsUsed.length > 0) {

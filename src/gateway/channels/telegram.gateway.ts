@@ -2,6 +2,7 @@ import { Telegraf } from 'telegraf';
 import { ERROR_CODES } from '../../shared/errors/error-codes';
 import { YourBotError } from '../../shared/errors/yourbot-error';
 import type { BotMessage, BotResponse, ChannelType, StreamEvent } from '../../shared/messaging';
+import type { MediaAttachment } from '../../shared/messaging/media-attachment.types';
 import { generateId } from '../../shared/utils/crypto';
 import { BaseChannel } from './base-channel';
 
@@ -142,8 +143,25 @@ export class TelegramChannel extends BaseChannel {
     }
 
     let contentType: BotMessage['contentType'] = 'text';
-    if (msg.photo) contentType = 'image';
-    else if (msg.document || msg.audio || msg.voice || msg.video) contentType = 'file';
+    const attachments: MediaAttachment[] = [];
+
+    if (msg.photo) {
+      contentType = 'image';
+      const photos = msg.photo as Array<Record<string, unknown>>;
+      const largest = photos[photos.length - 1] as Record<string, unknown>;
+      attachments.push({
+        id: generateId('media'),
+        mediaType: 'image',
+        state: 'pending',
+        sourceRef: {
+          channel: 'telegram',
+          fileId: largest.file_id as string,
+          fileUniqueId: largest.file_unique_id as string | undefined,
+        },
+      });
+    } else if (msg.document || msg.audio || msg.voice || msg.video) {
+      contentType = 'file';
+    }
 
     return {
       id: `tg_${messageId}`,
@@ -158,6 +176,24 @@ export class TelegramChannel extends BaseChannel {
         chatType: chat?.type ?? 'private',
         telegramMessageId: msg.message_id,
       },
+      ...(attachments.length > 0 ? { attachments } : {}),
     };
+  }
+
+  async getFileBuffer(fileId: string): Promise<Buffer> {
+    try {
+      const fileLink = await this.bot.telegram.getFileLink(fileId);
+      const response = await fetch(fileLink.href);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      this.logger.error('Telegram 文件下载失败', { fileId, error: String(error) });
+      throw new YourBotError(ERROR_CODES.INVALID_CHANNEL, 'Telegram 文件下载失败', {
+        fileId,
+        originalError: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

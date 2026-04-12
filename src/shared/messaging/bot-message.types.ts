@@ -1,3 +1,5 @@
+import type { MediaAttachment } from './media-attachment.types';
+
 export type ChannelType = 'feishu' | 'telegram' | 'web' | 'api';
 
 export type ContentType = 'text' | 'image' | 'file' | 'audio' | 'command';
@@ -13,6 +15,7 @@ export interface BotMessage {
   timestamp: number;
   metadata: Record<string, unknown>;
   replyTo?: string;
+  attachments?: MediaAttachment[];
 }
 
 export interface BotResponse {

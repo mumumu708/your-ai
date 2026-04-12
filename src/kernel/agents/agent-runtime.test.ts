@@ -325,4 +325,111 @@ describe('AgentRuntime', () => {
       expect(result.channel).toBe('agent_sdk');
     });
   });
+
+  describe('多模态消息 (mediaRefs)', () => {
+    test('simple 路径应构造 content array 含图片', async () => {
+      let capturedMessages: unknown[] = [];
+      const mockLLM = {
+        complete: async (req: { messages: unknown[] }) => {
+          capturedMessages = req.messages;
+          return {
+            content: '这是一只猫',
+            model: 'gpt-4o-mini',
+            usage: { promptTokens: 100, completionTokens: 20, totalCost: 0.001 },
+          };
+        },
+        stream: async function* () {
+          yield { content: '', done: true };
+        },
+        getDefaultModel: () => 'gpt-4o-mini',
+      } as unknown as LightLLMClient;
+
+      const runtime = new AgentRuntime({
+        classifier: createMockClassifier('simple'),
+        lightLLM: mockLLM,
+      });
+
+      const result = await runtime.execute(
+        createParams({
+          classifyResult: {
+            taskType: 'chat',
+            complexity: 'simple',
+            reason: 'test',
+            confidence: 0.9,
+            classifiedBy: 'rule',
+            costUsd: 0,
+          },
+          context: {
+            sessionId: 'sess_media',
+            messages: [
+              {
+                role: 'user',
+                content: '看看这张图片',
+                timestamp: Date.now(),
+                mediaRefs: [
+                  {
+                    mediaType: 'image',
+                    mimeType: 'image/jpeg',
+                    description: '一只猫',
+                    base64Data: 'dGVzdA==',
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+
+      expect(result.content).toBe('这是一只猫');
+      // Verify the user message was constructed as multimodal content array
+      const userMsg = capturedMessages.find(
+        (m: unknown) => (m as { role: string }).role === 'user',
+      ) as { content: unknown };
+      expect(Array.isArray(userMsg.content)).toBe(true);
+      const parts = userMsg.content as Array<{ type: string }>;
+      expect(parts[0]?.type).toBe('text');
+      expect(parts[1]?.type).toBe('image_url');
+    });
+
+    test('simple 路径无 mediaRefs 保持字符串 content', async () => {
+      let capturedMessages: unknown[] = [];
+      const mockLLM = {
+        complete: async (req: { messages: unknown[] }) => {
+          capturedMessages = req.messages;
+          return {
+            content: 'response',
+            model: 'gpt-4o-mini',
+            usage: { promptTokens: 20, completionTokens: 10, totalCost: 0.001 },
+          };
+        },
+        stream: async function* () {
+          yield { content: '', done: true };
+        },
+        getDefaultModel: () => 'gpt-4o-mini',
+      } as unknown as LightLLMClient;
+
+      const runtime = new AgentRuntime({
+        classifier: createMockClassifier('simple'),
+        lightLLM: mockLLM,
+      });
+
+      await runtime.execute(
+        createParams({
+          classifyResult: {
+            taskType: 'chat',
+            complexity: 'simple',
+            reason: 'test',
+            confidence: 0.9,
+            classifiedBy: 'rule',
+            costUsd: 0,
+          },
+        }),
+      );
+
+      const userMsg = capturedMessages.find(
+        (m: unknown) => (m as { role: string }).role === 'user',
+      ) as { content: unknown };
+      expect(typeof userMsg.content).toBe('string');
+    });
+  });
 });

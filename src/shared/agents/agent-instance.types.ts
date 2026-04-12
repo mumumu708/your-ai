@@ -1,4 +1,5 @@
 import type { UnifiedClassifyResult } from '../classifier/classifier-types';
+import type { MediaRef } from '../messaging/media-attachment.types';
 import type { StreamEvent } from '../messaging/stream-event.types';
 import type { AgentConfig } from './agent-config.types';
 
@@ -30,6 +31,7 @@ export interface ConversationMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+  mediaRefs?: MediaRef[];
 }
 
 export interface ConversationContext {

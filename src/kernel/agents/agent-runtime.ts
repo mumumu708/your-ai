@@ -3,7 +3,7 @@ import { Logger } from '../../shared/logging/logger';
 import type { ClassifyContext } from '../classifier/classifier-types';
 import type { TaskClassifier } from '../classifier/task-classifier';
 import type { ClaudeAgentBridge } from './claude-agent-bridge';
-import type { LightLLMClient, LightLLMMessage } from './light-llm-client';
+import type { LightLLMClient, LightLLMContentPart, LightLLMMessage } from './light-llm-client';
 
 export interface AgentRuntimeDeps {
   classifier?: TaskClassifier | null;
@@ -143,7 +143,24 @@ export class AgentRuntime {
     }
 
     for (const m of params.context.messages) {
-      messages.push({ role: m.role, content: m.content });
+      // Build multimodal content if the message has media with base64 data
+      if (m.role === 'user' && m.mediaRefs?.some((r) => r.base64Data)) {
+        const parts: LightLLMContentPart[] = [];
+        if (m.content) {
+          parts.push({ type: 'text', text: m.content });
+        }
+        for (const ref of m.mediaRefs ?? []) {
+          if (ref.base64Data && ref.mimeType) {
+            parts.push({
+              type: 'image_url',
+              image_url: { url: `data:${ref.mimeType};base64,${ref.base64Data}` },
+            });
+          }
+        }
+        messages.push({ role: 'user', content: parts.length > 0 ? parts : m.content });
+      } else {
+        messages.push({ role: m.role, content: m.content });
+      }
     }
 
     if (params.streamCallback) {

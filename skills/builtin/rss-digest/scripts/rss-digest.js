@@ -1,52 +1,8 @@
 #!/usr/bin/env -S npx tsx
-/**
- * RSS Tech Digest v2 — RSS 抓取与数据处理工具
- *
- * 职责：RSS 抓取 → XML 解析 → 时间过滤 → 去重 → 预评分过滤 → 输出 JSON
- *
- * 纯数据处理，不涉及 AI 调用。AI 评分/分类/摘要/翻译/趋势由 Agent 完成。
- * 零依赖，基于 Bun/tsx 运行时的原生 fetch。
- *
- * 用法:
- *   bun run rss-digest.ts [--hours 48] [--output articles.json] [--concurrency 10] [--timeout 15000] [--top 80] [--min-desc-length 60]
- */
 
+// scripts/rss-digest.ts
 import { writeFileSync } from "fs";
-
-// ============================================================================
-// 类型定义
-// ============================================================================
-
-interface FeedItem {
-  title: string;
-  link: string;
-  pubDate: string;        // ISO 8601
-  pubDateRelative: string; // "3 小时前"
-  description: string;     // 纯文本，截断至 500 字符
-  source: string;          // 域名
-  sourceCategory: string;  // 源分类（tech_blog, financial_news, tech_news, current_affairs_news 等）
-  preScore: number;        // 规则化预评分
-}
-
-interface FetchResult {
-  totalFeeds: number;
-  successFeeds: number;
-  failedFeeds: number;
-  totalArticles: number;
-  filteredByTime: number;    // 时间过滤后的数量
-  filteredByPreScore: number; // 预评分过滤后的数量
-  hoursWindow: number;
-  fetchedAt: string;
-  articles: FeedItem[];
-}
-
-// ============================================================================
-// RSS 源列表 — HN Top 100 + 补充源
-// ============================================================================
-
-const RSS_FEEDS: { url: string; domain: string; sourceCategory?: string }[] = [
-  // === HN Popularity Contest Top 100 ===
-  // 来源: https://refactoringenglish.com/tools/hn-popularity/
+var RSS_FEEDS = [
   { url: "http://www.aaronsw.com/2002/feeds/pgessays.rss", domain: "paulgraham.com" },
   { url: "https://krebsonsecurity.com/feed/", domain: "krebsonsecurity.com" },
   { url: "https://simonwillison.net/atom/everything/", domain: "simonwillison.net" },
@@ -147,24 +103,16 @@ const RSS_FEEDS: { url: string; domain: string; sourceCategory?: string }[] = [
   { url: "https://minimaxir.com/atom.xml", domain: "minimaxir.com" },
   { url: "https://robert.ocallahan.org/feeds/posts/default", domain: "robert.ocallahan.org" },
   { url: "https://research.swtch.com/feed.atom", domain: "research.swtch.com" },
-
-  // === 补充源：AI 资讯 + GitHub Trending ===
   { url: "https://justlovemaki.github.io/CloudFlare-AI-Insight-Daily/rss.xml", domain: "cloudflare-ai-insight" },
   { url: "https://news.smol.ai/rss.xml", domain: "news.smol.ai" },
   { url: "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml", domain: "github-trending" },
-
-  // === 中文博客（6个） ===
   { url: "https://www.qbitai.com/feed", domain: "qbitai.com" },
   { url: "https://baoyu.io/feed.xml", domain: "baoyu.io" },
   { url: "http://www.ifanr.com/feed", domain: "ifanr.com" },
   { url: "http://feeds.feedburner.com/ruanyifeng", domain: "ruanyifeng.com" },
   { url: "https://tech.meituan.com/feed/", domain: "tech.meituan.com" },
   { url: "https://www.supertechfans.com/cn/index.xml", domain: "supertechfans.com" },
-
-  // === 中文聚合（1个） ===
   { url: "https://rsshub.bestblogs.dev/juejin/trending/all/weekly", domain: "juejin.cn" },
-
-  // === 中文Twitter博主（15个） ===
   { url: "https://api.xgo.ing/rss/user/ca2fa444b6ea4b8b974fe148056e497a", domain: "lijigang.com" },
   { url: "https://api.xgo.ing/rss/user/97f1484ae48c430fbbf3438099743674", domain: "dotey.dev" },
   { url: "https://api.xgo.ing/rss/user/831fac36aa0a49a9af79f35dc1c9b5d9", domain: "guizang.ai" },
@@ -180,8 +128,6 @@ const RSS_FEEDS: { url: string; domain: string; sourceCategory?: string }[] = [
   { url: "https://api.xgo.ing/rss/user/66a6b39ddcfa42e39621e0ab293c1bdd", domain: "catwu.dev" },
   { url: "https://api.xgo.ing/rss/user/48aae530e0bf413aa7d44380f418e2e3", domain: "shao__meng.dev" },
   { url: "https://api.xgo.ing/rss/user/ddfdcdd4e390495c942f0b5da62af0fb", domain: "ericjing.ai" },
-
-  // === 中国AI公司（11个） ===
   { url: "https://api.xgo.ing/rss/user/80032d016d654eb4afe741ff34b7643d", domain: "qwen.ai" },
   { url: "https://api.xgo.ing/rss/user/68b610deb24b47ae9a236811563cda86", domain: "deepseek.ai" },
   { url: "https://api.xgo.ing/rss/user/6e8e7b42cb434818810f87bcf77d86fb", domain: "hunyuan.ai" },
@@ -193,8 +139,6 @@ const RSS_FEEDS: { url: string; domain: string; sourceCategory?: string }[] = [
   { url: "https://api.xgo.ing/rss/user/0be252fedbe84ad7bea21be44b18da89", domain: "dify.ai" },
   { url: "https://api.xgo.ing/rss/user/f510f6e7eecf456ca7e2895a46752888", domain: "jina.ai" },
   { url: "https://api.xgo.ing/rss/user/424e67b19eed4500b7a440976bbd2ade", domain: "milvus.io" },
-
-  // === 华人AI研究者（8个） ===
   { url: "https://api.xgo.ing/rss/user/a4bfe44bfc0d4c949da21ebd3f5f42a5", domain: "drfeifei.dev" },
   { url: "https://api.xgo.ing/rss/user/082097117b4543e9a741cd2580f936d3", domain: "justinlin.dev" },
   { url: "https://api.xgo.ing/rss/user/f54b2b40185943ce8f48a880110b7bc2", domain: "huybery.dev" },
@@ -203,8 +147,6 @@ const RSS_FEEDS: { url: string; domain: string; sourceCategory?: string }[] = [
   { url: "https://api.xgo.ing/rss/user/a8f7e2238039461cbc8bf55f5f194498", domain: "lilianweng.dev" },
   { url: "https://api.xgo.ing/rss/user/08b5488b20bc437c8bfc317a52e5c26d", domain: "andrewng.dev" },
   { url: "https://www.youtube.com/feeds/videos.xml?channel_id=UC2ggjtuuWvxrHHHiaDH1dlQ", domain: "hungyilee.youtube" },
-
-  // === AI Companies（17个） ===
   { url: "https://api.xgo.ing/rss/user/0c0856a69f9f49cf961018c32a0b0049", domain: "openai.com" },
   { url: "https://api.xgo.ing/rss/user/971dc1fc90da449bac23e5fad8a33d55", domain: "openaidevs.com" },
   { url: "https://api.xgo.ing/rss/user/f7992687b8d74b14bf2341eb3a0a5ec4", domain: "chatgptapp.com" },
@@ -222,8 +164,6 @@ const RSS_FEEDS: { url: string; domain: string; sourceCategory?: string }[] = [
   { url: "https://api.xgo.ing/rss/user/5287b4e0e13a4ab7ab7b1d56f9d88960", domain: "cursor.so" },
   { url: "https://api.xgo.ing/rss/user/4a8273800ed34a069eecdb6c5c1b9ccf", domain: "windsurf.com" },
   { url: "https://api.xgo.ing/rss/user/760ab7cd9708452c9ce1f9144b92a430", domain: "bolt.new" },
-
-  // === Dev Tools（12个） ===
   { url: "https://api.xgo.ing/rss/user/862fee50a745423c87e2633b274caf1d", domain: "langchain.com" },
   { url: "https://api.xgo.ing/rss/user/67e259bd5be544ce84bbc867eace54c2", domain: "llamaindex.ai" },
   { url: "https://api.xgo.ing/rss/user/6326c63a2dfa445bbde88bea0c3112c2", domain: "ollama.com" },
@@ -236,8 +176,6 @@ const RSS_FEEDS: { url: string; domain: string; sourceCategory?: string }[] = [
   { url: "https://api.xgo.ing/rss/user/f8a106a09a7d404fb8de7eb0c5ddd2a2", domain: "figma.com" },
   { url: "https://api.xgo.ing/rss/user/f97a26863aec4425b021720d4f8e4ede", domain: "notion.so" },
   { url: "https://api.xgo.ing/rss/user/221a88341acb475db221a12fed8208d0", domain: "notebooklm.google" },
-
-  // === AI 研究与新闻（16个） ===
   { url: "https://research.google/blog/rss/", domain: "research.google" },
   { url: "https://www.nasdaq.com/feed/rssoutbound?category=Artificial+Intelligence", domain: "nasdaq.com" },
   { url: "https://www.wired.com/feed/tag/ai/latest/rss", domain: "wired.com" },
@@ -252,8 +190,6 @@ const RSS_FEEDS: { url: string; domain: string; sourceCategory?: string }[] = [
   { url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_research.xml", domain: "anthropic.research" },
   { url: "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_engineering.xml", domain: "anthropic.engineering" },
   { url: "https://www.microsoft.com/en-us/research/feed/", domain: "microsoft.research" },
-
-  // === 微信公众号 RSS 源（53个） ===
   { url: "https://decemberpei.cyou/rssbox/wechat-jiqizhixin.xml", domain: "jiqizhixin" },
   { url: "https://decemberpei.cyou/rssbox/wechat-liangziwei.xml", domain: "liangziwei" },
   { url: "https://decemberpei.cyou/rssbox/wechat-xinzhiyuan.xml", domain: "xinzhiyuan" },
@@ -311,8 +247,6 @@ const RSS_FEEDS: { url: string; domain: string; sourceCategory?: string }[] = [
   { url: "https://decemberpei.cyou/rssbox/wechat-sierzhangjing.xml", domain: "sierzhangjing" },
   { url: "https://decemberpei.cyou/rssbox/wechat-chuanyuanyouzipinglun.xml", domain: "chuanyuanyouzipinglun" },
   { url: "https://decemberpei.cyou/rssbox/wechat-zepinghongguanzhanwang.xml", domain: "zepinghongguanzhanwang" },
-
-  // === 财经资讯 ===
   { url: "https://www.spglobal.com/content/spglobal/energy/us/en/rss/metals.xml", domain: "spglobal-metals", sourceCategory: "financial_news" },
   { url: "https://www.spglobal.com/content/spglobal/energy/us/en/rss/coal.xml", domain: "spglobal-coal", sourceCategory: "financial_news" },
   { url: "https://www.commodity-tv.com/ondemand/channel/copper/rss.xml", domain: "commodity-tv-copper", sourceCategory: "financial_news" },
@@ -327,8 +261,6 @@ const RSS_FEEDS: { url: string; domain: string; sourceCategory?: string }[] = [
   { url: "https://feeds.content.dowjones.io/public/rss/mw_topstories", domain: "marketwatch.com", sourceCategory: "financial_news" },
   { url: "http://finance.ifeng.com/rss/headnews.xml", domain: "ifeng-finance", sourceCategory: "financial_news" },
   { url: "http://finance.ifeng.com/rss/stocknews.xml", domain: "ifeng-stock", sourceCategory: "financial_news" },
-
-  // === 科技媒体 ===
   { url: "https://feeds.arstechnica.com/arstechnica/index/", domain: "arstechnica.com", sourceCategory: "tech_news" },
   { url: "https://sspai.com/feed", domain: "sspai.com", sourceCategory: "tech_news" },
   { url: "https://www.wired.com/feed/rss", domain: "wired.com/all", sourceCategory: "tech_news" },
@@ -336,259 +268,296 @@ const RSS_FEEDS: { url: string; domain: string; sourceCategory?: string }[] = [
   { url: "https://www.theverge.com/rss/index.xml", domain: "theverge.com", sourceCategory: "tech_news" },
   { url: "https://www.huxiu.com/rss/0.xml", domain: "huxiu.com", sourceCategory: "tech_news" },
   { url: "https://36kr.com/feed", domain: "36kr.com", sourceCategory: "tech_news" },
-
-  // === 时事新闻 ===
   { url: "https://rsshub.app/latepost", domain: "latepost.com", sourceCategory: "current_affairs_news" },
   { url: "https://www.chinanews.com.cn/rss/world.xml", domain: "chinanews-world", sourceCategory: "current_affairs_news" },
   { url: "https://www.reutersagency.com/en/reutersbest/reuters-best-rss-feeds/", domain: "reuters.com", sourceCategory: "current_affairs_news" },
   { url: "https://feeds.bbci.co.uk/news/world/rss.xml", domain: "bbc.com", sourceCategory: "current_affairs_news" },
-  { url: "https://www.chinanews.com.cn/rss/china.xml", domain: "chinanews-china", sourceCategory: "current_affairs_news" },
+  { url: "https://www.chinanews.com.cn/rss/china.xml", domain: "chinanews-china", sourceCategory: "current_affairs_news" }
 ];
-
-// ============================================================================
-// 高质量源域名（用于 preScore 加分和描述长度豁免）
-// ============================================================================
-
-const premiumSources = [
-  "simonwillison.net", "jvns.ca", "pragmaticengineer.com",
-  "microsoft.research", "huggingface.co/blog", "deepmind.google",
-  "openai.com/news", "anthropic.news", "anthropic.research",
-  "anthropic.engineering", "research.google", "krebsonsecurity.com",
-  "schneier.com", "ruanyifeng.com", "qbitai.com", "fasterthanli.me",
-  "matklad.github.io", "tonsky.me", "lemire.me", "drewdevault.com",
-  "brendangregg.com", "martinfowler.com", "research.swtch.com",
-  // 财经与科技媒体
-  "cnbc.com", "marketwatch.com", "arstechnica.com", "techcrunch.com",
-  "theverge.com", "bbc.com", "sspai.com", "huxiu.com", "36kr.com",
-  "latepost.com",
+var premiumSources = [
+  "simonwillison.net",
+  "jvns.ca",
+  "pragmaticengineer.com",
+  "microsoft.research",
+  "huggingface.co/blog",
+  "deepmind.google",
+  "openai.com/news",
+  "anthropic.news",
+  "anthropic.research",
+  "anthropic.engineering",
+  "research.google",
+  "krebsonsecurity.com",
+  "schneier.com",
+  "ruanyifeng.com",
+  "qbitai.com",
+  "fasterthanli.me",
+  "matklad.github.io",
+  "tonsky.me",
+  "lemire.me",
+  "drewdevault.com",
+  "brendangregg.com",
+  "martinfowler.com",
+  "research.swtch.com",
+  "cnbc.com",
+  "marketwatch.com",
+  "arstechnica.com",
+  "techcrunch.com",
+  "theverge.com",
+  "bbc.com",
+  "sspai.com",
+  "huxiu.com",
+  "36kr.com",
+  "latepost.com"
 ];
-
-// ============================================================================
-// 预评分函数（规则化，不使用 AI）
-// ============================================================================
-
-function preScore(item: FeedItem): number {
+function preScore(item) {
   let score = 0;
   const text = (item.title + " " + item.description).toLowerCase();
-
-  // 技术信号词加分（每命中一个 +2，最多 +10）
   const techSignals = [
-    // 技术信号
-    "api", "llm", "agent", "benchmark", "open source", "framework",
-    "architecture", "security", "vulnerability", "performance",
-    "kubernetes", "docker", "rust", "typescript", "python",
-    "database", "compiler", "distributed", "concurrency", "algorithm",
-    "gpu", "inference", "fine-tuning", "rag", "embedding",
-    "transformer", "diffusion", "neural", "training", "model",
-    "开源", "漏洞", "架构", "性能", "模型", "训练", "推理",
-    "框架", "算法", "部署", "微调", "向量", "数据库",
-    // 财经信号
-    "stock", "market", "trading", "commodity", "earnings", "financial",
-    "nasdaq", "s&p", "fed", "gdp", "ipo", "merger", "acquisition",
-    "金融", "股票", "市场", "商品", "原油", "黄金", "期货",
-    "财报", "收购", "上市", "融资", "估值",
-    // 新闻与商业信号
-    "breaking", "regulation", "policy", "geopolitical",
-    "突发", "重大", "监管", "政策", "制裁",
-    "融资", "收购", "发布", "上线", "推出", "营收", "净利润",
-    "裁员", "上市", "合作", "战略", "首发", "独家", "亿元",
-    "launch", "release", "announce", "funding", "revenue",
+    "api",
+    "llm",
+    "agent",
+    "benchmark",
+    "open source",
+    "framework",
+    "architecture",
+    "security",
+    "vulnerability",
+    "performance",
+    "kubernetes",
+    "docker",
+    "rust",
+    "typescript",
+    "python",
+    "database",
+    "compiler",
+    "distributed",
+    "concurrency",
+    "algorithm",
+    "gpu",
+    "inference",
+    "fine-tuning",
+    "rag",
+    "embedding",
+    "transformer",
+    "diffusion",
+    "neural",
+    "training",
+    "model",
+    "开源",
+    "漏洞",
+    "架构",
+    "性能",
+    "模型",
+    "训练",
+    "推理",
+    "框架",
+    "算法",
+    "部署",
+    "微调",
+    "向量",
+    "数据库",
+    "stock",
+    "market",
+    "trading",
+    "commodity",
+    "earnings",
+    "financial",
+    "nasdaq",
+    "s&p",
+    "fed",
+    "gdp",
+    "ipo",
+    "merger",
+    "acquisition",
+    "金融",
+    "股票",
+    "市场",
+    "商品",
+    "原油",
+    "黄金",
+    "期货",
+    "财报",
+    "收购",
+    "上市",
+    "融资",
+    "估值",
+    "breaking",
+    "regulation",
+    "policy",
+    "geopolitical",
+    "突发",
+    "重大",
+    "监管",
+    "政策",
+    "制裁",
+    "融资",
+    "收购",
+    "发布",
+    "上线",
+    "推出",
+    "营收",
+    "净利润",
+    "裁员",
+    "上市",
+    "合作",
+    "战略",
+    "首发",
+    "独家",
+    "亿元",
+    "launch",
+    "release",
+    "announce",
+    "funding",
+    "revenue"
   ];
   let techHits = 0;
   for (const kw of techSignals) {
-    if (text.includes(kw)) techHits++;
+    if (text.includes(kw))
+      techHits++;
   }
   score += Math.min(techHits * 2, 10);
-
-  // 描述长度加分
-  if (item.description.length > 200) score += 2;
-  if (item.description.length > 400) score += 1;
-
-  // 高质量源域名加分 +5
-  if (premiumSources.includes(item.source)) score += 5;
-
-  // 纯链接/无描述的推文扣分
-  if (item.description.length < 60) score -= 5;
-
-  // 非技术信号词扣分
+  if (item.description.length > 200)
+    score += 2;
+  if (item.description.length > 400)
+    score += 1;
+  if (premiumSources.includes(item.source))
+    score += 5;
+  if (item.description.length < 60)
+    score -= 5;
   const noiseSignals = ["小龙虾", "旅游", "美食", "养生", "星座", "娱乐八卦", "追剧", "减肥"];
   for (const kw of noiseSignals) {
-    if (text.includes(kw)) score -= 5;
+    if (text.includes(kw))
+      score -= 5;
   }
-
   return score;
 }
-
-// ============================================================================
-// XML 解析（零依赖）
-// ============================================================================
-
-function extractTag(xml: string, tag: string): string {
+function extractTag(xml, tag) {
   const cdataRe = new RegExp(`<${tag}[^>]*>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*</${tag}>`, "i");
   const cdataMatch = xml.match(cdataRe);
-  if (cdataMatch) return cdataMatch[1].trim();
-
+  if (cdataMatch)
+    return cdataMatch[1].trim();
   const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i");
   const match = xml.match(re);
   return match ? match[1].trim().replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1") : "";
 }
-
-function extractAttr(xml: string, tag: string, attr: string): string {
+function extractAttr(xml, tag, attr) {
   const re = new RegExp(`<${tag}[^>]*${attr}="([^"]*)"`, "i");
   const match = xml.match(re);
   return match ? match[1] : "";
 }
-
-function stripHtml(html: string): string {
+function stripHtml(html) {
   let text = html;
-  // 先解码 HTML 实体（处理双重编码：&lt;div&gt; → <div>）
-  for (let i = 0; i < 2; i++) {
-    text = text
-      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
-      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-      .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
-    // 去除所有 HTML 标签
+  for (let i = 0;i < 2; i++) {
+    text = text.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))).replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
     text = text.replace(/<[^>]+>/g, " ");
   }
   return text.replace(/\s+/g, " ").trim();
 }
-
-function parseDate(dateStr: string): Date {
-  if (!dateStr) return new Date(0);
+function parseDate(dateStr) {
+  if (!dateStr)
+    return new Date(0);
   const d = new Date(dateStr);
   return isNaN(d.getTime()) ? new Date(0) : d;
 }
-
-function relativeTime(date: Date): string {
+function relativeTime(date) {
   const diffMs = Date.now() - date.getTime();
   const diffH = Math.floor(diffMs / (1000 * 60 * 60));
-  if (diffH < 1) return "刚刚";
-  if (diffH < 24) return `${diffH} 小时前`;
+  if (diffH < 1)
+    return "刚刚";
+  if (diffH < 24)
+    return `${diffH} 小时前`;
   const diffD = Math.floor(diffH / 24);
   return `${diffD} 天前`;
 }
-
-function parseFeed(xml: string, sourceDomain: string, sourceCategory: string): FeedItem[] {
-  const items: FeedItem[] = [];
-
-  // RSS 2.0
+function parseFeed(xml, sourceDomain, sourceCategory) {
+  const items = [];
   const rssItems = xml.match(/<item[\s>][\s\S]*?<\/item>/gi) || [];
   for (const itemXml of rssItems) {
     const title = stripHtml(extractTag(itemXml, "title"));
     const link = extractTag(itemXml, "link") || extractAttr(itemXml, "link", "href");
     const pubDate = parseDate(extractTag(itemXml, "pubDate") || extractTag(itemXml, "dc:date"));
-    const description = stripHtml(
-      extractTag(itemXml, "description") || extractTag(itemXml, "content:encoded")
-    ).slice(0, 500);
-
+    const description = stripHtml(extractTag(itemXml, "description") || extractTag(itemXml, "content:encoded")).slice(0, 500);
     if (title && link) {
       items.push({
-        title, link,
+        title,
+        link,
         pubDate: pubDate.toISOString(),
         pubDateRelative: relativeTime(pubDate),
-        description, source: sourceDomain,
+        description,
+        source: sourceDomain,
         sourceCategory,
-        preScore: 0,
+        preScore: 0
       });
     }
   }
-
-  // Atom
   if (items.length === 0) {
     const atomEntries = xml.match(/<entry[\s>][\s\S]*?<\/entry>/gi) || [];
     for (const entryXml of atomEntries) {
       const title = stripHtml(extractTag(entryXml, "title"));
-      const link =
-        extractAttr(entryXml, 'link[rel="alternate"]', "href") ||
-        extractAttr(entryXml, "link", "href");
-      const pubDate = parseDate(
-        extractTag(entryXml, "published") || extractTag(entryXml, "updated")
-      );
-      const description = stripHtml(
-        extractTag(entryXml, "summary") || extractTag(entryXml, "content")
-      ).slice(0, 500);
-
+      const link = extractAttr(entryXml, 'link[rel="alternate"]', "href") || extractAttr(entryXml, "link", "href");
+      const pubDate = parseDate(extractTag(entryXml, "published") || extractTag(entryXml, "updated"));
+      const description = stripHtml(extractTag(entryXml, "summary") || extractTag(entryXml, "content")).slice(0, 500);
       if (title && link) {
         items.push({
-          title, link,
+          title,
+          link,
           pubDate: pubDate.toISOString(),
           pubDateRelative: relativeTime(pubDate),
-          description, source: sourceDomain,
+          description,
+          source: sourceDomain,
           sourceCategory,
-          preScore: 0,
+          preScore: 0
         });
       }
     }
   }
-
   return items;
 }
-
-// ============================================================================
-// 并发控制
-// ============================================================================
-
-async function pooled<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = [];
+async function pooled(items, concurrency, fn) {
+  const results = [];
   let idx = 0;
   async function worker() {
     while (idx < items.length) {
       const i = idx++;
-      try { results[i] = await fn(items[i]); }
-      catch { results[i] = undefined as any; }
+      try {
+        results[i] = await fn(items[i]);
+      } catch {
+        results[i] = undefined;
+      }
     }
   }
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, () => worker())
-  );
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
   return results;
 }
-
-// ============================================================================
-// 抓取
-// ============================================================================
-
-async function fetchFeed(
-  feed: { url: string; domain: string; sourceCategory?: string },
-  timeout: number
-): Promise<FeedItem[]> {
+async function fetchFeed(feed, timeout) {
   try {
-    const controller = new AbortController();
+    const controller = new AbortController;
     const timer = setTimeout(() => controller.abort(), timeout);
     const res = await fetch(feed.url, {
       signal: controller.signal,
-      headers: { "User-Agent": "RSS-Tech-Digest/2.0" },
+      headers: { "User-Agent": "RSS-Tech-Digest/2.0" }
     });
     clearTimeout(timer);
-    if (!res.ok) return [];
+    if (!res.ok)
+      return [];
     const xml = await res.text();
     return parseFeed(xml, feed.domain, feed.sourceCategory || "tech_blog");
   } catch {
     return [];
   }
 }
-
-// ============================================================================
-// 主流程
-// ============================================================================
-
 async function main() {
   const args = process.argv.slice(2);
-  const flags: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
+  const flags = {};
+  for (let i = 0;i < args.length; i++) {
     if (args[i].startsWith("--")) {
       const key = args[i].slice(2);
       const val = args[i + 1] && !args[i + 1].startsWith("--") ? args[i + 1] : "true";
       flags[key] = val;
-      if (val !== "true") i++;
+      if (val !== "true")
+        i++;
     }
   }
-
   if (flags.help) {
     console.log(`
 RSS Tech Digest v2 — RSS 抓取与数据处理（含预评分过滤）
@@ -616,20 +585,15 @@ RSS Tech Digest v2 — RSS 抓取与数据处理（含预评分过滤）
 `);
     process.exit(0);
   }
-
   const hoursWindow = parseInt(flags.hours || "24");
   const concurrency = parseInt(flags.concurrency || "10");
   const timeout = parseInt(flags.timeout || "15000");
   const outputFile = flags.output || "";
   const topN = parseInt(flags.top || "150");
   const minDescLength = parseInt(flags["min-desc-length"] || "60");
-
-  console.error(`📡 抓取 ${RSS_FEEDS.length} 个 RSS 源（${concurrency} 路并发, ${timeout / 1000}s 超时）...`);
-
-  // 抓取
+  console.error(`\uD83D\uDCE1 抓取 ${RSS_FEEDS.length} 个 RSS 源（${concurrency} 路并发, ${timeout / 1000}s 超时）...`);
   const allResults = await pooled(RSS_FEEDS, concurrency, (feed) => fetchFeed(feed, timeout));
-
-  const allItems: FeedItem[] = [];
+  const allItems = [];
   let successCount = 0;
   for (const items of allResults) {
     if (items && items.length > 0) {
@@ -637,82 +601,58 @@ RSS Tech Digest v2 — RSS 抓取与数据处理（含预评分过滤）
       allItems.push(...items);
     }
   }
-
   console.error(`✅ 成功 ${successCount}/${RSS_FEEDS.length} 个源, 共 ${allItems.length} 篇`);
-
-  // 时间过滤
   const cutoff = new Date(Date.now() - hoursWindow * 60 * 60 * 1000);
   let filtered = allItems.filter((item) => new Date(item.pubDate) > cutoff);
-  console.error(`🕐 时间过滤（${hoursWindow}h）: ${allItems.length} → ${filtered.length} 篇`);
-
-  // 如果太少，自动扩大
+  console.error(`\uD83D\uDD50 时间过滤（${hoursWindow}h）: ${allItems.length} → ${filtered.length} 篇`);
   if (filtered.length < 5) {
     const expanded = hoursWindow * 2;
     const cutoff2 = new Date(Date.now() - expanded * 60 * 60 * 1000);
     filtered = allItems.filter((item) => new Date(item.pubDate) > cutoff2);
     console.error(`⚠️ 文章不足, 扩大至 ${expanded}h: ${filtered.length} 篇`);
   }
-
   if (filtered.length === 0) {
     console.error("⚠️ 过滤后无文章, 使用全部已抓取文章");
     filtered = allItems;
   }
-
-  // 去重（按 link）
-  const seen = new Set<string>();
+  const seen = new Set;
   filtered = filtered.filter((item) => {
-    if (seen.has(item.link)) return false;
+    if (seen.has(item.link))
+      return false;
     seen.add(item.link);
     return true;
   });
-
-  // 过滤最短描述长度（高质量源即使描述短也保留）
-  filtered = filtered.filter(
-    (item) => item.description.length >= minDescLength || premiumSources.includes(item.source)
-  );
-
-  // 计算预评分
+  filtered = filtered.filter((item) => item.description.length >= minDescLength || premiumSources.includes(item.source));
   for (const item of filtered) {
     item.preScore = preScore(item);
   }
-
-  // 按预评分降序排序
   filtered.sort((a, b) => b.preScore - a.preScore);
-
-  const filteredByTime = filtered.length; // 记录时间过滤 + 去重 + 描述长度过滤后数量
-
-  // 截取 top N
+  const filteredByTime = filtered.length;
   const beforeTop = filtered.length;
   if (filtered.length > topN) {
     filtered = filtered.slice(0, topN);
   }
-
-  console.error(`🎯 预评分过滤: ${beforeTop} → ${filtered.length} 篇 (top ${topN})`);
-  console.error(`📦 最终输出: ${filtered.length} 篇文章`);
-
-  const result: FetchResult = {
+  console.error(`\uD83C\uDFAF 预评分过滤: ${beforeTop} → ${filtered.length} 篇 (top ${topN})`);
+  console.error(`\uD83D\uDCE6 最终输出: ${filtered.length} 篇文章`);
+  const result = {
     totalFeeds: RSS_FEEDS.length,
     successFeeds: successCount,
     failedFeeds: RSS_FEEDS.length - successCount,
     totalArticles: allItems.length,
-    filteredByTime: filteredByTime,
+    filteredByTime,
     filteredByPreScore: filtered.length,
     hoursWindow,
     fetchedAt: new Date().toISOString(),
-    articles: filtered,
+    articles: filtered
   };
-
   const json = JSON.stringify(result, null, 2);
-
   if (outputFile) {
     writeFileSync(outputFile, json);
-    console.error(`💾 已写入: ${outputFile} (${(Buffer.byteLength(json) / 1024).toFixed(1)} KB)`);
+    console.error(`\uD83D\uDCBE 已写入: ${outputFile} (${(Buffer.byteLength(json) / 1024).toFixed(1)} KB)`);
   } else {
-    // 输出到 stdout，进度日志已走 stderr
     console.log(json);
   }
 }
-
 main().catch((e) => {
   console.error("❌ 致命错误:", e);
   process.exit(1);

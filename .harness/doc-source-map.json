@@ -80,6 +80,17 @@
       "description": "网关与通道系统"
     },
     {
+      "doc": ".harness/architecture.md",
+      "sources": [
+        "src/kernel/media/media-types.ts",
+        "src/kernel/media/media-downloader.ts",
+        "src/kernel/media/media-understanding.ts",
+        "src/kernel/media/media-processor.ts",
+        "src/shared/messaging/media-attachment.types.ts"
+      ],
+      "description": "多媒体处理模块"
+    },
+    {
       "doc": ".harness/design-docs/005-agent-engine.md",
       "sources": [
         "src/kernel/agents/agent-runtime.ts",

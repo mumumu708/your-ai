@@ -2,6 +2,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { ERROR_CODES } from '../../shared/errors/error-codes';
 import { YourBotError } from '../../shared/errors/yourbot-error';
 import type { BotMessage, BotResponse, ChannelType, StreamEvent } from '../../shared/messaging';
+import type { MediaAttachment } from '../../shared/messaging/media-attachment.types';
 import { generateId } from '../../shared/utils/crypto';
 import { BaseChannel } from './base-channel';
 
@@ -220,13 +221,28 @@ export class FeishuChannel extends BaseChannel {
     let textContent = '';
     let fileKey: string | undefined;
     let fileName: string | undefined;
+    let contentType: BotMessage['contentType'] = 'text';
+    const attachments: MediaAttachment[] = [];
 
     try {
       const parsed = JSON.parse(msgContent);
-      if (msgType === 'file') {
+      if (msgType === 'image') {
+        const imageKey = parsed.image_key as string | undefined;
+        if (imageKey) {
+          attachments.push({
+            id: generateId('media'),
+            mediaType: 'image',
+            state: 'pending',
+            sourceRef: { channel: 'feishu', messageId, fileKey: imageKey },
+          });
+        }
+        textContent = textContent || '[图片]';
+        contentType = 'image';
+      } else if (msgType === 'file') {
         fileKey = parsed.file_key;
         fileName = parsed.file_name;
         textContent = `[文件: ${fileName ?? 'unknown'}]`;
+        contentType = 'file';
       } else {
         textContent = parsed.text ?? msgContent;
       }
@@ -241,7 +257,7 @@ export class FeishuChannel extends BaseChannel {
       userName: ((sender?.sender_id as Record<string, unknown>)?.union_id as string) ?? openId,
       conversationId: chatId,
       content: textContent,
-      contentType: msgType === 'text' ? 'text' : 'file',
+      contentType,
       timestamp: Date.now(),
       metadata: {
         rawType: msgType,
@@ -249,6 +265,7 @@ export class FeishuChannel extends BaseChannel {
         ...(fileKey ? { fileKey } : {}),
         ...(fileName ? { fileName } : {}),
       },
+      ...(attachments.length > 0 ? { attachments } : {}),
     };
   }
 
