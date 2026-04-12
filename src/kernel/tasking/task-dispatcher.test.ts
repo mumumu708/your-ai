@@ -181,6 +181,85 @@ describe('TaskDispatcher', () => {
       expect(row.status).toBe('failed');
       expect(row.error_message).toBe('Something went wrong');
     });
+
+    test('should stringify non-Error thrown values as error_message', async () => {
+      const handler: TaskHandler = async () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'raw string error';
+      };
+      const dispatcher = new TaskDispatcher(store, handler);
+
+      const taskId = await dispatcher.dispatch('sess_1', makePayload());
+
+      await vi_wait(() => {
+        const r = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId) as Record<
+          string,
+          unknown
+        >;
+        return r.status === 'failed';
+      });
+
+      const row = db
+        .prepare('SELECT status, error_message FROM tasks WHERE id = ?')
+        .get(taskId) as Record<string, unknown>;
+      expect(row.status).toBe('failed');
+      expect(row.error_message).toBe('raw string error');
+    });
+  });
+
+  describe('session lock error recovery', () => {
+    test('session lock catch handler absorbs executeTask rejection', async () => {
+      // Force executeTask to throw before its own try/catch by making
+      // taskStore.updateStatus throw only on the first 'running' update.
+      // This causes the first task's executeTask to reject, which exercises
+      // the `currentLock.catch(() => {})` handler in startTask.
+      let updateCallCount = 0;
+      const originalUpdate = store.updateStatus.bind(store);
+      spyOn(store, 'updateStatus').mockImplementation(
+        (
+          id: string,
+          status: Parameters<typeof store.updateStatus>[1],
+          extra?: Record<string, unknown>,
+        ) => {
+          updateCallCount++;
+          if (updateCallCount === 1) {
+            // First updateStatus call: 'running' update inside executeTask before the try block
+            throw new Error('DB failure on first running update');
+          }
+          return originalUpdate(id, status, extra);
+        },
+      );
+
+      const handler: TaskHandler = async () => 'done';
+      // Use high concurrency so both tasks start via startTask directly (not processQueue),
+      // avoiding a deadlock from task1's finally never running (pre-try throw).
+      const dispatcher = new TaskDispatcher(store, handler, { concurrency: 10 });
+
+      // Task1 triggers the mocked failure — executeTask rejects before try, exercises catch(() => {})
+      const taskId1 = await dispatcher.dispatch(
+        'sess_lock',
+        makePayload({ message: makeMessage({ id: 'lk1' }) }),
+      );
+
+      // Task2 in same session — chains on session lock via prevLock.then(...)
+      // When task1's lock rejects, catch(() => {}) swallows it, so task2's executeTask eventually runs
+      const taskId2 = await dispatcher.dispatch(
+        'sess_lock',
+        makePayload({ message: makeMessage({ id: 'lk2' }) }),
+      );
+
+      // Wait for task2 to complete — proves the catch handler unblocked the session chain
+      await vi_wait(() => {
+        const r = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId2) as Record<
+          string,
+          unknown
+        >;
+        return r.status === 'completed';
+      });
+
+      expect(taskId1).toBeDefined();
+      expect(taskId2).toBeDefined();
+    });
   });
 
   describe('session-level serialization', () => {
