@@ -23,3 +23,17 @@ export { EvolutionScheduler } from './evolution-scheduler';
 export { reflect } from './reflect';
 export { linkMemory } from './link';
 export { evolveMemory } from './evolve';
+
+// --- DD-012: Memory & Reflection upgrade modules ---
+export {
+  ReflectionTrigger,
+  DEFAULT_REFLECTION_CONFIG,
+  type ReflectionConfig,
+} from './reflection-trigger';
+export {
+  ReflectionPromptBuilder,
+  REFLECTION_SYSTEM_PROMPT,
+  type SessionSummary,
+} from './reflection-prompt-builder';
+export { routeAnalysis, type AnalysisItem, type RoutedAnalysis } from './analysis-router';
+export { FrozenContextManager, type FrozenContext } from './frozen-context-manager';

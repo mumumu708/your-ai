@@ -203,6 +203,17 @@
         "src/kernel/skills/index.ts"
       ],
       "description": "Skill 系统升级（渐进式披露 + 就绪检查）"
+    },
+    {
+      "doc": ".harness/design-docs/012-memory-reflection-upgrade.md",
+      "sources": [
+        "src/kernel/evolution/reflection-trigger.ts",
+        "src/kernel/evolution/reflection-prompt-builder.ts",
+        "src/kernel/evolution/analysis-router.ts",
+        "src/kernel/evolution/frozen-context-manager.ts",
+        "src/kernel/evolution/index.ts"
+      ],
+      "description": "记忆和反思升级（DD-012 构建块）"
     }
   ]
 }
