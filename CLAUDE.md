@@ -30,13 +30,15 @@ After self-check, run `bun run check:docs` to verify documentation consistency.
 
 ## Key Commands
 
-- Full check: `bun run check:all` (mandatory after every code change)
+- Full check: `bun run check:all` (mandatory after every code change, includes coverage)
 - Doc check: `bun run check:docs` (mandatory before commit)
 - Test: `bun test`
 - Lint: `bun run lint` / `bun run lint:fix`
 - Format: `bun run format`
 - Architecture check: `bun run check:arch`
-- Coverage check: `bun run check:coverage` (changed files must have 100% line/function coverage)
+- Coverage check: `bun run check:coverage`（Istanbul/nyc，提交前必跑）
+- Mutation test: `bun run test:mutate`（Stryker-JS，测试闭环最后一环）
+- Coverage HTML report: `bun run test:coverage:html`
 - Create PR: `gh pr create --base main --head {branch} --title "..." --body "..."`
 
 ## Git Workflow

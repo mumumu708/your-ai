@@ -29,6 +29,9 @@
 | `bun test --coverage` | 行/函数/分支覆盖率 | —        |
 | `lcov`                | 覆盖率报告格式     | —        |
 | `check:coverage`      | 变更文件覆盖率卡点 | 自研脚本 |
+| nyc (Istanbul CLI)            | 覆盖率报告 + 阈值校验 | ≥ 18.0  |
+| istanbul-lib-coverage         | 覆盖率数据处理        | ≥ 3.2   |
+| Stryker-JS                    | 变异测试              | ≥ 9.6   |
 
 ---
 
@@ -368,18 +371,40 @@ it("should yield all chunks in order", async () => {
 ### 9.2 执行机制
 
 ```bash
-# CI 流水线中的完整检查
-bun test --coverage          # 生成 coverage/lcov.info
-bun run check:coverage       # 对变更文件执行卡点检查
+# 完整覆盖率检查流程 (Istanbul/nyc)
+bun test --coverage            # 生成 coverage/lcov.info
+bun run scripts/lcov-to-nyc.ts # 转换为 Istanbul JSON (.nyc_output/out.json)
+bunx nyc report                # 生成报告 (text + lcov + html)
+bunx nyc check-coverage        # 全局阈值校验
+bun run scripts/check-coverage.ts # 变更文件 per-file 100% 卡点
+
+# 快捷命令
+bun run check:coverage          # 测试 + 转换 + 阈值校验 (一条命令)
+bun run test:coverage:html      # 生成 HTML 可视化报告
 ```
 
-`check:coverage` 脚本行为：
+### 9.5 变异测试 (Mutation Testing)
 
-1. 通过 `git diff --name-only main...HEAD` 获取变更文件列表。
-2. 排除：`*.test.ts`、`test-utils/**`、`*.types.ts`、`*.d.ts`、`__fixtures__/**`。
-3. 对剩余源文件在 `lcov.info` 中查找覆盖率数据。
-4. 任一文件行覆盖率或函数覆盖率 < 100% → **CI 失败**。
-5. 变更文件不在 lcov 中（未被任何测试加载）→ **警告**，不阻断。
+变异测试是覆盖率的补充验证手段，用于检测"假断言"（测试通过但未真正验证逻辑）。
+
+| 属性 | 规定 |
+|------|------|
+| 工具 | Stryker-JS (`stryker.config.mjs`) |
+| 运行器 | command runner (`bun test`) |
+| 变异范围 | `src/**/*.ts`（排除测试文件和类型文件） |
+| 阈值 | break: 50%, low: 60%, high: 80% |
+| 执行时机 | 开发完成 + 覆盖率通过后，提交前 |
+
+**开发闭环：**
+
+```
+编码 → 单元/集成测试 → check:coverage (Istanbul) → test:mutate (Stryker) → 通过 → 提交
+```
+
+存活变异体的处理：
+1. 查看变异类型和位置
+2. 增强对应测试的断言精度
+3. 重新运行变异测试确认已杀死
 
 ### 9.3 覆盖率豁免
 
