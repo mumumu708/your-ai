@@ -92,6 +92,14 @@ export class IntelligenceGateway {
     return memoryIndicators.some((r) => r.test(content));
   }
 
+  /** 安全阀：LightLLM 回复表明无法处理 */
+  private isSafetyValveTrigger(content?: string): boolean {
+    if (!content) return false;
+    return /我需要更仔细地处理这个问题|I need to (?:handle|process|think about) this more carefully/i.test(
+      content,
+    );
+  }
+
   private async quickAnswer(params: GatewayHandleParams): Promise<AgentResult> {
     const response = await this.lightLlm.complete({
       messages: [
@@ -101,7 +109,7 @@ export class IntelligenceGateway {
     });
 
     // 安全阀：LightLLM 自认为答不好，降级到 Agent Layer
-    if (response.content?.includes('我需要更仔细地处理这个问题') && params.agentParams) {
+    if (this.isSafetyValveTrigger(response.content) && params.agentParams) {
       this.logger.info('安全阀触发，降级到 Agent Layer');
       return this.agentBridge.execute(params.agentParams);
     }

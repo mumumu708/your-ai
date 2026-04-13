@@ -217,5 +217,97 @@ describe('SessionManager', () => {
       const summary = await manager.closeSession('nonexistent');
       expect(summary).toBeNull();
     });
+
+    test('关闭后会话状态应该变为 closed', async () => {
+      const manager = new SessionManager();
+      const key = 'user_001:web:conv_001';
+      const session = await manager.resolveSession('user_001', 'web', 'conv_001');
+
+      manager.addMessage(key, { role: 'user', content: '测试关闭状态', timestamp: 1000 });
+      await manager.closeSession(key);
+
+      expect(session.status).toBe('closed');
+    });
+
+    test('onSessionClose 回调应该收到正确的 sessionId 和 session', async () => {
+      const manager = new SessionManager();
+      const key = 'user_001:web:conv_001';
+      const session = await manager.resolveSession('user_001', 'web', 'conv_001');
+
+      manager.addMessage(key, { role: 'user', content: 'callback args', timestamp: 1000 });
+      manager.addMessage(key, { role: 'assistant', content: 'ok', timestamp: 2000 });
+
+      let capturedSessionId: string | null = null;
+      let capturedUserId: string | null = null;
+      manager.setOnSessionClose((_summary, sessionId, sess) => {
+        capturedSessionId = sessionId;
+        capturedUserId = sess.userId;
+      });
+
+      await manager.closeSession(key);
+      expect(capturedSessionId).toBe(session.id);
+      expect(capturedUserId).toBe('user_001');
+    });
+  });
+
+  // =========================================================================
+  // SessionStore 集成 — 双写验证 (SC-104)
+  // =========================================================================
+
+  describe('SessionStore 集成', () => {
+    test('resolveSession 应该在 SessionStore 中创建记录', async () => {
+      const db = new (await import('bun:sqlite')).Database(':memory:');
+      const { SessionStore } = await import('../memory/session-store');
+      const store = new SessionStore(db);
+      const manager = new SessionManager({ sessionStore: store });
+
+      const session = await manager.resolveSession('u1', 'web', 'c1');
+
+      const sessions = store.getRecentSessions({ userId: 'u1', days: 30 });
+      expect(sessions.length).toBe(1);
+      expect(sessions[0].id).toBe(session.id);
+      expect(sessions[0].channel).toBe('web');
+
+      store.close();
+    });
+
+    test('addMessage 应该持久化到 SessionStore', async () => {
+      const db = new (await import('bun:sqlite')).Database(':memory:');
+      const { SessionStore } = await import('../memory/session-store');
+      const store = new SessionStore(db);
+      const manager = new SessionManager({ sessionStore: store });
+
+      const session = await manager.resolveSession('u1', 'web', 'c1');
+      manager.addMessage('u1:web:c1', { role: 'user', content: '双写验证', timestamp: Date.now() });
+
+      await store.flushWriteQueue();
+
+      const messages = store.getSessionMessages(session.id);
+      expect(messages.length).toBe(1);
+      expect(messages[0].content).toBe('双写验证');
+      expect(messages[0].role).toBe('user');
+
+      store.close();
+    });
+
+    test('closeSession 应该持久化关闭原因到 SessionStore', async () => {
+      const db = new (await import('bun:sqlite')).Database(':memory:');
+      const { SessionStore } = await import('../memory/session-store');
+      const store = new SessionStore(db);
+      const manager = new SessionManager({ sessionStore: store });
+
+      const session = await manager.resolveSession('u1', 'web', 'c1');
+      manager.addMessage('u1:web:c1', { role: 'user', content: '关闭测试', timestamp: Date.now() });
+
+      await store.flushWriteQueue();
+      await manager.closeSession('u1:web:c1');
+
+      const sessions = store.getRecentSessions({ userId: 'u1', days: 30 });
+      const closed = sessions.find((s) => s.id === session.id);
+      expect(closed).toBeDefined();
+      expect(closed!.endReason).toBe('idle_timeout');
+
+      store.close();
+    });
   });
 });

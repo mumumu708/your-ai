@@ -110,6 +110,8 @@ export class CentralController {
   private readonly taskQueue: TaskQueue;
   private readonly logger: Logger;
   private readonly activeRequests: Map<string, AbortController> = new Map();
+  /** Side-channel for preserving full TaskResult through TaskDispatcher string contract */
+  private readonly dispatchResults: Map<string, TaskResult> = new Map();
   private readonly streamHandler: StreamHandler;
   private readonly streamCallback?: (userId: string, event: StreamEvent) => void;
   private streamAdapterFactory?: (
@@ -269,6 +271,9 @@ export class CentralController {
             payload.message.channel,
             payload.message.conversationId,
           );
+          const classifyResult = payload.metadata?.classifyResult as
+            | UnifiedClassifyResult
+            | undefined;
           const task: Task = {
             id: _taskRecord.id,
             traceId: generateTraceId(),
@@ -283,8 +288,11 @@ export class CentralController {
               channel: payload.message.channel,
               conversationId: payload.message.conversationId,
             },
+            classifyResult,
           };
           const result = await this.orchestrate(task);
+          // Store full TaskResult in side-channel to preserve structured data (streamed, complexity, etc.)
+          this.dispatchResults.set(_taskRecord.id, result);
           // Adapt TaskResult → string for TaskDispatcher handler contract
           if (!result.success && result.error) return result.error;
           const data = result.data as { content?: string } | undefined;
@@ -604,6 +612,12 @@ export class CentralController {
             classifyResult,
           },
         });
+        // Retrieve full TaskResult from side-channel (preserves streamed, complexity, etc.)
+        const fullResult = this.dispatchResults.get(taskId);
+        this.dispatchResults.delete(taskId);
+        if (fullResult) {
+          return fullResult;
+        }
         return {
           success: true,
           taskId,

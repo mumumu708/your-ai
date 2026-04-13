@@ -145,7 +145,10 @@ export class SessionManager {
    * Close a session: extract memory summary and trigger callback.
    * The callback now receives the sessionId for OpenViking commit.
    */
-  async closeSession(sessionKey: string): Promise<SessionSummary | null> {
+  async closeSession(
+    sessionKey: string,
+    reason: 'idle_timeout' | 'user_end' | 'admin_close' | 'process_restart' = 'idle_timeout',
+  ): Promise<SessionSummary | null> {
     const session = this.findSessionByKey(sessionKey);
     if (!session) return null;
 
@@ -163,10 +166,11 @@ export class SessionManager {
       sessionId: session.id,
       messageCount: session.messages.length,
       keywords: summary.keywords.length,
+      reason,
     });
 
     // Persist session close to SQLite
-    this.sessionStore?.closeSession(session.id, 'idle_timeout', summary.summary);
+    this.sessionStore?.closeSession(session.id, reason, summary.summary);
 
     if (this.onSessionClose) {
       await this.onSessionClose(summary, session.id, session);

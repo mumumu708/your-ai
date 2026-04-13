@@ -27,21 +27,27 @@ export class CodexAgentBridge implements AgentBridge {
 
       let stdout = '';
       let stderr = '';
+      let lineBuffer = '';
 
       proc.stdout?.on('data', (chunk: Buffer) => {
         const text = chunk.toString();
         stdout += text;
 
-        // Parse JSONL events for streaming
+        // Parse JSONL events for streaming — handle buffer boundaries
         if (params.streamCallback) {
-          for (const line of text.split('\n').filter(Boolean)) {
+          lineBuffer += text;
+          const lines = lineBuffer.split('\n');
+          // Keep last (possibly incomplete) line in buffer
+          lineBuffer = lines.pop() ?? '';
+          for (const line of lines) {
+            if (!line.trim()) continue;
             try {
               const event = JSON.parse(line) as { type?: string; role?: string; content?: string };
               if (event.type === 'message' && event.role === 'assistant') {
                 void params.streamCallback({ type: 'text_delta', text: event.content || '' });
               }
             } catch {
-              /* ignore non-JSON lines */
+              /* ignore non-JSON lines (e.g. stderr leaks) */
             }
           }
         }

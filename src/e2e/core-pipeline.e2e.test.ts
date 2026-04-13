@@ -262,6 +262,29 @@ describe('全链路 E2E 测试', () => {
   // =========================================================================
 
   describe('HTTP API 链路', () => {
+    test('POST /api/messages 非法消息格式应该返回 400 且不进入 controller', async () => {
+      const handleSpy = spyOn(controller, 'handleIncomingMessage');
+
+      const res = await fetch(`http://localhost:${HTTP_PORT}/api/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channel: 'api',
+          userId: 'e2e_invalid_user',
+          content: 'missing required fields',
+        }),
+      });
+
+      expect(res.status).toBe(400);
+
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.success).toBe(false);
+      expect(body.error).toBe('Invalid message format');
+      expect(handleSpy).not.toHaveBeenCalled();
+
+      handleSpy.mockRestore();
+    });
+
     test(
       'POST /api/messages 发送 chat 消息应该返回 AI 响应',
       async () => {

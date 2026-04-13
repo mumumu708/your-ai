@@ -231,6 +231,7 @@ function setupGracefulShutdown(): void {
     logger.info(`收到 ${signal} 信号，正在关闭...`);
     controller.stopScheduler();
     await channelManager.shutdownAll();
+    await controller.shutdown();
     CentralController.resetInstance();
     closeSessionDatabase();
     logger.info('所有通道已关闭，进程退出');

@@ -164,6 +164,55 @@ describe('IntelligenceGateway', () => {
     });
   });
 
+  describe('返回结构完整性', () => {
+    test('gateway 直接处理的返回应包含完整 AgentResult 字段', async () => {
+      const gw = new IntelligenceGateway(createMockLightLlm('回复'), createMockAgent());
+      const result = await gw.handle(makeGatewayParams({ message: '你好' }));
+
+      // 验证所有必需字段存在且类型正确
+      expect(typeof result.content).toBe('string');
+      expect(typeof result.tokenUsage).toBe('object');
+      expect(typeof result.tokenUsage.inputTokens).toBe('number');
+      expect(typeof result.tokenUsage.outputTokens).toBe('number');
+      expect(result.tokenUsage.inputTokens).toBeGreaterThanOrEqual(0);
+      expect(result.tokenUsage.outputTokens).toBeGreaterThanOrEqual(0);
+      expect(typeof result.finishedNaturally).toBe('boolean');
+      expect(typeof result.handledBy).toBe('string');
+    });
+
+    test('英文安全阀短语也应该触发降级', async () => {
+      const lightLlm = createMockLightLlm('I need to handle this more carefully');
+      const agent = createMockAgent({
+        execute: async () => makeAgentResult({ content: 'agent fallback' }),
+      });
+      const gw = new IntelligenceGateway(lightLlm, agent);
+
+      const result = await gw.handle(makeGatewayParams({ message: 'hi' }));
+
+      expect(result.content).toBe('agent fallback');
+      expect(result.handledBy).toBe('claude');
+    });
+
+    test('agent 处理的返回应透传 AgentBridge 结果', async () => {
+      const expectedResult = makeAgentResult({
+        content: 'agent 结果',
+        tokenUsage: { inputTokens: 200, outputTokens: 100 },
+        handledBy: 'claude',
+        toolsUsed: ['memory_search'],
+      });
+      const agent = createMockAgent({ execute: async () => expectedResult });
+      const gw = new IntelligenceGateway(createMockLightLlm(), agent);
+
+      const result = await gw.handle(makeGatewayParams({ complexity: 'complex' }));
+
+      expect(result.content).toBe('agent 结果');
+      expect(result.tokenUsage.inputTokens).toBe(200);
+      expect(result.tokenUsage.outputTokens).toBe(100);
+      expect(result.handledBy).toBe('claude');
+      expect(result.toolsUsed).toEqual(['memory_search']);
+    });
+  });
+
   describe('mightNeedTools', () => {
     const gw = new IntelligenceGateway(createMockLightLlm(), createMockAgent());
 

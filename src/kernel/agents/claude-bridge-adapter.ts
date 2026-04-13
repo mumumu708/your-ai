@@ -10,9 +10,13 @@ export class ClaudeBridgeAdapter implements AgentBridge {
   constructor(private readonly bridge: ClaudeAgentBridge) {}
 
   async execute(params: AgentExecuteParams): Promise<AgentResult> {
+    // Build user message with prependContext injected (BUG-01 fix)
+    const userContent = params.prependContext
+      ? `${params.prependContext}\n\n${params.userMessage}`
+      : params.userMessage;
     const oldResult = await this.bridge.execute({
       sessionId: params.sessionId,
-      messages: params.userMessage ? [{ role: 'user', content: params.userMessage }] : [],
+      messages: userContent ? [{ role: 'user', content: userContent }] : [],
       systemPrompt: params.systemPrompt,
       cwd: params.workspacePath,
       claudeSessionId: params.claudeSessionId,

@@ -96,12 +96,16 @@ describe('AgentBridgeWithFallback', () => {
 
     test.each([
       ['ENOENT: claude not found', true],
+      ['command not found: claude', true],
       ['rate limit exceeded', true],
       ['ratelimit hit', true],
       ['quota exceeded', true],
       ['503 Service Unavailable', true],
       ['502 Bad Gateway', true],
       ['connection timeout', true],
+      ['ECONNREFUSED 127.0.0.1:8080', true],
+      ['ECONNRESET by peer', true],
+      ['File not found: user-config.md', false],
       ['invalid input', false],
       ['permission denied', false],
     ])('"%s" → %s', (message, expected) => {

@@ -54,6 +54,8 @@ export class AgentBridgeWithFallback implements AgentBridge {
    */
   isProviderUnavailable(error: unknown): boolean {
     if (!(error instanceof Error)) return false;
-    return /ENOENT|not found|rate.?limit|quota|503|502|timeout/i.test(error.message);
+    return /ENOENT|command not found|rate.?limit|quota|503|502|timeout|ECONNREFUSED|ECONNRESET/i.test(
+      error.message,
+    );
   }
 }
