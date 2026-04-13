@@ -7,9 +7,9 @@ describe('generateId', () => {
     const parts = id.split('_');
     expect(parts.length).toBe(3);
     expect(parts[0]).toBe('test');
-    expect(parts[1]!.length).toBeGreaterThan(0);
-    expect(parts[2]!.length).toBeGreaterThan(0);
-    expect(parts[2]!.length).toBeLessThanOrEqual(6);
+    expect(parts[1]?.length).toBeGreaterThan(0);
+    expect(parts[2]?.length).toBeGreaterThan(0);
+    expect(parts[2]?.length).toBeLessThanOrEqual(6);
   });
 
   test('应该在连续调用时生成唯一的 ID', () => {

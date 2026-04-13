@@ -810,13 +810,15 @@ describe('CP-19: Safety valve — LightLLM returns safety phrase → agentBridge
       tokenUsage: { inputTokens: 0, outputTokens: 0 },
       handledBy: 'codex',
     }));
-    const agentRuntimeSpy = spyOn(AgentRuntime.prototype, 'execute').mockImplementation(async () => ({
-      content: 'agent runtime recovered response',
-      tokenUsage: { inputTokens: 10, outputTokens: 5 },
-      complexity: 'complex' as const,
-      channel: 'agent_sdk' as const,
-      classificationCostUsd: 0,
-    }));
+    const agentRuntimeSpy = spyOn(AgentRuntime.prototype, 'execute').mockImplementation(
+      async () => ({
+        content: 'agent runtime recovered response',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex' as const,
+        channel: 'agent_sdk' as const,
+        classificationCostUsd: 0,
+      }),
+    );
 
     ctx = createPipelineTestController({
       claudeBridge,

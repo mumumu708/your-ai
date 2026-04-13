@@ -9,9 +9,9 @@
  */
 import { beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { ConfigLoader } from '../kernel/memory/config-loader';
-import { buildMemorySnapshot, type MemoryItem } from '../kernel/prompt/memory-snapshot-builder';
+import { type MemoryItem, buildMemorySnapshot } from '../kernel/prompt/memory-snapshot-builder';
 import { buildPrependContext } from '../kernel/prompt/prepend-context-builder';
-import { estimateTokens, SYSTEM_PROMPT_BUDGET } from '../kernel/prompt/prompt-types';
+import { SYSTEM_PROMPT_BUDGET } from '../kernel/prompt/prompt-types';
 import { SystemPromptBuilder } from '../kernel/prompt/system-prompt-builder';
 import { buildTurnContext } from '../kernel/prompt/turn-context-builder';
 
@@ -41,10 +41,10 @@ function createMockConfigLoader(overrides?: {
   return {
     loadFile: mock(async (filename: string) => files[filename] ?? ''),
     loadAll: mock(async () => ({
-      soul: files['SOUL.md']!,
-      identity: files['IDENTITY.md']!,
-      user: files['USER.md']!,
-      agents: files['AGENTS.md']!,
+      soul: files['SOUL.md'] ?? '',
+      identity: files['IDENTITY.md'] ?? '',
+      user: files['USER.md'] ?? '',
+      agents: files['AGENTS.md'] ?? '',
     })),
     invalidateCache: mock(() => {}),
     getLessonsLearned: mock(async () => ''),
@@ -54,10 +54,10 @@ function createMockConfigLoader(overrides?: {
 // ── Tests ─────────────────────────────────────────────────
 
 describe('Prompt 构建管道集成测试', () => {
-  let logSpy: ReturnType<typeof spyOn>;
+  let _logSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    logSpy = spyOn(console, 'log').mockImplementation(() => {});
+    _logSpy = spyOn(console, 'log').mockImplementation(() => {});
   });
 
   // ── SystemPromptBuilder 端到端组装 ──────────────────────
@@ -199,7 +199,7 @@ describe('Prompt 构建管道集成测试', () => {
       expect(result).toContain('OVERRIDE');
       expect(result).toContain('工具使用规范');
       expect(result).toContain('用户档案');
-      expect(result).toContain('Today\'s date is');
+      expect(result).toContain("Today's date is");
     });
   });
 
@@ -211,9 +211,7 @@ describe('Prompt 构建管道集成测试', () => {
       const builder = new SystemPromptBuilder(configLoader);
 
       // L1: Frozen system prompt
-      const memories: MemoryItem[] = [
-        { content: '用户是前端工程师', category: 'fact' },
-      ];
+      const memories: MemoryItem[] = [{ content: '用户是前端工程师', category: 'fact' }];
       const frozen = await builder.build({
         userId: 'user_e2e',
         channel: 'web',

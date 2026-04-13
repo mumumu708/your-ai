@@ -310,7 +310,7 @@ describe('会话记忆管道集成测试', () => {
       const sessionKey = 'user_expire:web:conv_expire';
       const session = sessionManager.getSessionByKey(sessionKey);
       expect(session).toBeDefined();
-      session!.lastActiveAt = Date.now() - 100000;
+      if (session) session.lastActiveAt = Date.now() - 100000;
 
       // 第二条消息应触发旧会话关闭 + 新会话创建
       await controller.handleIncomingMessage(

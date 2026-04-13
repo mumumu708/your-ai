@@ -8,9 +8,9 @@
  * 验证: 技能注册、就绪检查、索引生成、部署的端到端流程
  */
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
-import { type SkillFileOps, SkillDeployer } from '../kernel/skills/skill-deployer';
+import { SkillDeployer, type SkillFileOps } from '../kernel/skills/skill-deployer';
 import { parseFrontmatter } from '../kernel/skills/skill-frontmatter';
-import { SkillIndexBuilder, type SkillEntry } from '../kernel/skills/skill-index-builder';
+import { type SkillEntry, SkillIndexBuilder } from '../kernel/skills/skill-index-builder';
 import { SkillManager, type SkillManagerFileOps } from '../kernel/skills/skill-manager';
 import { checkReadiness } from '../kernel/skills/skill-readiness';
 
@@ -85,7 +85,7 @@ function createMockDeployerFs(): SkillFileOps & { files: Map<string, string> } {
       for (const key of [...files.keys(), ...dirs]) {
         if (key.startsWith(prefix)) {
           const rest = key.slice(prefix.length);
-          const name = rest.split('/')[0]!;
+          const name = rest.split('/')[0] ?? '';
           if (name && !seen.has(name)) {
             seen.add(name);
             const childPath = `${prefix}${name}`;
@@ -136,7 +136,7 @@ function createMockManagerFs(): SkillManagerFileOps & { files: Map<string, strin
       for (const key of files.keys()) {
         if (key.startsWith(prefix)) {
           const rest = key.slice(prefix.length);
-          const name = rest.split('/')[0]!;
+          const name = rest.split('/')[0] ?? '';
           if (name && !seen.has(name)) {
             seen.add(name);
             const childIsDir = rest.includes('/');
@@ -169,12 +169,12 @@ describe('Skills 执行管道集成测试', () => {
       const { frontmatter } = parseFrontmatter(SKILL_MD_DEPLOY);
 
       expect(frontmatter).not.toBeNull();
-      expect(frontmatter!.name).toBe('deploy-staging');
-      expect(frontmatter!.description).toBe('部署到 staging 环境');
-      expect(frontmatter!.platforms).toEqual(['feishu', 'web']);
+      expect(frontmatter?.name).toBe('deploy-staging');
+      expect(frontmatter?.description).toBe('部署到 staging 环境');
+      expect(frontmatter?.platforms).toEqual(['feishu', 'web']);
 
       // 未设置 DEPLOY_TOKEN → readiness 应失败
-      const result = checkReadiness(frontmatter!.readiness);
+      const result = checkReadiness(frontmatter?.readiness);
       expect(result.ready).toBe(false);
       expect(result.missing).toContain('env:DEPLOY_TOKEN');
     });
@@ -183,9 +183,9 @@ describe('Skills 执行管道集成测试', () => {
       const { frontmatter } = parseFrontmatter(SKILL_MD_NO_DEPS);
 
       expect(frontmatter).not.toBeNull();
-      expect(frontmatter!.name).toBe('hello-world');
+      expect(frontmatter?.name).toBe('hello-world');
 
-      const result = checkReadiness(frontmatter!.readiness);
+      const result = checkReadiness(frontmatter?.readiness);
       expect(result.ready).toBe(true);
       expect(result.missing).toHaveLength(0);
     });
@@ -198,12 +198,12 @@ describe('Skills 执行管道集成测试', () => {
       const originalValue = process.env.RSS_API_KEY;
       process.env.RSS_API_KEY = 'test-key';
       try {
-        const result = checkReadiness(frontmatter!.readiness);
+        const result = checkReadiness(frontmatter?.readiness);
         expect(result.ready).toBe(true);
         expect(result.missing).toHaveLength(0);
       } finally {
         if (originalValue === undefined) {
-          delete process.env.RSS_API_KEY;
+          process.env.RSS_API_KEY = undefined;
         } else {
           process.env.RSS_API_KEY = originalValue;
         }
@@ -342,8 +342,8 @@ describe('Skills 执行管道集成测试', () => {
       // 列出技能
       const skills = manager.listSkills('/workspace');
       expect(skills).toHaveLength(1);
-      expect(skills[0]!.name).toBe('deploy-staging');
-      expect(skills[0]!.command).toBe('/deploy-staging');
+      expect(skills[0]?.name).toBe('deploy-staging');
+      expect(skills[0]?.command).toBe('/deploy-staging');
 
       // 用 SkillIndexBuilder 生成索引
       const indexBuilder = new SkillIndexBuilder();
