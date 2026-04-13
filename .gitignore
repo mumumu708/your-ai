@@ -3,6 +3,9 @@ dist/
 .env
 *.db
 coverage/
+.nyc_output/
+.stryker-tmp/
+reports/mutation/
 logs/
 data/
 user-space/*/
