@@ -1,172 +1,174 @@
-# CLAUDE.md — Your-AI 工程指引
+# CLAUDE.md — Your-AI Engineering Guide
 
-## 项目定位
+## Project Overview
 
-个人 AI 助手平台，多通道接入（Feishu/Telegram/Web）+ 5 层记忆 + 自我进化。
-你正在工程模式下运行——当前消息被识别为工程任务（harness 类型）。
+Personal AI assistant platform with multi-channel access (Feishu/Telegram/Web) + 5-layer memory + self-evolution.
+You are running in engineering mode — the current message has been classified as an engineering task (harness type).
 
-## 核心工作纪律（不可违反）
+## Core Work Discipline (Non-Negotiable)
 
-1. 每次修改代码后，运行 `bun run check:all`
-2. 如果任何检查不通过，立即修复，重新运行，直到全部通过
-3. 只有 check:all 全部通过后，才能向管理员报告完成
-4. 不要问管理员"要不要跑测试"——改完代码就跑，这是你的本职工作
-5. 如果本次任务中发现了新的错误模式，修复后将其追加到 .harness/pitfalls.md
-6. 代码和文档在同一个分支、同一次提交中完成——不允许"代码先合，文档后补"
+1. After every code change, run `bun run check:all`
+2. If any check fails, fix immediately and re-run until all pass
+3. Only report completion after check:all passes entirely
+4. Do not ask the admin "should I run tests?" — run them after every change, it's your job
+5. If a new error pattern is discovered during this task, append it to `.harness/pitfalls.md`
+6. Code and docs in the same branch, same commit — never "code first, docs later"
 
-## .harness/ 文档更新纪律
+## .harness/ Documentation Update Discipline
 
-check:all 通过后，提交前，逐条自检：
+After check:all passes, before committing, self-check each item:
 
-- 新增/删除了模块或文件？→ 更新 .harness/doc-source-map.json
-- 改变了模块间依赖关系或分层结构？→ 更新 .harness/architecture.md
-- 引入了新的编码模式或约定？→ 更新 .harness/conventions.md
-- 发现了新的错误模式或陷阱？→ 追加 .harness/pitfalls.md
-- 做了重大设计决策？→ 在 .harness/design-docs/ 新增 ADR
-- 引入了新的领域概念或术语？→ 更新 .harness/glossary.md
-- 测试策略有变化？→ 更新 .harness/testing.md
-  自检完成后运行 `bun run check:docs` 验证文档一致性。
+- Added/removed modules or files? → Update `.harness/doc-source-map.json`
+- Changed inter-module dependencies or layering? → Update `.harness/architecture.md`
+- Introduced new coding patterns or conventions? → Update `.harness/conventions.md`
+- Discovered new error patterns or pitfalls? → Append to `.harness/pitfalls.md`
+- Made significant design decisions? → Add ADR in `.harness/design-docs/`
+- Introduced new domain concepts or terminology? → Update `.harness/glossary.md`
+- Changed testing strategy? → Update `.harness/testing.md`
 
-## 关键命令
+After self-check, run `bun run check:docs` to verify documentation consistency.
 
-- 全量检查: `bun run check:all`（每次改完代码必跑）
-- 文档检查: `bun run check:docs`（提交前必跑）
-- 测试: `bun test`
+## Key Commands
+
+- Full check: `bun run check:all` (mandatory after every code change)
+- Doc check: `bun run check:docs` (mandatory before commit)
+- Test: `bun test`
 - Lint: `bun run lint` / `bun run lint:fix`
-- 格式化: `bun run format`
-- 架构检查: `bun run check:arch`
-- 覆盖率检查: `bun run check:coverage`（变更文件必须 100% 行/函数覆盖）
-- 创建 PR: `gh pr create --base main --head {branch} --title "..." --body "..."`
+- Format: `bun run format`
+- Architecture check: `bun run check:arch`
+- Coverage check: `bun run check:coverage` (changed files must have 100% line/function coverage)
+- Create PR: `gh pr create --base main --head {branch} --title "..." --body "..."`
 
-## Git 工作流
+## Git Workflow
 
-### 开始前
+### Before Starting
 
-1. `git status` 检查工作区是否干净
-2. 如有未提交更改: `git stash` 暂存（可能是其他任务的残留）
-3. `git checkout main && git pull origin main` 确保基于最新代码
-4. `git checkout -b agent/{类型}/{简短描述}`
+1. `git status` — check if working tree is clean
+2. If uncommitted changes exist: `git stash` (may be leftover from other tasks)
+3. `git checkout main && git pull origin main` — ensure latest code
+4. `git checkout -b agent/{type}/{short-description}`
 
-### 分支命名
+### Branch Naming
 
-- `agent/feat/memory-cache-layer` — 新功能
-- `agent/fix/telegram-timeout` — Bug 修复
-- `agent/refactor/memory-retriever` — 重构
-- `agent/docs/update-architecture` — 纯文档更新
+- `agent/feat/memory-cache-layer` — New feature
+- `agent/fix/telegram-timeout` — Bug fix
+- `agent/refactor/memory-retriever` — Refactoring
+- `agent/docs/update-architecture` — Documentation only
 
-### 提交规范（Conventional Commits）
+### Commit Convention (Conventional Commits)
 
 ```
-feat: 添加 memory 缓存层
-fix: 修复 Telegram 通道超时问题
-refactor: 重构 memory-retriever 查询逻辑
-docs: 更新 architecture.md 中 memory 模块描述
-test: 补充 cache-layer 单元测试
-chore: 更新 doc-source-map.json
+feat: add memory cache layer
+fix: fix Telegram channel timeout
+refactor: restructure memory-retriever query logic
+docs: update architecture.md memory module description
+test: add cache-layer unit tests
+chore: update doc-source-map.json
 ```
 
-- 每个逻辑单元一次 commit（不要把所有改动堆在一个 commit 里）
-- 代码变更和对应的 .harness/ 文档更新放在同一个 commit 中
-- commit message 用中文或英文均可，但同一分支内保持一致
+- One commit per logical unit (don't pile all changes into one commit)
+- Code changes and corresponding `.harness/` doc updates go in the same commit
+- Commit messages can be in Chinese or English, but stay consistent within a branch
 
-### 多步任务的提交策略
+### Multi-Step Task Commit Strategy
 
 ```
 agent/feat/memory-cache-layer
-├── commit 1: feat: 添加 cache-layer.ts 接口和实现
-├── commit 2: feat: 集成缓存到 memory-retriever
-├── commit 3: test: 补充 cache-layer 单元测试
-└── commit 4: docs: 更新 architecture.md 和 doc-source-map
+├── commit 1: feat: add cache-layer.ts interface and implementation
+├── commit 2: feat: integrate cache into memory-retriever
+├── commit 3: test: add cache-layer unit tests
+└── commit 4: docs: update architecture.md and doc-source-map
 ```
 
-### 完成后
+### After Completion
 
-1. 确认 `bun run check:all` 通过
-2. 确认 `bun run check:docs` 通过
-3. `git push origin agent/{类型}/{简短描述}`
-4. 通过 GitHub CLI 创建 PR：
+1. Confirm `bun run check:all` passes
+2. Confirm `bun run check:docs` passes
+3. `git push origin agent/{type}/{short-description}`
+4. Create PR via GitHub CLI:
 
    ```bash
    gh pr create \
      --base main \
-     --head agent/{类型}/{简短描述} \
-     --title "{type}: {简短描述}" \
+     --head agent/{type}/{short-description} \
+     --title "{type}: {short description}" \
      --body "## What / Why
-   {变更说明}
+   {change description}
 
-   ## 变更范围
-   - {涉及的模块和文件}
+   ## Scope
+   - {modules and files affected}
 
    ## Checklist
-   - [x] bun run check:all 通过
-   - [x] bun run check:docs 通过
-   - [x] 新功能有测试
-   - [ ] 如修改 config/ 下 AIEOS 文件，已评估用户侧影响
-   - [ ] 如发现新陷阱，已更新 .harness/pitfalls.md"
+   - [x] bun run check:all passes
+   - [x] bun run check:docs passes
+   - [x] New features have tests
+   - [ ] If config/ AIEOS files modified, user-side impact assessed
+   - [ ] If new pitfalls found, .harness/pitfalls.md updated"
    ```
 
-5. 告知管理员: PR 链接、变更摘要、涉及的模块
-6. 由管理员 review 后合并（merge / squash merge / rebase）
+5. Notify admin: PR link, change summary, affected modules
+6. Admin reviews and merges (merge / squash merge / rebase)
 
-### PR 规范
+### PR Standards
 
-- title 格式与 commit message 一致（`feat: xxx` / `fix: xxx`）
-- body 必须包含 What/Why 和 Checklist
-- 如果 PR 包含多个 commit，在 body 中列出每个 commit 的简要说明
-- 如果 PR 涉及 .harness/ 文档更新，在 body 中标注具体更新了哪些文档
+- Title format matches commit message convention (`feat: xxx` / `fix: xxx`)
+- Body must include What/Why and Checklist
+- If PR contains multiple commits, list each commit's summary in the body
+- If PR includes `.harness/` doc updates, note which documents were updated
 
-### 禁止事项
+### Prohibited Actions
 
-- 不要直接在 main 分支上修改
-- 不要 force push
-- 不要修改不属于当前任务的文件（除非是发现的 bug，记入 pitfalls 后另开分支修复）
+- Do not commit directly to main branch
+- Do not force push
+- Do not modify files outside the current task scope (unless it's a discovered bug — log in pitfalls and fix in a separate branch)
 
-## 架构概览
+## Architecture Overview
 
-→ .harness/architecture.md
+→ `.harness/architecture.md`
 
-五层架构: Gateway → Kernel → Shared → UserSpace → Infra
-依赖方向严格向下。
+Five-layer architecture: Gateway → Kernel → Shared → UserSpace → Infra
+Dependencies flow strictly downward.
 
-## 分层规则
+## Layering Rules
 
-- gateway/ → 可引用 kernel/(公开 API), shared/
-- kernel/ → 可引用 shared/，禁止引用 gateway/
-- shared/ → 零依赖（纯类型/工具函数）
-- mcp-servers/ → 通过 stdio 隔离
+- `gateway/` → may reference `kernel/` (public API), `shared/`
+- `kernel/` → may reference `shared/`, must NOT reference `gateway/`
+- `shared/` → zero dependencies (pure types/utilities)
+- `mcp-servers/` → isolated via stdio
 
-## 编码约定
+## Coding Conventions
 
-→ .harness/conventions.md
+→ `.harness/conventions.md`
 
-## 常见陷阱（必读）
+## Common Pitfalls (Required Reading)
 
-→ .harness/pitfalls.md
+→ `.harness/pitfalls.md`
 
-## 双上下文说明
+## Dual Context Model
 
-本项目有两套上下文：
+This project has two contexts:
 
-- config/ 下的 AIEOS 协议 = AI 助手面向用户的交互行为（复制到每个用户的 user-space）
-- CLAUDE.md + .harness/ = 工程开发行为（仅在 harness 模式加载）
-  修改 config/ 下文件需额外审慎，直接影响所有用户体验。
+- `config/` AIEOS protocol = AI assistant's user-facing interaction behavior (copied to each user's user-space)
+- `CLAUDE.md` + `.harness/` = Engineering development behavior (loaded only in harness mode)
 
-## 设计文档
+Modifying files under `config/` requires extra caution — it directly impacts all users' experience.
 
-→ .harness/design-docs/
+## Design Documents
 
-## 现有系统文档
+→ `.harness/design-docs/`
 
-→ docs/manifest.json
+## Existing System Documentation
 
-## 工作模式说明
+→ `docs/manifest.json`
 
-你正在 headless (--print) 模式下运行。
+## Operating Mode
 
-- 如果用户意图不是工程任务（可能是分类器误判），按普通对话回答即可
-- 复杂任务（涉及 3+ 文件）先输出 plan，等管理员确认后逐步执行
-- 每步完成后自动跑 check:all，通过后执行文档自检 checklist，最后 check:docs
-- 代码 + 文档一起提交，不要分开
+You are running in headless (--print) mode.
+
+- If the user's intent is not an engineering task (possible misclassification), respond as normal conversation
+- Complex tasks (involving 3+ files): output a plan first, wait for admin confirmation before executing step by step
+- After each step: auto-run check:all, then execute doc self-check checklist, finally check:docs
+- Code + docs committed together, never separately
 
 ## graphify
 
