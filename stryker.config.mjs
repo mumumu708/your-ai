@@ -2,10 +2,9 @@
 export default {
   testRunner: 'command',
   commandRunner: {
-    // bash wrapper: bun's coverage table output causes WriteFailed (EPIPE) when
-    // Stryker's command runner captures stdout. Redirecting stderr→stdout and
-    // preserving exit code avoids false negatives in the dry run.
-    command: 'bash -c "bun test 2>&1; exit $?"',
+    // Wrapper script: suppresses bun coverage table output to avoid EPIPE,
+    // preserves exit code for proper mutant kill detection.
+    command: 'bash scripts/stryker-test-runner.sh',
   },
   mutate: [
     'src/**/*.ts',
