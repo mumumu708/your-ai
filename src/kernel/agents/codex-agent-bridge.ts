@@ -5,6 +5,9 @@ import type { AgentBridge, AgentExecuteParams, AgentResult } from './agent-bridg
 
 const logger = new Logger('CodexAgentBridge');
 
+/** Default execution timeout: 120 seconds */
+const DEFAULT_TIMEOUT_MS = 120_000;
+
 /**
  * CodexAgentBridge — 通过 Codex CLI 执行 agent 会话。
  *
@@ -12,18 +15,40 @@ const logger = new Logger('CodexAgentBridge');
  * 支持流式回调、AbortSignal 取消、工作目录设置。
  */
 export class CodexAgentBridge implements AgentBridge {
-  // biome-ignore lint/complexity/noUselessConstructor: explicit for bun coverage
-  constructor() {}
+  private readonly timeoutMs: number;
+
+  constructor(config?: { timeoutMs?: number }) {
+    this.timeoutMs = config?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
 
   async execute(params: AgentExecuteParams): Promise<AgentResult> {
     const args = this.buildArgs(params);
 
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = () => {
+        settled = true;
+        clearTimeout(timer);
+      };
+
       const proc = spawn('codex', args, {
         cwd: params.workspacePath || process.cwd(),
         env: { ...process.env },
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'], // stdin must be closed — codex waits for EOF
       });
+
+      // Execution timeout — kill process if it doesn't exit in time
+      const timer = setTimeout(() => {
+        if (!settled) {
+          logger.warn('Codex CLI 执行超时，终止进程', { timeoutMs: this.timeoutMs });
+          proc.kill('SIGTERM');
+          if (params.streamCallback) {
+            void params.streamCallback({ type: 'done' });
+          }
+          settled = true;
+          reject(new Error(`Codex CLI timeout after ${this.timeoutMs}ms`));
+        }
+      }, this.timeoutMs);
 
       let stdout = '';
       let stderr = '';
@@ -58,11 +83,21 @@ export class CodexAgentBridge implements AgentBridge {
       });
 
       if (params.signal) {
-        params.signal.addEventListener('abort', () => proc.kill('SIGTERM'), { once: true });
+        params.signal.addEventListener('abort', () => {
+          if (!settled) {
+            proc.kill('SIGTERM');
+          }
+        }, { once: true });
       }
 
       proc.on('close', (code) => {
+        if (settled) return;
+        settle();
+
         if (code !== 0 && code !== null) {
+          if (params.streamCallback) {
+            void params.streamCallback({ type: 'done' });
+          }
           reject(new Error(`Codex CLI exited with code ${code}: ${stderr}`));
           return;
         }
@@ -72,6 +107,10 @@ export class CodexAgentBridge implements AgentBridge {
 
         logger.info('Codex CLI 执行完成', { contentLength: content.length });
 
+        if (params.streamCallback) {
+          void params.streamCallback({ type: 'done' });
+        }
+
         resolve({
           content,
           tokenUsage: { inputTokens: 0, outputTokens: 0 }, // Codex doesn't expose token usage easily
@@ -80,7 +119,14 @@ export class CodexAgentBridge implements AgentBridge {
         });
       });
 
-      proc.on('error', (err) => reject(err));
+      proc.on('error', (err) => {
+        if (settled) return;
+        settle();
+        if (params.streamCallback) {
+          void params.streamCallback({ type: 'done' });
+        }
+        reject(err);
+      });
     });
   }
 

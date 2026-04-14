@@ -208,8 +208,9 @@ describe('CodexAgentBridge', () => {
     mockProc.emit('close', 0);
 
     await resultPromise;
-    expect(streamEvents.length).toBe(1);
+    expect(streamEvents.length).toBe(2);
     expect(streamEvents[0]).toEqual({ type: 'text_delta', text: 'streaming...' });
+    expect(streamEvents[1]).toEqual({ type: 'done' });
   });
 
   test('execute ignores non-assistant messages in stream', async () => {
@@ -237,7 +238,9 @@ describe('CodexAgentBridge', () => {
     mockProc.emit('close', 0);
 
     await resultPromise;
-    expect(streamEvents.length).toBe(0);
+    // Only the done event should be present (user/non-JSON messages are ignored)
+    expect(streamEvents.length).toBe(1);
+    expect(streamEvents[0]).toEqual({ type: 'done' });
   });
 
   test('execute handles AbortSignal', async () => {

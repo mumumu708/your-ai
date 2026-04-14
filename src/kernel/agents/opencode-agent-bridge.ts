@@ -25,7 +25,7 @@ export class OpenCodeAgentBridge implements AgentBridge {
       const proc = spawn(this.opencodePath, args, {
         cwd: params.workspacePath || process.cwd(),
         env: { ...process.env },
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'], // stdin must be closed — CLI may wait for EOF
       });
 
       let stdout = '';
