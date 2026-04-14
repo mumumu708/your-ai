@@ -82,7 +82,10 @@ export interface CentralControllerDeps {
     userId: string,
     channel: string,
     conversationId: string,
+    options?: { existingCardId?: string },
   ) => ChannelStreamAdapter[];
+  /** DD-021: Send placeholder card before agent execution, returns cardId + messageId */
+  placeholderSender?: (chatId: string) => Promise<{ cardId: string; messageId: string }>;
   ovClient?: OpenVikingClient;
   configLoader?: ConfigLoader;
   contextManager?: ContextManager;
@@ -118,7 +121,9 @@ export class CentralController {
     userId: string,
     channel: string,
     conversationId: string,
+    options?: { existingCardId?: string },
   ) => ChannelStreamAdapter[];
+  private placeholderSender?: (chatId: string) => Promise<{ cardId: string; messageId: string }>;
   private readonly ovClient: OpenVikingClient;
   private readonly configLoader: ConfigLoader;
   private readonly contextManager: ContextManager;
@@ -161,6 +166,7 @@ export class CentralController {
     this.streamHandler = deps?.streamHandler ?? new StreamHandler();
     this.streamCallback = deps?.streamCallback;
     this.streamAdapterFactory = deps?.streamAdapterFactory;
+    this.placeholderSender = deps?.placeholderSender;
 
     // Build classifier and AgentRuntime with injected dependencies
     this.classifier = deps?.classifier ?? new TaskClassifier(deps?.lightLLM ?? null);
@@ -855,6 +861,21 @@ export class CentralController {
       // Non-critical, continue
     }
 
+    // DD-021: Send placeholder card for Feishu channel before agent execution
+    let existingCardId: string | undefined;
+    if (task.message.channel === 'feishu' && this.placeholderSender && !task.session.threadId) {
+      try {
+        const placeholder = await this.placeholderSender(task.message.conversationId);
+        existingCardId = placeholder.cardId;
+        // Bind threadId to session for grouped replies
+        this.sessionManager.updateThreadBinding(sessionKey, placeholder.messageId);
+      } catch (err) {
+        this.logger.warn('占位卡片发送失败，回退到默认流式', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // Build stream callback with StreamContentFilter
     // Filter: only pass text_delta, tool_use, error, done events; block thinking/tool_result
     const streamFilter = new StreamContentFilter();
@@ -865,6 +886,7 @@ export class CentralController {
       task.message.userId,
       task.message.channel,
       task.message.conversationId,
+      existingCardId ? { existingCardId } : undefined,
     );
 
     if (adapters && adapters.length > 0) {
@@ -1048,6 +1070,15 @@ export class CentralController {
           },
         });
 
+        // Gateway 快速路径不触发 streamCallback，需手动推送流式事件
+        // 否则 processStream 的 async iterator 永远等不到 done → 死锁
+        if (gatewayResult.handledBy === 'gateway' && streamCallback) {
+          if (gatewayResult.content) {
+            streamCallback({ type: 'text_delta', text: gatewayResult.content });
+          }
+          streamCallback({ type: 'done' });
+        }
+
         // Map to EnhancedAgentResult for backward compatibility
         result = {
           content: gatewayResult.content,
@@ -1059,9 +1090,10 @@ export class CentralController {
           classificationCostUsd: task.classifyResult?.costUsd ?? 0,
         };
       } catch (gatewayError) {
-        this.logger.warn('IntelligenceGateway 失败，回退到 AgentRuntime', {
+        this.logger.warn('IntelligenceGateway 失败，回退到 AgentRuntime (forceComplex)', {
           error: gatewayError instanceof Error ? gatewayError.message : String(gatewayError),
         });
+        // Gateway 失败（通常是 LightLLM 429/500），直接走 Claude 避免二次失败
         result = await this.agentRuntime.execute({
           agentId: 'default',
           context: {
@@ -1073,7 +1105,7 @@ export class CentralController {
           },
           signal: task.signal,
           streamCallback,
-          forceComplex: options?.forceComplex,
+          forceComplex: true,
           classifyResult: task.classifyResult,
         });
       }
@@ -1394,9 +1426,21 @@ export class CentralController {
 
   /** Set stream adapter factory (called after channel registration) */
   setStreamAdapterFactory(
-    factory: (userId: string, channel: string, conversationId: string) => ChannelStreamAdapter[],
+    factory: (
+      userId: string,
+      channel: string,
+      conversationId: string,
+      options?: { existingCardId?: string },
+    ) => ChannelStreamAdapter[],
   ): void {
     this.streamAdapterFactory = factory;
+  }
+
+  /** DD-021: Set placeholder sender (called after channel registration) */
+  setPlaceholderSender(
+    sender: (chatId: string) => Promise<{ cardId: string; messageId: string }>,
+  ): void {
+    this.placeholderSender = sender;
   }
 
   /**

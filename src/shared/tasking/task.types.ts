@@ -36,6 +36,8 @@ export interface Session {
   harnessWorktreePath?: string;
   harnessBranch?: string;
   harnessGroupChatId?: string;
+  /** DD-021: Feishu message thread ID — binds session to a reply thread */
+  threadId?: string;
   // DD-018: Session-level frozen prompt + per-turn context state
   frozenSystemPrompt?: {
     content: string;

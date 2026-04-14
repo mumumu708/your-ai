@@ -310,4 +310,22 @@ describe('SessionManager', () => {
       store.close();
     });
   });
+
+  describe('updateThreadBinding (DD-021)', () => {
+    test('应该将 threadId 绑定到 session', async () => {
+      const manager = new SessionManager();
+      const session = await manager.resolveSession('user_001', 'feishu', 'chat_001');
+      expect(session.threadId).toBeUndefined();
+
+      manager.updateThreadBinding('user_001:feishu:chat_001', 'msg_placeholder_001');
+
+      expect(session.threadId).toBe('msg_placeholder_001');
+    });
+
+    test('对不存在的 session 应该静默忽略', () => {
+      const manager = new SessionManager();
+      // Should not throw
+      manager.updateThreadBinding('nonexistent:key:here', 'msg_001');
+    });
+  });
 });

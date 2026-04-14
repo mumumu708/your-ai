@@ -113,6 +113,19 @@ export class FeishuCardKitClient {
     });
     this.logger.info('操作按钮已添加', { cardId, buttons });
   }
+  /**
+   * DD-021: Send a placeholder streaming card to a chat.
+   * Returns cardId (for adapter reuse) and messageId (for thread binding).
+   */
+  async sendPlaceholder(
+    chatId: string,
+    text = '💭 Thinking...',
+  ): Promise<{ cardId: string; messageId: string }> {
+    const cardId = await this.createStreamingCard(text);
+    const messageId = await this.sendCardMessage(chatId, cardId);
+    this.logger.info('占位卡片已发送', { chatId, cardId, messageId });
+    return { cardId, messageId };
+  }
 }
 
 export { CONTENT_ELEMENT_ID };

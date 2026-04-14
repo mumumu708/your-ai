@@ -354,6 +354,34 @@ describe('FeishuStreamAdapter', () => {
       expect(finalUpdate.text).not.toContain('⚡');
     });
 
+    test('existingCardId 应该跳过卡片创建，直接复用', async () => {
+      const deps = createMockDeps();
+      const adapter = new FeishuStreamAdapter('chat_001', deps, 0, 'pre_card_001');
+
+      await adapter.onStreamStart('msg_001');
+
+      // Should NOT create a new card or send card message
+      expect(deps.createdCards.length).toBe(0);
+      expect(deps.sentCardMessages.length).toBe(0);
+
+      // Should use the existing card for updates
+      await adapter.sendChunk('Hello', createProtocol());
+      expect(deps.textUpdates.length).toBe(1);
+      expect(deps.textUpdates[0].cardId).toBe('pre_card_001');
+    });
+
+    test('existingCardId 应该在 sendDone 时正常关闭', async () => {
+      const deps = createMockDeps();
+      const adapter = new FeishuStreamAdapter('chat_001', deps, 0, 'pre_card_001');
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk('Hello', createProtocol());
+      await adapter.sendDone('Final', createProtocol({ type: 'stream_end' }));
+
+      expect(deps.closedCards[0]).toBe('pre_card_001');
+      expect(deps.addedButtons[0].cardId).toBe('pre_card_001');
+    });
+
     test('连续 tool_start 事件只保留最后一个状态行', async () => {
       const deps = createMockDeps();
       const adapter = new FeishuStreamAdapter('chat_001', deps, 0);

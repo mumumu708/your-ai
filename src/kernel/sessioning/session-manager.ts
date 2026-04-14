@@ -120,6 +120,15 @@ export class SessionManager {
     }
   }
 
+  /** DD-021: Bind a Feishu thread ID to a session for grouped replies */
+  updateThreadBinding(sessionKey: string, threadId: string): void {
+    const session = this.findSessionByKey(sessionKey);
+    if (session) {
+      session.threadId = threadId;
+      this.logger.info('ThreadId 已绑定', { sessionId: session.id, threadId });
+    }
+  }
+
   getSessionByKey(key: string): Session | undefined {
     return this.sessions.get(key);
   }

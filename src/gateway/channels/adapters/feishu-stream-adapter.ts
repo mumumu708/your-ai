@@ -45,10 +45,14 @@ export class FeishuStreamAdapter implements ChannelStreamAdapter {
   private sequenceCounter = 0;
   private fallbackMode = false;
 
-  constructor(chatId: string, deps: FeishuStreamDeps, throttleMs = 300) {
+  /** Pre-created card ID from placeholder — skips card creation in onStreamStart */
+  private readonly existingCardId?: string;
+
+  constructor(chatId: string, deps: FeishuStreamDeps, throttleMs = 300, existingCardId?: string) {
     this.chatId = chatId;
     this.deps = deps;
     this.throttleMs = throttleMs;
+    this.existingCardId = existingCardId;
   }
 
   async onStreamStart(_messageId: string): Promise<void> {
@@ -59,6 +63,12 @@ export class FeishuStreamAdapter implements ChannelStreamAdapter {
     this.lastUpdateTime = 0;
     this.sequenceCounter = 0;
     this.fallbackMode = false;
+
+    // Reuse pre-created placeholder card if available (DD-021)
+    if (this.existingCardId) {
+      this.cardId = this.existingCardId;
+      return;
+    }
 
     try {
       this.cardId = await this.deps.createStreamingCard('思考中...');

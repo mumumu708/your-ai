@@ -121,4 +121,30 @@ describe('FeishuCardKitClient', () => {
     expect(elements[0].tag).toBe('action');
     expect(elements[0].actions.length).toBe(2);
   });
+
+  test('sendPlaceholder 应该创建卡片并发送，返回 cardId 和 messageId', async () => {
+    const mockClient = createMockClient();
+    const cardKitClient = new FeishuCardKitClient(mockClient);
+
+    const result = await cardKitClient.sendPlaceholder('chat_001');
+
+    expect(result.cardId).toBe('card_test_001');
+    expect(result.messageId).toBe('msg_test_001');
+  });
+
+  test('sendPlaceholder 应该使用自定义占位文本', async () => {
+    let capturedCardJson = '';
+    const mockClient = createMockClient();
+    mockClient.cardkit.v1.card.create = async (params: unknown) => {
+      const p = params as Record<string, unknown>;
+      capturedCardJson = (p.data as Record<string, unknown>).data as string;
+      return { data: { card_id: 'card_custom' } };
+    };
+    const cardKitClient = new FeishuCardKitClient(mockClient);
+
+    await cardKitClient.sendPlaceholder('chat_001', '处理中...');
+
+    const parsed = JSON.parse(capturedCardJson);
+    expect(parsed.body.elements[0].content).toBe('处理中...');
+  });
 });

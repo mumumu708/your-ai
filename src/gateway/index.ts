@@ -371,20 +371,29 @@ registerChannels()
     const feishuChannel = channelManager.getChannel('feishu') as FeishuChannel | undefined;
     if (feishuChannel) {
       const cardKitClient = new FeishuCardKitClient(feishuChannel.getClient());
-      controller.setStreamAdapterFactory((userId, channel, conversationId) => {
+
+      // DD-021: Wire placeholder sender for Feishu channel
+      controller.setPlaceholderSender((chatId) => cardKitClient.sendPlaceholder(chatId));
+
+      controller.setStreamAdapterFactory((userId, channel, conversationId, options) => {
         if (channel === 'feishu') {
           return [
-            new FeishuStreamAdapter(conversationId, {
-              createStreamingCard: (text) => cardKitClient.createStreamingCard(text),
-              sendCardMessage: (chatId, cardId) => cardKitClient.sendCardMessage(chatId, cardId),
-              streamUpdateText: (cardId, elemId, text, seq) =>
-                cardKitClient.streamUpdateText(cardId, elemId, text, seq),
-              closeStreamingMode: (cardId, seq) => cardKitClient.closeStreamingMode(cardId, seq),
-              addActionButtons: (cardId, afterId, btns, seq) =>
-                cardKitClient.addActionButtons(cardId, afterId, btns, seq),
-              sendTextMessage: (_chatId, text) =>
-                feishuChannel.sendMessage(userId, { type: 'text', text }),
-            }),
+            new FeishuStreamAdapter(
+              conversationId,
+              {
+                createStreamingCard: (text) => cardKitClient.createStreamingCard(text),
+                sendCardMessage: (chatId, cardId) => cardKitClient.sendCardMessage(chatId, cardId),
+                streamUpdateText: (cardId, elemId, text, seq) =>
+                  cardKitClient.streamUpdateText(cardId, elemId, text, seq),
+                closeStreamingMode: (cardId, seq) => cardKitClient.closeStreamingMode(cardId, seq),
+                addActionButtons: (cardId, afterId, btns, seq) =>
+                  cardKitClient.addActionButtons(cardId, afterId, btns, seq),
+                sendTextMessage: (_chatId, text) =>
+                  feishuChannel.sendMessage(userId, { type: 'text', text }),
+              },
+              300,
+              options?.existingCardId,
+            ),
           ];
         }
         return [];
