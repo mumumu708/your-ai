@@ -105,6 +105,18 @@ export class StreamHandler {
             break;
           }
 
+          case 'stream_reset': {
+            // Primary bridge partially streamed then crashed — discard accumulated content
+            this.logger.info('stream_reset: 清空缓冲区，丢弃部分内容', {
+              messageId,
+              discardedLength: fullContent.length,
+            });
+            fullContent = '';
+            buffer.forceFlush(); // discard buffer
+            totalChunks = 0;
+            break;
+          }
+
           case 'done': {
             // Flush any remaining buffered content
             const finalRemaining = buffer.forceFlush();

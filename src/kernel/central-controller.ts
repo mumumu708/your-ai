@@ -1033,61 +1033,88 @@ export class CentralController {
     // Execute via IntelligenceGateway (with AgentRuntime fallback)
     let result: EnhancedAgentResult;
 
-    if (this.intelligenceGateway) {
-      try {
-        const gatewayResult = await this.intelligenceGateway.handle({
-          message: task.message.content,
-          complexity: task.classifyResult?.complexity || 'complex',
-          taskType: task.classifyResult?.taskType || 'chat',
-          hasAttachments: (task.message.attachments?.length ?? 0) > 0,
-          agentParams: {
-            systemPrompt: finalSystemPrompt,
-            prependContext,
-            userMessage: task.message.content,
-            sessionId: task.session.id,
-            claudeSessionId: task.session.claudeSessionId,
-            workspacePath,
-            mcpConfig: this.mcpConfigBuilder.build({
-              executionMode: task.classifyResult?.executionMode || 'sync',
-              taskType: task.classifyResult?.taskType || 'chat',
-              userId: task.session.userId,
-            }),
-            signal: task.signal,
-            streamCallback: streamCallback
-              ? async (event) => {
-                  streamCallback(event);
-                }
-              : undefined,
-            executionMode: task.classifyResult?.executionMode || 'sync',
-            classifyResult: task.classifyResult as Record<string, unknown> | undefined,
-            maxTurns: task.classifyResult?.taskType === 'harness' ? 100 : 30,
-          },
-        });
-
-        // Gateway 快速路径不触发 streamCallback，需手动推送流式事件
-        // 否则 processStream 的 async iterator 永远等不到 done → 死锁
-        if (gatewayResult.handledBy === 'gateway' && streamCallback) {
-          if (gatewayResult.content) {
-            streamCallback({ type: 'text_delta', text: gatewayResult.content });
-          }
-          streamCallback({ type: 'done' });
+    let streamDoneSent = false;
+    let executionFailed = false;
+    const guardedStreamCallback = streamCallback
+      ? (event: StreamEvent) => {
+          if (event.type === 'done' || event.type === 'error') streamDoneSent = true;
+          streamCallback(event);
         }
+      : undefined;
 
-        // Map to EnhancedAgentResult for backward compatibility
-        result = {
-          content: gatewayResult.content,
-          tokenUsage: gatewayResult.tokenUsage,
-          toolsUsed: gatewayResult.toolsUsed,
-          claudeSessionId: gatewayResult.claudeSessionId,
-          complexity: gatewayResult.handledBy === 'gateway' ? 'simple' : 'complex',
-          channel: gatewayResult.handledBy === 'gateway' ? 'light_llm' : 'agent_sdk',
-          classificationCostUsd: task.classifyResult?.costUsd ?? 0,
-        };
-      } catch (gatewayError) {
-        this.logger.warn('IntelligenceGateway 失败，回退到 AgentRuntime (forceComplex)', {
-          error: gatewayError instanceof Error ? gatewayError.message : String(gatewayError),
-        });
-        // Gateway 失败（通常是 LightLLM 429/500），直接走 Claude 避免二次失败
+    try {
+      if (this.intelligenceGateway) {
+        try {
+          const gatewayResult = await this.intelligenceGateway.handle({
+            message: task.message.content,
+            complexity: task.classifyResult?.complexity || 'complex',
+            taskType: task.classifyResult?.taskType || 'chat',
+            hasAttachments: (task.message.attachments?.length ?? 0) > 0,
+            agentParams: {
+              systemPrompt: finalSystemPrompt,
+              prependContext,
+              userMessage: task.message.content,
+              sessionId: task.session.id,
+              claudeSessionId: task.session.claudeSessionId,
+              workspacePath,
+              mcpConfig: this.mcpConfigBuilder.build({
+                executionMode: task.classifyResult?.executionMode || 'sync',
+                taskType: task.classifyResult?.taskType || 'chat',
+                userId: task.session.userId,
+              }),
+              signal: task.signal,
+              streamCallback: guardedStreamCallback
+                ? async (event) => {
+                    guardedStreamCallback(event);
+                  }
+                : undefined,
+              executionMode: task.classifyResult?.executionMode || 'sync',
+              classifyResult: task.classifyResult as Record<string, unknown> | undefined,
+              maxTurns: task.classifyResult?.taskType === 'harness' ? 100 : 30,
+            },
+          });
+
+          // Gateway 快速路径不触发 streamCallback，需手动推送流式事件
+          // 否则 processStream 的 async iterator 永远等不到 done → 死锁
+          if (gatewayResult.handledBy === 'gateway' && guardedStreamCallback) {
+            if (gatewayResult.content) {
+              guardedStreamCallback({ type: 'text_delta', text: gatewayResult.content });
+            }
+            guardedStreamCallback({ type: 'done' });
+          }
+
+          // Map to EnhancedAgentResult for backward compatibility
+          result = {
+            content: gatewayResult.content,
+            tokenUsage: gatewayResult.tokenUsage,
+            toolsUsed: gatewayResult.toolsUsed,
+            claudeSessionId: gatewayResult.claudeSessionId,
+            complexity: gatewayResult.handledBy === 'gateway' ? 'simple' : 'complex',
+            channel: gatewayResult.handledBy === 'gateway' ? 'light_llm' : 'agent_sdk',
+            classificationCostUsd: task.classifyResult?.costUsd ?? 0,
+          };
+        } catch (gatewayError) {
+          this.logger.warn('IntelligenceGateway 失败，回退到 AgentRuntime (forceComplex)', {
+            error: gatewayError instanceof Error ? gatewayError.message : String(gatewayError),
+          });
+          // Gateway 失败（通常是 LightLLM 429/500），直接走 Claude 避免二次失败
+          result = await this.agentRuntime.execute({
+            agentId: 'default',
+            context: {
+              sessionId: task.session.id,
+              messages: contextMessages,
+              systemPrompt: finalSystemPrompt,
+              workspacePath,
+              claudeSessionId: task.session.claudeSessionId,
+            },
+            signal: task.signal,
+            streamCallback: guardedStreamCallback,
+            forceComplex: true,
+            classifyResult: task.classifyResult,
+          });
+        }
+      } else {
+        // No gateway available — use AgentRuntime directly
         result = await this.agentRuntime.execute({
           agentId: 'default',
           context: {
@@ -1098,27 +1125,20 @@ export class CentralController {
             claudeSessionId: task.session.claudeSessionId,
           },
           signal: task.signal,
-          streamCallback,
-          forceComplex: true,
+          streamCallback: guardedStreamCallback,
+          forceComplex: options?.forceComplex,
           classifyResult: task.classifyResult,
         });
       }
-    } else {
-      // No gateway available — use AgentRuntime directly
-      result = await this.agentRuntime.execute({
-        agentId: 'default',
-        context: {
-          sessionId: task.session.id,
-          messages: contextMessages,
-          systemPrompt: finalSystemPrompt,
-          workspacePath,
-          claudeSessionId: task.session.claudeSessionId,
-        },
-        signal: task.signal,
-        streamCallback,
-        forceComplex: options?.forceComplex,
-        classifyResult: task.classifyResult,
-      });
+    } catch (execError) {
+      executionFailed = true;
+      throw execError;
+    } finally {
+      // 安全网：仅在异常时确保 stream adapter 不会永远卡在 loading 状态
+      if (executionFailed && streamResultPromise && !streamDoneSent && streamCallback) {
+        streamCallback({ type: 'error', error: '执行异常，流式已关闭' });
+        streamCallback({ type: 'done' });
+      }
     }
 
     if (streamResultPromise) {

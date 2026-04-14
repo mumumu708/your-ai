@@ -64,6 +64,11 @@ export class StreamContentFilter {
         return { type: 'done', text: '', append: false };
       }
 
+      case 'stream_reset': {
+        this.toolStatusLine = null;
+        return { type: 'content', text: '', append: false }; // pass through as content reset
+      }
+
       default:
         return null;
     }
