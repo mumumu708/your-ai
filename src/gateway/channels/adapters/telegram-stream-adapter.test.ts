@@ -155,4 +155,83 @@ describe('TelegramStreamAdapter', () => {
 
     await adapter.sendDone('AB final', createProtocol({ type: 'stream_end' }));
   });
+
+  describe('内容过滤 (StreamContentFilter 集成)', () => {
+    test('tool_start chunk 应该显示状态行而不是累积到正文', async () => {
+      const deps = createMockDeps();
+      const adapter = new TelegramStreamAdapter(100, deps, 0);
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk(
+        '\n> 🔧 web_search ...\n',
+        createProtocol({ type: 'tool_start', data: { toolName: 'web_search' } }),
+      );
+
+      expect(deps.sentMessages.length).toBe(1);
+      expect(deps.sentMessages[0].text).toBe('🌐 正在搜索网络...');
+    });
+
+    test('tool_result chunk 应该被完全抑制', async () => {
+      const deps = createMockDeps();
+      const adapter = new TelegramStreamAdapter(100, deps, 0);
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk('Hello', createProtocol());
+      const countAfter = deps.sentMessages.length + deps.editedMessages.length;
+
+      await adapter.sendChunk('> ✅ 完成\n\n', createProtocol({ type: 'tool_result' }));
+
+      expect(deps.sentMessages.length + deps.editedMessages.length).toBe(countAfter);
+    });
+
+    test('tool_start 后跟 text_delta 应该合并显示：正文 + 状态行', async () => {
+      const deps = createMockDeps();
+      const adapter = new TelegramStreamAdapter(100, deps, 0);
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk('Processing', createProtocol());
+      await adapter.sendChunk(
+        '',
+        createProtocol({ type: 'tool_start', data: { toolName: 'Bash' } }),
+      );
+
+      const allUpdates = [...deps.sentMessages, ...deps.editedMessages];
+      const lastUpdate = allUpdates[allUpdates.length - 1];
+      expect(lastUpdate.text).toBe('Processing\n\n⚡ 正在执行命令...');
+    });
+
+    test('tool_start 后跟 text_delta 应该清除状态行', async () => {
+      const deps = createMockDeps();
+      const adapter = new TelegramStreamAdapter(100, deps, 0);
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk(
+        '',
+        createProtocol({ type: 'tool_start', data: { toolName: 'Bash' } }),
+      );
+      await adapter.sendChunk('Done', createProtocol());
+
+      const allUpdates = [...deps.sentMessages, ...deps.editedMessages];
+      const lastUpdate = allUpdates[allUpdates.length - 1];
+      expect(lastUpdate.text).toBe('Done');
+      expect(lastUpdate.text).not.toContain('⚡');
+    });
+
+    test('sendDone 最终渲染不应包含状态行', async () => {
+      const deps = createMockDeps();
+      const adapter = new TelegramStreamAdapter(100, deps, 0);
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk(
+        '',
+        createProtocol({ type: 'tool_start', data: { toolName: 'Read' } }),
+      );
+      await adapter.sendDone('Final answer', createProtocol({ type: 'stream_end' }));
+
+      const allUpdates = [...deps.sentMessages, ...deps.editedMessages];
+      const lastUpdate = allUpdates[allUpdates.length - 1];
+      expect(lastUpdate.text).toBe('Final answer');
+      expect(lastUpdate.text).not.toContain('📄');
+    });
+  });
 });

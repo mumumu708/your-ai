@@ -1,3 +1,4 @@
+import { StreamContentFilter } from '../../../kernel/streaming/stream-content-filter';
 import type {
   ChannelStreamAdapter,
   StreamProtocol,
@@ -18,9 +19,11 @@ export class TelegramStreamAdapter implements ChannelStreamAdapter {
   private readonly chatId: number;
   private readonly deps: TelegramStreamDeps;
   private readonly throttleMs: number;
+  private readonly filter = new StreamContentFilter();
 
   private messageId?: number;
-  private accumulatedText = '';
+  private contentBuffer = ''; // Accumulates only text_delta content
+  private statusLine: string | null = null; // Current tool status — not persisted to buffer
   private updateCount = 0;
   private lastUpdateTime = 0;
   private pendingUpdate: ReturnType<typeof setTimeout> | null = null;
@@ -32,18 +35,43 @@ export class TelegramStreamAdapter implements ChannelStreamAdapter {
   }
 
   async onStreamStart(_messageId: string): Promise<void> {
-    this.accumulatedText = '';
+    this.contentBuffer = '';
+    this.statusLine = null;
     this.messageId = undefined;
     this.updateCount = 0;
     this.lastUpdateTime = 0;
   }
 
-  async sendChunk(text: string, _protocol: StreamProtocol): Promise<void> {
-    this.accumulatedText += text;
+  async sendChunk(text: string, protocol: StreamProtocol): Promise<void> {
+    switch (protocol.type) {
+      case 'tool_start': {
+        // Show a one-line status summary instead of accumulating raw tool text
+        const filtered = this.filter.filter({
+          type: 'tool_use',
+          toolName: protocol.data.toolName,
+        });
+        if (filtered) {
+          this.statusLine = filtered.text;
+        }
+        break;
+      }
 
-    if (this.accumulatedText.length > MAX_MESSAGE_CONTENT_LENGTH) {
-      const keep = MAX_MESSAGE_CONTENT_LENGTH - 100;
-      this.accumulatedText = `... (truncated)\n\n${this.accumulatedText.slice(-keep)}`;
+      case 'tool_result': {
+        // Suppress tool results — text content follows via text_delta
+        return;
+      }
+
+      default: {
+        // text_delta (and any unrecognised types): accumulate content, clear status line
+        this.contentBuffer += text;
+        this.statusLine = null;
+
+        if (this.contentBuffer.length > MAX_MESSAGE_CONTENT_LENGTH) {
+          const keep = MAX_MESSAGE_CONTENT_LENGTH - 100;
+          this.contentBuffer = `... (truncated)\n\n${this.contentBuffer.slice(-keep)}`;
+        }
+        break;
+      }
     }
 
     const now = Date.now();
@@ -68,8 +96,7 @@ export class TelegramStreamAdapter implements ChannelStreamAdapter {
       this.pendingUpdate = null;
     }
 
-    this.accumulatedText = finalText;
-
+    // Final render: clean content only, no status line
     if (!this.messageId) {
       this.messageId = await this.deps.sendMessage(this.chatId, finalText);
     } else {
@@ -89,8 +116,8 @@ export class TelegramStreamAdapter implements ChannelStreamAdapter {
       this.pendingUpdate = null;
     }
 
-    const errorText = this.accumulatedText
-      ? `${this.accumulatedText}\n\n[Error: ${error}]`
+    const errorText = this.contentBuffer
+      ? `${this.contentBuffer}\n\n[Error: ${error}]`
       : `[Error: ${error}]`;
 
     if (this.messageId) {
@@ -100,16 +127,25 @@ export class TelegramStreamAdapter implements ChannelStreamAdapter {
     }
   }
 
+  /** Combines content buffer with active status line for streaming display. */
+  private buildDisplay(): string {
+    if (this.contentBuffer && this.statusLine) {
+      return `${this.contentBuffer}\n\n${this.statusLine}`;
+    }
+    return this.contentBuffer || this.statusLine || '';
+  }
+
   private async flushUpdate(): Promise<void> {
-    if (!this.accumulatedText) return;
+    const display = this.buildDisplay();
+    if (!display) return;
 
     this.updateCount++;
     this.lastUpdateTime = Date.now();
 
     if (!this.messageId) {
-      this.messageId = await this.deps.sendMessage(this.chatId, this.accumulatedText);
+      this.messageId = await this.deps.sendMessage(this.chatId, display);
     } else {
-      await this.deps.editMessage(this.chatId, this.messageId, this.accumulatedText);
+      await this.deps.editMessage(this.chatId, this.messageId, display);
     }
   }
 }
