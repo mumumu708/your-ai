@@ -139,6 +139,9 @@ export class CodexAgentBridge implements AgentBridge {
     // JSONL output
     args.push('--json');
 
+    // Skip git repo trust check — server process runs in arbitrary cwd
+    args.push('--skip-git-repo-check');
+
     // Working directory
     if (params.workspacePath) {
       args.push('-C', params.workspacePath);
