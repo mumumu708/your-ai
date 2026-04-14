@@ -1,5 +1,5 @@
 import { Logger } from '../../shared/logging/logger';
-import type { AgentBridge, AgentExecuteParams, AgentResult } from './agent-bridge';
+import type { AgentBridge, AgentExecuteParams, AgentProviderId, AgentResult } from './agent-bridge';
 
 /**
  * AgentBridgeWithFallback — 容错包装。
@@ -14,8 +14,8 @@ export class AgentBridgeWithFallback implements AgentBridge {
   constructor(
     private readonly primary: AgentBridge,
     private readonly fallback: AgentBridge,
-    private readonly primaryName: 'claude' | 'codex' = 'claude',
-    private readonly fallbackName: 'claude' | 'codex' = 'codex',
+    private readonly primaryName: AgentProviderId = 'claude',
+    private readonly fallbackName: AgentProviderId = 'codex',
   ) {}
 
   async execute(params: AgentExecuteParams): Promise<AgentResult> {

@@ -1,5 +1,8 @@
 import type { StreamEvent } from '../../shared/messaging/stream-event.types';
 
+/** Agent provider 标识 — 内置 + 可扩展 */
+export type AgentProviderId = 'claude' | 'codex' | 'opencode' | 'gateway' | (string & {});
+
 /** 执行模式 */
 export type ExecutionMode = 'sync' | 'async' | 'long-horizon';
 
@@ -54,7 +57,7 @@ export interface AgentResult {
   claudeSessionId?: string;
   turnsUsed?: number;
   finishedNaturally: boolean;
-  handledBy: 'claude' | 'codex' | 'gateway';
+  handledBy: AgentProviderId;
 }
 
 /**

@@ -1,5 +1,6 @@
 // Agent Bridge — 统一接口
 export type {
+  AgentProviderId,
   ExecutionMode,
   McpServerConfig,
   McpConfig,
@@ -13,6 +14,9 @@ export { ClaudeBridgeAdapter } from './claude-bridge-adapter';
 
 // Codex Agent Bridge
 export { CodexAgentBridge } from './codex-agent-bridge';
+
+// OpenCode Agent Bridge
+export { OpenCodeAgentBridge } from './opencode-agent-bridge';
 
 // Fallback 容错包装
 export { AgentBridgeWithFallback } from './agent-bridge-fallback';
