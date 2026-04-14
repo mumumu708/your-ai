@@ -2,12 +2,12 @@ import type { AgentExecuteParams, AgentResult } from '../../shared/agents/agent-
 import { Logger } from '../../shared/logging/logger';
 import type { ClassifyContext } from '../classifier/classifier-types';
 import type { TaskClassifier } from '../classifier/task-classifier';
-import type { ClaudeAgentBridge } from './claude-agent-bridge';
+import type { AgentBridge } from './agent-bridge';
 import type { LightLLMClient, LightLLMContentPart, LightLLMMessage } from './light-llm-client';
 
 export interface AgentRuntimeDeps {
   classifier?: TaskClassifier | null;
-  claudeBridge?: ClaudeAgentBridge | null;
+  agentBridge?: AgentBridge | null;
   lightLLM?: LightLLMClient | null;
 }
 
@@ -20,12 +20,12 @@ export interface EnhancedAgentResult extends AgentResult {
 export class AgentRuntime {
   private readonly logger = new Logger('AgentRuntime');
   private readonly classifier: TaskClassifier | null;
-  private readonly claudeBridge: ClaudeAgentBridge | null;
+  private readonly agentBridge: AgentBridge | null;
   private readonly lightLLM: LightLLMClient | null;
 
   constructor(deps: AgentRuntimeDeps = {}) {
     this.classifier = deps.classifier ?? null;
-    this.claudeBridge = deps.claudeBridge ?? null;
+    this.agentBridge = deps.agentBridge ?? null;
     this.lightLLM = deps.lightLLM ?? null;
   }
 
@@ -96,10 +96,10 @@ export class AgentRuntime {
     params: AgentExecuteParams,
     classificationCostUsd = 0,
   ): Promise<EnhancedAgentResult> {
-    if (!this.claudeBridge) {
-      this.logger.warn('ClaudeAgentBridge 未配置，返回占位结果');
+    if (!this.agentBridge) {
+      this.logger.warn('AgentBridge 未配置，返回占位结果');
       return {
-        content: '[AgentRuntime] Claude Agent Bridge 未配置。',
+        content: '[AgentRuntime] Agent Bridge 未配置。',
         tokenUsage: { inputTokens: 0, outputTokens: 0 },
         complexity: 'complex',
         channel: 'agent_sdk',
@@ -107,25 +107,24 @@ export class AgentRuntime {
       };
     }
 
-    const result = await this.claudeBridge.execute({
+    const lastMsg = this.getLastUserMessage(params) ?? '';
+    const result = await this.agentBridge.execute({
+      systemPrompt: params.context.systemPrompt ?? '',
+      prependContext: '',
+      userMessage: lastMsg,
       sessionId: params.context.sessionId,
-      messages: params.context.messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
-      systemPrompt: params.context.systemPrompt,
-      signal: params.signal,
-      onStream: params.streamCallback,
-      cwd: params.context.workspacePath,
       claudeSessionId: params.context.claudeSessionId,
+      workspacePath: params.context.workspacePath,
+      signal: params.signal,
+      streamCallback: params.streamCallback
+        ? async (event) => params.streamCallback!(event)
+        : undefined,
+      executionMode: 'sync',
     });
 
     return {
       content: result.content,
-      tokenUsage: {
-        inputTokens: result.usage.inputTokens,
-        outputTokens: result.usage.outputTokens,
-      },
+      tokenUsage: result.tokenUsage,
       toolsUsed: result.toolsUsed,
       claudeSessionId: result.claudeSessionId,
       complexity: 'complex',

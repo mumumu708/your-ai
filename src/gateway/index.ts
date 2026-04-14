@@ -409,7 +409,7 @@ connect();
 
 logger.info('Gateway 启动中', { port, wsPort });
 logger.info('LLM 配置', {
-  claude: claudeBridge ? 'enabled' : 'disabled',
+  agent: agentBridge ? 'enabled' : 'disabled',
   lightLLM: lightLLM ? 'enabled' : 'disabled',
 });
 

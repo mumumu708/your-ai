@@ -12,11 +12,7 @@ import type { Session, Task, TaskType } from '../shared/tasking/task.types';
 import { isAdminUser } from '../shared/utils/admin';
 import { generateTaskId, generateTraceId } from '../shared/utils/crypto';
 import type { AgentBridge } from './agents/agent-bridge';
-import { AgentBridgeWithFallback } from './agents/agent-bridge-fallback';
 import { AgentRuntime, type EnhancedAgentResult } from './agents/agent-runtime';
-import type { ClaudeAgentBridge } from './agents/claude-agent-bridge';
-import { ClaudeBridgeAdapter } from './agents/claude-bridge-adapter';
-import { CodexAgentBridge } from './agents/codex-agent-bridge';
 import { IntelligenceGateway } from './agents/intelligence-gateway';
 import type { LightLlmCompletable } from './agents/intelligence-gateway';
 import type { LightLLMClient } from './agents/light-llm-client';
@@ -75,8 +71,6 @@ export interface CentralControllerDeps {
   scheduler?: Scheduler;
   taskQueue?: TaskQueue;
   classifier?: TaskClassifier;
-  claudeBridge?: ClaudeAgentBridge;
-  /** Pre-configured agent bridge (primary + fallback). Takes precedence over claudeBridge for IntelligenceGateway. */
   agentBridge?: AgentBridge;
   lightLLM?: LightLLMClient;
   streamHandler?: StreamHandler;
@@ -177,7 +171,7 @@ export class CentralController {
       deps?.agentRuntime ??
       new AgentRuntime({
         classifier: this.classifier,
-        claudeBridge: deps?.claudeBridge ?? null,
+        agentBridge: deps?.agentBridge ?? null,
         lightLLM: deps?.lightLLM ?? null,
       });
 
@@ -232,22 +226,11 @@ export class CentralController {
 
     // IntelligenceGateway — Layer 1 快速预处理（DD-014）
     // 仅在 agent bridge 和 lightLLM 都可用时启用
-    if (lightLLM) {
-      // Use pre-configured agent bridge if provided, else build default claude→codex fallback
-      const bridge =
-        deps?.agentBridge ??
-        (deps?.claudeBridge
-          ? new AgentBridgeWithFallback(
-              new ClaudeBridgeAdapter(deps.claudeBridge),
-              new CodexAgentBridge(),
-            )
-          : null);
-      if (bridge) {
-        this.intelligenceGateway = new IntelligenceGateway(
-          lightLLM as unknown as LightLlmCompletable,
-          bridge,
-        );
-      }
+    if (lightLLM && deps?.agentBridge) {
+      this.intelligenceGateway = new IntelligenceGateway(
+        lightLLM as unknown as LightLlmCompletable,
+        deps.agentBridge,
+      );
     }
 
     // OnboardingManager — guides new users through setup

@@ -108,9 +108,9 @@ export class IntelligenceGateway {
       ],
     });
 
-    // 安全阀：LightLLM 自认为答不好，降级到 Agent Layer
+    // 安全阀：LightLLM 自认为答不好，升级到 Agent Layer
     if (this.isSafetyValveTrigger(response.content) && params.agentParams) {
-      this.logger.info('安全阀触发，降级到 Agent Layer');
+      this.logger.info('LightLLM回答不好，升级到 Agent Layer');
       return this.agentBridge.execute(params.agentParams);
     }
 
