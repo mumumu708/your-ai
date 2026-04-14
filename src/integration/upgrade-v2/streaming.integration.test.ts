@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ClaudeAgentBridge } from '../../kernel/agents/claude-agent-bridge';
+import type { AgentBridge, AgentResult } from '../../kernel/agents/agent-bridge';
 import { StreamContentFilter } from '../../kernel/streaming/stream-content-filter';
 import { StreamHandler } from '../../kernel/streaming/stream-handler';
 import type { StreamResult } from '../../kernel/streaming/stream-handler';
@@ -463,27 +463,26 @@ describe('ST-10: streamResultPromise awaited in executeChatPipeline', () => {
   test('after stream completes, pipeline returns with streamed=true', async () => {
     const { adapter, captured } = createCapturingAdapter();
 
-    const claudeBridge = {
-      execute: mock(async (params: { onStream?: (e: StreamEvent) => void }) => {
-        if (params.onStream) {
-          params.onStream({ type: 'text_delta', text: 'streamed content' });
-          params.onStream({ type: 'done' });
+    const agentBridge: AgentBridge = {
+      execute: mock(async (params: { streamCallback?: (e: StreamEvent) => Promise<void> }) => {
+        if (params.streamCallback) {
+          await params.streamCallback({ type: 'text_delta', text: 'streamed content' });
+          await params.streamCallback({ type: 'done' });
         }
         return {
           content: 'streamed content',
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
           toolsUsed: [],
-          turns: 1,
-          usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001 },
-        };
+          finishedNaturally: true,
+          handledBy: 'claude',
+        } satisfies AgentResult;
       }),
-      estimateCost: () => 0.001,
-      getActiveSessions: () => 0,
-    } as unknown as ClaudeAgentBridge;
+    };
 
     // Skip taskStore (bypasses TaskDispatcher which strips streamed flag)
-    // and lightLLM (forces classifier to route to complex/claudeBridge path).
+    // and lightLLM (forces classifier to route to complex/agentBridge path).
     ctx = createTestController({
-      claudeBridge,
+      agentBridge,
       // biome-ignore lint/suspicious/noExplicitAny: test mock
       lightLLM: undefined as any,
       streamAdapterFactory: (_u, _c, _conv) => [adapter],
@@ -517,28 +516,27 @@ describe('ST-11: Controller filteredCallback → StreamContentFilter suppresses 
   test('tool_result is filtered by StreamContentFilter; adapter does NOT receive ✅ 完成', async () => {
     const { adapter, captured } = createCapturingAdapter();
 
-    const claudeBridge = {
-      execute: mock(async (params: { onStream?: (e: StreamEvent) => void }) => {
-        if (params.onStream) {
-          params.onStream({ type: 'text_delta', text: 'start' });
-          params.onStream({ type: 'tool_use', toolName: 'bash', toolInput: { command: 'ls' } });
-          params.onStream({ type: 'tool_result', toolName: 'bash', text: 'output' });
-          params.onStream({ type: 'text_delta', text: 'end' });
-          params.onStream({ type: 'done' });
+    const agentBridge: AgentBridge = {
+      execute: mock(async (params: { streamCallback?: (e: StreamEvent) => Promise<void> }) => {
+        if (params.streamCallback) {
+          await params.streamCallback({ type: 'text_delta', text: 'start' });
+          await params.streamCallback({ type: 'tool_use', toolName: 'bash', toolInput: { command: 'ls' } });
+          await params.streamCallback({ type: 'tool_result', toolName: 'bash', text: 'output' });
+          await params.streamCallback({ type: 'text_delta', text: 'end' });
+          await params.streamCallback({ type: 'done' });
         }
         return {
           content: 'startend',
+          tokenUsage: { inputTokens: 20, outputTokens: 10 },
           toolsUsed: ['bash'],
-          turns: 1,
-          usage: { inputTokens: 20, outputTokens: 10, costUsd: 0.002 },
-        };
+          finishedNaturally: true,
+          handledBy: 'claude',
+        } satisfies AgentResult;
       }),
-      estimateCost: () => 0.002,
-      getActiveSessions: () => 0,
-    } as unknown as ClaudeAgentBridge;
+    };
 
     ctx = createTestController({
-      claudeBridge,
+      agentBridge,
       // biome-ignore lint/suspicious/noExplicitAny: test mock
       lightLLM: undefined as any,
       streamAdapterFactory: (_u, _c, _conv) => [adapter],
@@ -594,26 +592,25 @@ describe('ST-12: Feishu CardKit adapter injection path', () => {
       return [];
     };
 
-    const claudeBridge = {
-      execute: mock(async (params: { onStream?: (e: StreamEvent) => void }) => {
-        if (params.onStream) {
-          params.onStream({ type: 'text_delta', text: 'feishu reply' });
-          params.onStream({ type: 'done' });
+    const agentBridge: AgentBridge = {
+      execute: mock(async (params: { streamCallback?: (e: StreamEvent) => Promise<void> }) => {
+        if (params.streamCallback) {
+          await params.streamCallback({ type: 'text_delta', text: 'feishu reply' });
+          await params.streamCallback({ type: 'done' });
         }
         return {
           content: 'feishu reply',
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
           toolsUsed: [],
-          turns: 1,
-          usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001 },
-        };
+          finishedNaturally: true,
+          handledBy: 'claude',
+        } satisfies AgentResult;
       }),
-      estimateCost: () => 0.001,
-      getActiveSessions: () => 0,
-    } as unknown as ClaudeAgentBridge;
+    };
 
     // Test 1: Feishu channel → adapter receives events
     ctx = createTestController({
-      claudeBridge,
+      agentBridge,
       // biome-ignore lint/suspicious/noExplicitAny: test mock
       lightLLM: undefined as any,
       streamAdapterFactory: factory,
@@ -633,7 +630,7 @@ describe('ST-12: Feishu CardKit adapter injection path', () => {
 
     // Test 2: Web channel → factory returns [] → no streaming adapters
     ctx = createTestController({
-      claudeBridge,
+      agentBridge,
       // biome-ignore lint/suspicious/noExplicitAny: test mock
       lightLLM: undefined as any,
       streamAdapterFactory: factory,
@@ -792,17 +789,15 @@ describe('ST-15: Gateway quick path pushes text_delta+done to stream callback (d
     // LightLLM mock: gateway will handle directly (simple + chat + no attachments)
     const lightLLM = createMockLightLLM('快速回复');
 
-    // claudeBridge should NOT be called for simple gateway tasks
-    const claudeBridge = {
+    // agentBridge should NOT be called for simple gateway tasks
+    const agentBridge: AgentBridge = {
       execute: mock(async () => {
-        throw new Error('Should not reach claudeBridge for simple tasks');
+        throw new Error('Should not reach agentBridge for simple tasks');
       }),
-      estimateCost: () => 0,
-      getActiveSessions: () => 0,
-    } as unknown as ClaudeAgentBridge;
+    };
 
     ctx = createTestController({
-      claudeBridge,
+      agentBridge,
       lightLLM,
       streamAdapterFactory: (_u, _c, _conv) => [adapter],
       workspaceManager: createCorrectWorkspaceManager(),

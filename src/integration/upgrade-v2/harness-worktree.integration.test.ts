@@ -20,7 +20,7 @@ import {
   cleanupController,
   createMessage,
   createMockChannel,
-  createMockClaudeBridge,
+  createMockAgentBridge,
   createMockLightLLM,
   createMockMediaProcessor,
   createMockOVDeps,
@@ -68,12 +68,12 @@ function createHarnessController(
   CentralController.resetInstance();
 
   const worktreePool = createMockWorktreePool();
-  const claudeBridge = createMockClaudeBridge();
+  const agentBridge = createMockAgentBridge();
   const lightLLM = createMockLightLLM();
   const ovDeps = createMockOVDeps();
 
   const deps = {
-    claudeBridge,
+    agentBridge,
     lightLLM,
     workspaceManager: createCorrectWorkspaceManager(),
     mediaProcessor: createMockMediaProcessor(),

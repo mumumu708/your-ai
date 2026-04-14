@@ -6,7 +6,7 @@ import type { IChannel } from '../shared/messaging/channel-adapter.types';
 import type { MediaAttachment } from '../shared/messaging/media-attachment.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import { AgentRuntime } from './agents/agent-runtime';
-import type { AgentBridgeResult } from './agents/claude-agent-bridge';
+import type { AgentBridge, AgentResult } from './agents/agent-bridge';
 import type { LightLLMClient } from './agents/light-llm-client';
 import { CentralController } from './central-controller';
 import type { CentralControllerDeps } from './central-controller';
@@ -2154,17 +2154,17 @@ describe('CentralController', () => {
   });
 
   describe('IntelligenceGateway 集成', () => {
-    /** 构建一个最小 ClaudeAgentBridge mock，execute 返回预设结果 */
-    function makeMockBridge(content: string): CentralControllerDeps['claudeBridge'] {
+    /** 构建一个最小 AgentBridge mock，execute 返回预设结果 */
+    function makeMockBridge(content: string): AgentBridge {
       return {
-        execute: async (): Promise<AgentBridgeResult> => ({
+        execute: async (): Promise<AgentResult> => ({
           content,
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
           toolsUsed: [],
-          turns: 1,
-          usage: { inputTokens: 10, outputTokens: 5, costUsd: 0 },
-          claudeSessionId: undefined,
+          finishedNaturally: true,
+          handledBy: 'claude',
         }),
-      } as unknown as CentralControllerDeps['claudeBridge'];
+      };
     }
 
     /** 构建最小 LightLLM mock */
@@ -2177,13 +2177,13 @@ describe('CentralController', () => {
       } as unknown as CentralControllerDeps['lightLLM'];
     }
 
-    test('提供 claudeBridge + lightLLM 时应经由 IntelligenceGateway 处理消息', async () => {
+    test('提供 agentBridge + lightLLM 时应经由 IntelligenceGateway 处理消息', async () => {
       const agentRuntime = new AgentRuntime();
       const agentExecuteSpy = spyOn(agentRuntime, 'execute');
 
       const controller = CentralController.getInstance({
         agentRuntime,
-        claudeBridge: makeMockBridge('gateway-reply'),
+        agentBridge: makeMockBridge('gateway-reply'),
         lightLLM: makeMockLightLLM('gateway quick answer'),
         ...createMockOVDeps(),
       });
@@ -2206,26 +2206,26 @@ describe('CentralController', () => {
 
       // Use a complex message so the gateway delegates to agentBridge,
       // which triggers the async (event) => { streamCallback(event) } wrapper
-      const mockBridge: CentralControllerDeps['claudeBridge'] = {
+      const mockBridge: AgentBridge = {
         execute: async (params) => {
           // Trigger the streamCallback that was passed in
-          if (params.onStream) {
-            params.onStream({ type: 'text_delta', text: 'streamed' });
-            params.onStream({ type: 'done' });
+          if (params.streamCallback) {
+            await params.streamCallback({ type: 'text_delta', text: 'streamed' });
+            await params.streamCallback({ type: 'done' });
           }
           return {
             content: 'streamed reply',
+            tokenUsage: { inputTokens: 10, outputTokens: 5 },
             toolsUsed: [],
-            turns: 1,
-            usage: { inputTokens: 10, outputTokens: 5, costUsd: 0 },
-            claudeSessionId: undefined,
-          } as AgentBridgeResult;
+            finishedNaturally: true,
+            handledBy: 'claude',
+          };
         },
-      } as unknown as CentralControllerDeps['claudeBridge'];
+      };
 
       const controller = CentralController.getInstance({
         agentRuntime,
-        claudeBridge: mockBridge,
+        agentBridge: mockBridge,
         lightLLM: makeMockLightLLM('需要工具'), // non-simple so gateway delegates
         streamCallback: (_userId, event) => {
           streamEvents.push(event);
@@ -2240,17 +2240,16 @@ describe('CentralController', () => {
       expect(result.success).toBe(true);
     });
 
-    test('IntelligenceGateway 构建时包含 AgentBridgeWithFallback（CodexBridge）', async () => {
+    test('IntelligenceGateway 构建时包含 AgentBridge', async () => {
       const agentRuntime = new AgentRuntime();
       spyOn(agentRuntime, 'execute');
 
       const mockBridge = makeMockBridge('reply');
 
-      // Creating controller with claudeBridge + lightLLM should succeed
-      // (internally creates CodexAgentBridge + AgentBridgeWithFallback)
+      // Creating controller with agentBridge + lightLLM should succeed
       const controller = CentralController.getInstance({
         agentRuntime,
-        claudeBridge: mockBridge,
+        agentBridge: mockBridge,
         lightLLM: makeMockLightLLM('quick answer'),
         ...createMockOVDeps(),
       });
@@ -2268,12 +2267,12 @@ describe('CentralController', () => {
         classificationCostUsd: 0,
       });
 
-      // claudeBridge that throws
-      const failingBridge: CentralControllerDeps['claudeBridge'] = {
+      // agentBridge that throws
+      const failingBridge: AgentBridge = {
         execute: async () => {
           throw new Error('bridge failed');
         },
-      } as unknown as CentralControllerDeps['claudeBridge'];
+      };
 
       // lightLLM that also throws (so gateway.handle() throws)
       const failingLightLLM: CentralControllerDeps['lightLLM'] = {
@@ -2284,7 +2283,7 @@ describe('CentralController', () => {
 
       const controller = CentralController.getInstance({
         agentRuntime,
-        claudeBridge: failingBridge,
+        agentBridge: failingBridge,
         lightLLM: failingLightLLM,
         ...createMockOVDeps(),
       });

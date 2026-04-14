@@ -18,7 +18,7 @@ import { Hono } from 'hono';
 import { ChannelManager } from '../gateway/channel-manager';
 import { WebChannel } from '../gateway/channels/web.gateway';
 import { MessageRouter } from '../gateway/message-router';
-import type { ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
+import { ClaudeBridgeAdapter } from '../kernel/agents/claude-bridge-adapter';
 import type { LightLLMClient } from '../kernel/agents/light-llm-client';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
@@ -91,12 +91,13 @@ describe('全链路 E2E 测试', () => {
     logSpy = spyOn(console, 'log').mockImplementation(() => {});
     errorSpy = spyOn(console, 'error').mockImplementation(() => {});
 
-    // 1. Real ClaudeAgentBridge (imports lazily to avoid top-level side effects)
+    // 1. Real ClaudeAgentBridge wrapped with ClaudeBridgeAdapter (imports lazily to avoid top-level side effects)
     const { ClaudeAgentBridge } = await import('../kernel/agents/claude-agent-bridge');
-    const claudeBridge: ClaudeAgentBridge = new ClaudeAgentBridge({
+    const claudeBridge = new ClaudeAgentBridge({
       claudePath: 'claude',
       defaultModel: 'sonnet',
     });
+    const agentBridge = new ClaudeBridgeAdapter(claudeBridge);
 
     // 2. Mock LightLLM — distinguishes classifier calls (system prompt contains '任务分类器')
     //    from response generation calls.
@@ -134,7 +135,7 @@ describe('全链路 E2E 测试', () => {
     CentralController.resetInstance();
     const classifier = new TaskClassifier(lightLLM);
     controller = CentralController.getInstance({
-      claudeBridge,
+      agentBridge,
       lightLLM,
       classifier,
       ...createMockOVDeps(),

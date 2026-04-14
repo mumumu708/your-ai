@@ -23,7 +23,7 @@ import { type ScheduledJob, Scheduler } from '../../kernel/scheduling/scheduler'
 import {
   createMessage,
   createMockChannel,
-  createMockClaudeBridge,
+  createMockAgentBridge,
   createMockLightLLM,
   createMockMediaProcessor,
   createMockOVDeps,
@@ -84,7 +84,7 @@ function createSchedulerTestController(overrides?: Partial<CentralControllerDeps
   const ovDeps = createMockOVDeps();
 
   const deps: CentralControllerDeps = {
-    claudeBridge: createMockClaudeBridge(),
+    agentBridge: createMockAgentBridge(),
     lightLLM: createMockLightLLM(),
     workspaceManager:
       createWorkspaceManagerMock() as unknown as CentralControllerDeps['workspaceManager'],

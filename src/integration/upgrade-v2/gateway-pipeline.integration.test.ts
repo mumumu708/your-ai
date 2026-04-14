@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { MessageRouter, type ResponseDispatcher } from '../../gateway/message-router';
 import { createApiAuthMiddleware, createAuthMiddleware } from '../../gateway/middleware';
-import type { ClaudeAgentBridge } from '../../kernel/agents/claude-agent-bridge';
+import type { AgentBridge } from '../../kernel/agents/agent-bridge';
 import { ClaudeBridgeAdapter } from '../../kernel/agents/claude-bridge-adapter';
 import { CodexAgentBridge } from '../../kernel/agents/codex-agent-bridge';
 import { CentralController } from '../../kernel/central-controller';
@@ -22,7 +22,7 @@ import {
   type ControllerTestContext,
   cleanupController,
   createMessage,
-  createMockClaudeBridge,
+  createMockAgentBridge,
   createStores,
   createTestController,
 } from './test-helpers';
@@ -62,8 +62,8 @@ describe('DD-020 Gateway Pipeline Integration', () => {
 
   describe('GP-01: MessageRouter success path dispatches content', () => {
     test('handleIncomingMessage success → responseDispatcher called with content', async () => {
-      const claudeBridge = createMockClaudeBridge('GP-01 response');
-      ctx = createTestController({ claudeBridge });
+      const agentBridge = createMockAgentBridge('GP-01 response');
+      ctx = createTestController({ agentBridge });
 
       const router = new MessageRouter(ctx.controller);
       const { dispatched, dispatcher } = createCapturingDispatcher();
@@ -87,8 +87,8 @@ describe('DD-020 Gateway Pipeline Integration', () => {
   describe('GP-02: Streamed result skips secondary dispatch', () => {
     test('result.data.streamed=true → responseDispatcher NOT called', async () => {
       // Create a controller where handleIncomingMessage returns streamed=true
-      const claudeBridge = createMockClaudeBridge('streamed content');
-      ctx = createTestController({ claudeBridge });
+      const agentBridge = createMockAgentBridge('streamed content');
+      ctx = createTestController({ agentBridge });
 
       // Monkey-patch handleIncomingMessage to return streamed=true
       const originalHandle = ctx.controller.handleIncomingMessage.bind(ctx.controller);
@@ -331,7 +331,7 @@ describe('DD-020 Gateway Pipeline Integration', () => {
         execute: executeSpy,
         estimateCost: () => 0,
         getActiveSessions: () => 0,
-      } as unknown as ClaudeAgentBridge;
+      } as unknown as AgentBridge;
 
       const adapter = new ClaudeBridgeAdapter(mockBridge);
 
@@ -366,7 +366,7 @@ describe('DD-020 Gateway Pipeline Integration', () => {
         execute: executeSpy,
         estimateCost: () => 0,
         getActiveSessions: () => 0,
-      } as unknown as ClaudeAgentBridge;
+      } as unknown as AgentBridge;
 
       const adapter = new ClaudeBridgeAdapter(mockBridge);
 

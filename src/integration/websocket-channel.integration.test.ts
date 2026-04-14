@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { ChannelManager } from '../gateway/channel-manager';
 import { WebChannel } from '../gateway/channels/web.gateway';
 import { MessageRouter } from '../gateway/message-router';
-import type { AgentBridgeResult, ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
+import type { AgentBridge, AgentResult } from '../kernel/agents/agent-bridge';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
 import type { ChannelType } from '../shared/messaging';
@@ -23,23 +23,22 @@ const TEST_USER_SPACE = join(tmpdir(), 'your-ai-test-ws');
 
 const WS_PORT = 19877;
 
-function createMockClaudeBridge(response = 'mock response'): ClaudeAgentBridge {
+function createMockAgentBridge(response = 'mock response'): AgentBridge {
   return {
-    execute: mock(async (params: { onStream?: (e: StreamEvent) => void }) => {
-      if (params.onStream) {
-        params.onStream({ type: 'text_delta', text: response });
-        params.onStream({ type: 'done' });
+    execute: mock(async (params: { streamCallback?: (e: StreamEvent) => Promise<void> }) => {
+      if (params.streamCallback) {
+        await params.streamCallback({ type: 'text_delta', text: response });
+        await params.streamCallback({ type: 'done' });
       }
       return {
         content: response,
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
         toolsUsed: [],
-        turns: 1,
-        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001 },
-      } satisfies AgentBridgeResult;
+        finishedNaturally: true,
+        handledBy: 'claude' as const,
+      } satisfies AgentResult;
     }),
-    estimateCost: () => 0.001,
-    getActiveSessions: () => 0,
-  } as unknown as ClaudeAgentBridge;
+  };
 }
 
 /** Helper: connect WS, consume initial 'connected' message */
@@ -96,12 +95,12 @@ describe('WebSocket 通道集成测试', () => {
 
   /** Build full pipeline and start WS server */
   async function setupPipeline(claudeResponse: string, lightLLMResponse?: string) {
-    const claudeBridge = createMockClaudeBridge(claudeResponse);
+    const agentBridge = createMockAgentBridge(claudeResponse);
     const lightLLM = lightLLMResponse ? createMockLightLLM(lightLLMResponse) : null;
     const classifier = new TaskClassifier(lightLLM);
 
     const controller = CentralController.getInstance({
-      claudeBridge,
+      agentBridge,
       lightLLM,
       classifier,
       ...createMockOVDeps(),
@@ -121,7 +120,7 @@ describe('WebSocket 通道集成测试', () => {
     webChannel = new WebChannel({ port: WS_PORT, path: '/ws' });
     await channelManager.registerChannel(webChannel);
 
-    return { claudeBridge, lightLLM, controller, router };
+    return { agentBridge, lightLLM, controller, router };
   }
 
   test('WS 消息应该经过完整管道并收到 AI 响应', async () => {
@@ -156,11 +155,11 @@ describe('WebSocket 通道集成测试', () => {
   });
 
   test('多个 WS 客户端各自收到自己的响应', async () => {
-    const { claudeBridge } = await setupPipeline('default');
+    const { agentBridge } = await setupPipeline('default');
 
     // Override to return different content per call
     let callCount = 0;
-    (claudeBridge.execute as ReturnType<typeof mock>).mockImplementation(async () => {
+    (agentBridge.execute as ReturnType<typeof mock>).mockImplementation(async () => {
       callCount++;
       return {
         content: `reply_${callCount}`,
@@ -189,9 +188,9 @@ describe('WebSocket 通道集成测试', () => {
   });
 
   test('错误处理: AI 处理失败应该返回错误消息到 WS', async () => {
-    const { claudeBridge } = await setupPipeline('unused');
+    const { agentBridge } = await setupPipeline('unused');
 
-    (claudeBridge.execute as ReturnType<typeof mock>).mockImplementation(async () => {
+    (agentBridge.execute as ReturnType<typeof mock>).mockImplementation(async () => {
       throw new Error('AI processing failed');
     });
 

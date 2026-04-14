@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { AgentExecuteParams } from '../../shared/agents/agent-instance.types';
 import type { StreamEvent } from '../../shared/messaging/stream-event.types';
 import type { TaskClassifier } from '../classifier/task-classifier';
+import type { AgentBridge } from './agent-bridge';
 import { AgentRuntime } from './agent-runtime';
-import type { ClaudeAgentBridge } from './claude-agent-bridge';
 import type { LightLLMClient } from './light-llm-client';
 
 function createMockClassifier(complexity: 'simple' | 'complex' = 'complex'): TaskClassifier {
@@ -28,17 +28,16 @@ function createMockClassifier(complexity: 'simple' | 'complex' = 'complex'): Tas
   } as unknown as TaskClassifier;
 }
 
-function createMockClaudeBridge(): ClaudeAgentBridge {
+function createMockAgentBridge(): AgentBridge {
   return {
     execute: async () => ({
       content: 'Claude response',
+      tokenUsage: { inputTokens: 100, outputTokens: 50 },
       toolsUsed: [],
-      turns: 1,
-      usage: { inputTokens: 100, outputTokens: 50, costUsd: 0.01 },
+      finishedNaturally: true,
+      handledBy: 'claude' as const,
     }),
-    estimateCost: () => 0.01,
-    getActiveSessions: () => 0,
-  } as unknown as ClaudeAgentBridge;
+  };
 }
 
 function createMockLightLLM(): LightLLMClient {
@@ -93,10 +92,10 @@ describe('AgentRuntime', () => {
   });
 
   describe('分类器路由', () => {
-    test('complex 分类应该路由到 Claude Bridge', async () => {
+    test('complex 分类应该路由到 Agent Bridge', async () => {
       const runtime = new AgentRuntime({
         classifier: createMockClassifier('complex'),
-        claudeBridge: createMockClaudeBridge(),
+        agentBridge: createMockAgentBridge(),
       });
 
       const result = await runtime.execute(createParams());
@@ -123,7 +122,7 @@ describe('AgentRuntime', () => {
     test('simple 分类但 LightLLM 不可用应该回退到 complex', async () => {
       const runtime = new AgentRuntime({
         classifier: createMockClassifier('simple'),
-        claudeBridge: createMockClaudeBridge(),
+        agentBridge: createMockAgentBridge(),
         lightLLM: null,
       });
 
@@ -136,14 +135,14 @@ describe('AgentRuntime', () => {
   });
 
   describe('流式处理', () => {
-    test('complex 流式应该通过 Claude Bridge 转发', async () => {
-      const mockBridge = createMockClaudeBridge();
+    test('complex 流式应该通过 Agent Bridge 转发', async () => {
+      const mockBridge = createMockAgentBridge();
       const executeSpy = spyOn(mockBridge, 'execute');
       const streamEvents: StreamEvent[] = [];
 
       const runtime = new AgentRuntime({
         classifier: createMockClassifier('complex'),
-        claudeBridge: mockBridge,
+        agentBridge: mockBridge,
       });
 
       const params = createParams({
@@ -155,7 +154,7 @@ describe('AgentRuntime', () => {
       // Verify streamCallback was passed through to bridge
       expect(executeSpy).toHaveBeenCalled();
       const callArgs = executeSpy.mock.calls[0][0];
-      expect(callArgs.onStream).toBeDefined();
+      expect(callArgs.streamCallback).toBeDefined();
     });
 
     test('simple 流式应该通过 LightLLM 转发', async () => {
@@ -193,13 +192,13 @@ describe('AgentRuntime', () => {
   });
 
   describe('forceComplex (harness 模式)', () => {
-    test('forceComplex 应绕过分类器直接走 Claude', async () => {
-      const mockBridge = createMockClaudeBridge();
+    test('forceComplex 应绕过分类器直接走 Agent Bridge', async () => {
+      const mockBridge = createMockAgentBridge();
       const executeSpy = spyOn(mockBridge, 'execute');
 
       const runtime = new AgentRuntime({
         classifier: createMockClassifier('simple'), // Would normally go to LightLLM
-        claudeBridge: mockBridge,
+        agentBridge: mockBridge,
         lightLLM: createMockLightLLM(),
       });
 
@@ -216,7 +215,7 @@ describe('AgentRuntime', () => {
     test('应该包含 complexity、channel 和 classificationCostUsd', async () => {
       const runtime = new AgentRuntime({
         classifier: createMockClassifier('complex'),
-        claudeBridge: createMockClaudeBridge(),
+        agentBridge: createMockAgentBridge(),
       });
 
       const result = await runtime.execute(createParams());
@@ -235,7 +234,7 @@ describe('AgentRuntime', () => {
 
       const runtime = new AgentRuntime({
         classifier: mockClassifier,
-        claudeBridge: createMockClaudeBridge(),
+        agentBridge: createMockAgentBridge(),
         lightLLM: createMockLightLLM(),
       });
 
@@ -258,13 +257,13 @@ describe('AgentRuntime', () => {
       expect(result.classificationCostUsd).toBe(0.001);
     });
 
-    test('传入 classifyResult 为 complex 时直接路由到 Claude Bridge，不调用 classifier', async () => {
+    test('传入 classifyResult 为 complex 时直接路由到 Agent Bridge，不调用 classifier', async () => {
       const mockClassifier = createMockClassifier('simple'); // Would route to simple
       const classifySpy = spyOn(mockClassifier, 'classify');
 
       const runtime = new AgentRuntime({
         classifier: mockClassifier,
-        claudeBridge: createMockClaudeBridge(),
+        agentBridge: createMockAgentBridge(),
         lightLLM: createMockLightLLM(),
       });
 
@@ -293,7 +292,7 @@ describe('AgentRuntime', () => {
 
       const runtime = new AgentRuntime({
         classifier: mockClassifier,
-        claudeBridge: createMockClaudeBridge(),
+        agentBridge: createMockAgentBridge(),
       });
 
       await runtime.execute(createParams());
@@ -303,7 +302,7 @@ describe('AgentRuntime', () => {
 
     test('forceComplex 应优先于 classifyResult', async () => {
       const runtime = new AgentRuntime({
-        claudeBridge: createMockClaudeBridge(),
+        agentBridge: createMockAgentBridge(),
         lightLLM: createMockLightLLM(),
       });
 
@@ -326,8 +325,8 @@ describe('AgentRuntime', () => {
     });
   });
 
-  describe('LightLLM 失败降级到 Claude', () => {
-    test('classifyResult=simple 但 LightLLM 抛异常时应降级到 Claude', async () => {
+  describe('LightLLM 失败降级到 Agent Bridge', () => {
+    test('classifyResult=simple 但 LightLLM 抛异常时应降级到 Agent Bridge', async () => {
       const failingLLM = {
         complete: async () => {
           throw new Error('LightLLM API 错误: 429');
@@ -340,7 +339,7 @@ describe('AgentRuntime', () => {
       } as unknown as LightLLMClient;
 
       const runtime = new AgentRuntime({
-        claudeBridge: createMockClaudeBridge(),
+        agentBridge: createMockAgentBridge(),
         lightLLM: failingLLM,
       });
 
@@ -357,13 +356,13 @@ describe('AgentRuntime', () => {
         }),
       );
 
-      // Should have fallen back to Claude instead of throwing
+      // Should have fallen back to Agent Bridge instead of throwing
       expect(result.complexity).toBe('complex');
       expect(result.channel).toBe('agent_sdk');
       expect(result.content).toBe('Claude response');
     });
 
-    test('classifyResult=simple + stream 模式 LightLLM 429 应降级到 Claude', async () => {
+    test('classifyResult=simple + stream 模式 LightLLM 429 应降级到 Agent Bridge', async () => {
       const streamEvents: StreamEvent[] = [];
       const failingLLM = {
         complete: async () => {
@@ -377,7 +376,7 @@ describe('AgentRuntime', () => {
       } as unknown as LightLLMClient;
 
       const runtime = new AgentRuntime({
-        claudeBridge: createMockClaudeBridge(),
+        agentBridge: createMockAgentBridge(),
         lightLLM: failingLLM,
       });
 

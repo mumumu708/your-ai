@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
  * 所有 store 使用 SQLite :memory:，无 mock store。
  */
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import type { AgentBridge } from '../../kernel/agents/agent-bridge';
 import { SessionStore } from '../../kernel/memory/session-store';
 import { SessionSerializer } from '../../kernel/sessioning/session-serializer';
 import { TaskDispatcher, type TaskHandler } from '../../kernel/tasking/task-dispatcher';
@@ -553,8 +554,8 @@ describe('CentralController fallback path (no TaskDispatcher)', () => {
     // Create a new controller with a slow bridge
     cleanupController(ctx);
 
-    const slowBridge = {
-      execute: mock(async (params: { signal?: AbortSignal; onStream?: (e: unknown) => void }) => {
+    const slowBridge: AgentBridge = {
+      execute: mock(async (params: { signal?: AbortSignal; streamCallback?: (e: unknown) => Promise<void> }) => {
         // Simulate slow work
         await new Promise((resolve, reject) => {
           const timer = setTimeout(resolve, 10000);
@@ -567,18 +568,17 @@ describe('CentralController fallback path (no TaskDispatcher)', () => {
         });
         return {
           content: 'done',
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
           toolsUsed: [],
-          turns: 1,
-          usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001 },
+          finishedNaturally: true,
+          handledBy: 'claude',
         };
       }),
-      estimateCost: () => 0.001,
-      getActiveSessions: () => 0,
     };
 
     ctx = createTestController({
       taskStore: undefined,
-      claudeBridge: slowBridge as unknown as ControllerTestContext['deps']['claudeBridge'],
+      agentBridge: slowBridge,
       workspaceManager: createFixedWorkspaceManager(FALLBACK_WORKSPACE),
     });
 

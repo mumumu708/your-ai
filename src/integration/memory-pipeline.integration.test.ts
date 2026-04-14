@@ -8,7 +8,7 @@
  * 同时测试会话过期自动触发记忆提取的场景。
  */
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
-import type { AgentBridgeResult, ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
+import type { AgentBridge, AgentResult } from '../kernel/agents/agent-bridge';
 import { CentralController } from '../kernel/central-controller';
 import type { CentralControllerDeps } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
@@ -44,23 +44,22 @@ function createMessage(overrides?: Partial<BotMessage>): BotMessage {
   };
 }
 
-function createMockClaudeBridge(response = 'Claude says hi'): ClaudeAgentBridge {
+function createMockAgentBridge(response = 'Claude says hi'): AgentBridge {
   return {
-    execute: mock(async (params: { onStream?: (e: StreamEvent) => void }) => {
-      if (params.onStream) {
-        params.onStream({ type: 'text_delta', text: response });
-        params.onStream({ type: 'done' });
+    execute: mock(async (params: { streamCallback?: (e: StreamEvent) => Promise<void> }) => {
+      if (params.streamCallback) {
+        await params.streamCallback({ type: 'text_delta', text: response });
+        await params.streamCallback({ type: 'done' });
       }
       return {
         content: response,
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
         toolsUsed: [],
-        turns: 1,
-        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001 },
-      } satisfies AgentBridgeResult;
+        finishedNaturally: true,
+        handledBy: 'claude' as const,
+      } satisfies AgentResult;
     }),
-    estimateCost: () => 0.001,
-    getActiveSessions: () => 0,
-  } as unknown as ClaudeAgentBridge;
+  };
 }
 
 /** Creates mock OV deps for CentralController integration tests */
@@ -295,7 +294,7 @@ describe('会话记忆管道集成测试', () => {
       });
 
       const controller = CentralController.getInstance({
-        claudeBridge: createMockClaudeBridge(),
+        agentBridge: createMockAgentBridge(),
         classifier: new TaskClassifier(null),
         sessionManager,
         ...createMockOVDeps(),

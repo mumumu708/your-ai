@@ -8,6 +8,8 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { AgentBridge } from '../../kernel/agents/agent-bridge';
+import { AgentBridgeWithFallback } from '../../kernel/agents/agent-bridge-fallback';
 import { AgentRuntime } from '../../kernel/agents/agent-runtime';
 import { CodexAgentBridge } from '../../kernel/agents/codex-agent-bridge';
 import type { CentralControllerDeps } from '../../kernel/central-controller';
@@ -17,7 +19,7 @@ import {
   type ControllerTestContext,
   cleanupController,
   createMessage,
-  createMockClaudeBridge,
+  createMockAgentBridge,
   createMockLightLLM,
   createMockOVDeps,
   createMockStreamAdapter,
@@ -207,14 +209,14 @@ describe('CP-04: streamAdapterFactory → StreamHandler.createStreamCallback, re
 
     // Disable gateway so pipeline uses agentRuntime which wires streamCallback properly.
     // With gateway, lightLLM.complete() is used (no streaming).
-    // The claudeBridge mock fires onStream events, which flow through the adapter.
-    const claudeBridge = createMockClaudeBridge('streamed content');
+    // The agentBridge mock fires onStream events, which flow through the adapter.
+    const agentBridge = createMockAgentBridge('streamed content');
 
     ctx = createPipelineTestController({
       streamAdapterFactory,
-      // No lightLLM → no gateway → agentRuntime with claudeBridge (which streams)
+      // No lightLLM → no gateway → agentRuntime with agentBridge (which streams)
       lightLLM: undefined,
-      claudeBridge,
+      agentBridge,
     });
 
     const msg = createMessage({ content: '流式测试' });
@@ -240,13 +242,13 @@ describe('CP-05: No streamAdapterFactory but streamCallback → raw callback wit
       receivedEvents.push({ userId, event });
     });
 
-    // Disable gateway to use agentRuntime with claudeBridge (which fires stream events)
-    const claudeBridge = createMockClaudeBridge('streamed response');
+    // Disable gateway to use agentRuntime with agentBridge (which fires stream events)
+    const agentBridge = createMockAgentBridge('streamed response');
 
     ctx = createPipelineTestController({
       streamCallback,
       streamAdapterFactory: undefined,
-      claudeBridge,
+      agentBridge,
       lightLLM: undefined, // No gateway
     });
 
@@ -424,8 +426,8 @@ describe('CP-11: prependContext injected only on first message (session.messages
     ctx = createPipelineTestController({
       ...ovDeps,
       agentRuntime,
-      // No claudeBridge → no gateway → agentRuntime directly
-      claudeBridge: undefined,
+      // No agentBridge → no gateway → agentRuntime directly
+      agentBridge: undefined,
       lightLLM: undefined,
     });
 
@@ -454,11 +456,11 @@ describe('CP-12: intelligenceGateway exists and succeeds → result.channel mapp
   afterEach(() => cleanupController(ctx));
 
   test('gateway success maps handledBy=gateway to channel=light_llm', async () => {
-    const claudeBridge = createMockClaudeBridge('claude response');
+    const agentBridge = createMockAgentBridge('claude response');
     const lightLLM = createMockLightLLM('gateway quick answer');
 
     ctx = createPipelineTestController({
-      claudeBridge,
+      agentBridge,
       lightLLM,
     });
 
@@ -481,7 +483,7 @@ describe('CP-13: intelligenceGateway.handle() throws → fallback to agentRuntim
   afterEach(() => cleanupController(ctx));
 
   test('gateway error triggers AgentRuntime fallback via catch block', async () => {
-    const claudeBridge = createMockClaudeBridge('claude fallback');
+    const agentBridge = createMockAgentBridge('claude fallback');
     let gatewayCallCount = 0;
 
     // LightLLM that fails only the first call (gateway quickAnswer) but works for subsequent
@@ -507,7 +509,7 @@ describe('CP-13: intelligenceGateway.handle() throws → fallback to agentRuntim
     } as unknown as CentralControllerDeps['lightLLM'];
 
     ctx = createPipelineTestController({
-      claudeBridge,
+      agentBridge,
       lightLLM,
     });
 
@@ -530,7 +532,7 @@ describe('CP-14: intelligenceGateway absent → agentRuntime directly', () => {
 
   afterEach(() => cleanupController(ctx));
 
-  test('no claudeBridge → no gateway → agentRuntime used directly', async () => {
+  test('no agentBridge → no gateway → agentRuntime used directly', async () => {
     const agentRuntime = new AgentRuntime();
     const executeSpy = spyOn(agentRuntime, 'execute').mockImplementation(async () => ({
       content: 'direct runtime response',
@@ -540,9 +542,9 @@ describe('CP-14: intelligenceGateway absent → agentRuntime directly', () => {
       classificationCostUsd: 0,
     }));
 
-    // No claudeBridge + no lightLLM → IntelligenceGateway won't be created
+    // No agentBridge + no lightLLM → IntelligenceGateway won't be created
     ctx = createPipelineTestController({
-      claudeBridge: undefined,
+      agentBridge: undefined,
       lightLLM: undefined,
       agentRuntime,
     });
@@ -580,7 +582,7 @@ describe('CP-15: result.toolsUsed non-empty → sessionManager.markToolUsed call
     // No gateway → agentRuntime with toolsUsed
     ctx = createPipelineTestController({
       agentRuntime,
-      claudeBridge: undefined,
+      agentBridge: undefined,
       lightLLM: undefined,
     });
 
@@ -625,7 +627,7 @@ describe('CP-16: postResponseAnalyzer detects feedback → appended to content',
       postResponseAnalyzer,
       agentRuntime,
       // No gateway
-      claudeBridge: undefined,
+      agentBridge: undefined,
       lightLLM: undefined,
     });
 
@@ -661,7 +663,7 @@ describe('CP-17: No feedback → content unchanged', () => {
     ctx = createPipelineTestController({
       ...ovDeps,
       agentRuntime,
-      claudeBridge: undefined,
+      agentBridge: undefined,
       lightLLM: undefined,
     });
 
@@ -696,7 +698,7 @@ describe('CP-18: forceComplex=true via harness path', () => {
 
     ctx = createPipelineTestController({
       agentRuntime,
-      claudeBridge: undefined,
+      agentBridge: undefined,
       lightLLM: undefined,
     });
 
@@ -742,12 +744,12 @@ describe('CP-19: Safety valve — LightLLM returns safety phrase → agentBridge
       getDefaultModel: () => 'mock-model',
     } as unknown as CentralControllerDeps['lightLLM'];
 
-    // ClaudeBridge — the fallback target after safety valve triggers
-    const claudeBridge = createMockClaudeBridge('深度分析结果');
+    // AgentBridge — the fallback target after safety valve triggers
+    const agentBridge = createMockAgentBridge('深度分析结果');
 
     ctx = createPipelineTestController({
       lightLLM,
-      claudeBridge,
+      agentBridge,
     });
 
     // Simple chat message that gateway would try to handle directly
@@ -759,28 +761,34 @@ describe('CP-19: Safety valve — LightLLM returns safety phrase → agentBridge
     // The safety valve should have triggered, so response comes from agentBridge (Claude),
     // not the original safety phrase
     expect(data.content).not.toBe(SAFETY_PHRASE);
-    // ClaudeBridge.execute should have been called
-    expect(claudeBridge.execute).toHaveBeenCalled();
+    // AgentBridge.execute should have been called
+    expect(agentBridge.execute).toHaveBeenCalled();
   });
 
   test('provider unavailable error should fall back to CodexAgentBridge in main pipeline', async () => {
-    const claudeBridge = {
+    const failingPrimary: AgentBridge = {
       execute: mock(async () => {
         throw new Error('503 upstream unavailable');
       }),
-      estimateCost: () => 0,
-      getActiveSessions: () => 0,
-    } as unknown as CentralControllerDeps['claudeBridge'];
+    };
 
-    const lightLLM = createMockLightLLM('gateway should be bypassed');
     const codexSpy = spyOn(CodexAgentBridge.prototype, 'execute').mockImplementation(async () => ({
       content: 'codex recovered response',
       tokenUsage: { inputTokens: 0, outputTokens: 0 },
-      handledBy: 'codex',
+      toolsUsed: [],
+      finishedNaturally: true,
+      handledBy: 'codex' as const,
     }));
 
+    const agentBridge = new AgentBridgeWithFallback(
+      failingPrimary,
+      new CodexAgentBridge(),
+    );
+
+    const lightLLM = createMockLightLLM('gateway should be bypassed');
+
     ctx = createPipelineTestController({
-      claudeBridge,
+      agentBridge,
       lightLLM,
     });
 
@@ -789,20 +797,18 @@ describe('CP-19: Safety valve — LightLLM returns safety phrase → agentBridge
 
     expect(result.success).toBe(true);
     expect((result.data as { content: string }).content).toBe('codex recovered response');
-    expect(claudeBridge.execute).toHaveBeenCalled();
+    expect(failingPrimary.execute).toHaveBeenCalled();
     expect(codexSpy).toHaveBeenCalledTimes(1);
 
     codexSpy.mockRestore();
   });
 
   test('business error should not fall back to CodexAgentBridge in main pipeline', async () => {
-    const claudeBridge = {
+    const agentBridge = {
       execute: mock(async () => {
         throw new Error('validation failed: invalid tool arguments');
       }),
-      estimateCost: () => 0,
-      getActiveSessions: () => 0,
-    } as unknown as CentralControllerDeps['claudeBridge'];
+    } as unknown as CentralControllerDeps['agentBridge'];
 
     const lightLLM = createMockLightLLM('gateway should be bypassed');
     const codexSpy = spyOn(CodexAgentBridge.prototype, 'execute').mockImplementation(async () => ({
@@ -821,7 +827,7 @@ describe('CP-19: Safety valve — LightLLM returns safety phrase → agentBridge
     );
 
     ctx = createPipelineTestController({
-      claudeBridge,
+      agentBridge,
       lightLLM,
     });
 
@@ -830,7 +836,7 @@ describe('CP-19: Safety valve — LightLLM returns safety phrase → agentBridge
 
     expect(result.success).toBe(true);
     expect((result.data as { content: string }).content).toBe('agent runtime recovered response');
-    expect(claudeBridge.execute).toHaveBeenCalled();
+    expect(agentBridge.execute).toHaveBeenCalled();
     expect(codexSpy).not.toHaveBeenCalled();
     expect(agentRuntimeSpy).toHaveBeenCalledTimes(1);
 
@@ -862,7 +868,7 @@ describe('CP-20: executionMode=async propagation chain', () => {
     ctx = createPipelineTestController({
       ...ovDeps,
       agentRuntime,
-      claudeBridge: undefined,
+      agentBridge: undefined,
       lightLLM: undefined,
     });
 
@@ -896,7 +902,7 @@ describe('CP-21: executionMode=long-horizon propagation chain', () => {
     ctx = createPipelineTestController({
       ...ovDeps,
       agentRuntime,
-      claudeBridge: undefined,
+      agentBridge: undefined,
       lightLLM: undefined,
     });
 
@@ -940,7 +946,7 @@ describe('CP-22: claudeSessionId persists across turns', () => {
 
     ctx = createPipelineTestController({
       agentRuntime,
-      claudeBridge: undefined,
+      agentBridge: undefined,
       lightLLM: undefined,
     });
 

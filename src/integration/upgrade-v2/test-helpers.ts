@@ -9,7 +9,7 @@
  */
 import { Database } from 'bun:sqlite';
 import { mock } from 'bun:test';
-import type { ClaudeAgentBridge } from '../../kernel/agents/claude-agent-bridge';
+import type { AgentBridge } from '../../kernel/agents/agent-bridge';
 import type { LightLLMClient } from '../../kernel/agents/light-llm-client';
 import type { CentralControllerDeps } from '../../kernel/central-controller';
 import { CentralController } from '../../kernel/central-controller';
@@ -51,25 +51,24 @@ export function createMessage(overrides?: Partial<BotMessage>): BotMessage {
   };
 }
 
-// ── Mock ClaudeAgentBridge ─────────────────────────────────
+// ── Mock AgentBridge ─────────────────────────────────
 
-export function createMockClaudeBridge(response = 'Claude response'): ClaudeAgentBridge {
+export function createMockAgentBridge(response = 'Claude response'): AgentBridge {
   return {
-    execute: mock(async (params: { onStream?: (e: StreamEvent) => void }) => {
-      if (params.onStream) {
-        params.onStream({ type: 'text_delta', text: response });
-        params.onStream({ type: 'done' });
+    execute: mock(async (params: { streamCallback?: (e: StreamEvent) => Promise<void> }) => {
+      if (params.streamCallback) {
+        await params.streamCallback({ type: 'text_delta', text: response });
+        await params.streamCallback({ type: 'done' });
       }
       return {
         content: response,
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
         toolsUsed: [],
-        turns: 1,
-        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001 },
+        finishedNaturally: true,
+        handledBy: 'claude' as const,
       };
     }),
-    estimateCost: () => 0.001,
-    getActiveSessions: () => 0,
-  } as unknown as ClaudeAgentBridge;
+  };
 }
 
 // ── Mock LightLLMClient ────────────────────────────────────
@@ -257,12 +256,12 @@ export function createTestController(
   CentralController.resetInstance();
 
   const { db, sessionStore, taskStore } = createStores();
-  const claudeBridge = createMockClaudeBridge();
+  const agentBridge = createMockAgentBridge();
   const lightLLM = createMockLightLLM();
   const ovDeps = createMockOVDeps();
 
   const deps: CentralControllerDeps = {
-    claudeBridge,
+    agentBridge,
     lightLLM,
     sessionStore,
     taskStore,
