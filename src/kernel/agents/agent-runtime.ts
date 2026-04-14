@@ -50,7 +50,14 @@ export class AgentRuntime {
         classifiedBy: params.classifyResult.classifiedBy,
       });
       if (params.classifyResult.complexity === 'simple') {
-        return this.executeSimple(params, params.classifyResult.costUsd);
+        try {
+          return await this.executeSimple(params, params.classifyResult.costUsd);
+        } catch (error) {
+          this.logger.warn('LightLLM 失败，降级到 Claude', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return this.executeComplex(params, params.classifyResult.costUsd);
+        }
       }
       return this.executeComplex(params, params.classifyResult.costUsd);
     }

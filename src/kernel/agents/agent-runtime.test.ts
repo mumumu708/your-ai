@@ -326,6 +326,81 @@ describe('AgentRuntime', () => {
     });
   });
 
+  describe('LightLLM 失败降级到 Claude', () => {
+    test('classifyResult=simple 但 LightLLM 抛异常时应降级到 Claude', async () => {
+      const failingLLM = {
+        complete: async () => {
+          throw new Error('LightLLM API 错误: 429');
+        },
+        // biome-ignore lint/correctness/useYield: test mock intentionally throws without yielding
+        stream: async function* () {
+          throw new Error('LightLLM stream API 错误: 429');
+        },
+        getDefaultModel: () => 'gpt-4o-mini',
+      } as unknown as LightLLMClient;
+
+      const runtime = new AgentRuntime({
+        claudeBridge: createMockClaudeBridge(),
+        lightLLM: failingLLM,
+      });
+
+      const result = await runtime.execute(
+        createParams({
+          classifyResult: {
+            taskType: 'chat',
+            complexity: 'simple',
+            reason: 'test',
+            confidence: 0.9,
+            classifiedBy: 'rule',
+            costUsd: 0,
+          },
+        }),
+      );
+
+      // Should have fallen back to Claude instead of throwing
+      expect(result.complexity).toBe('complex');
+      expect(result.channel).toBe('agent_sdk');
+      expect(result.content).toBe('Claude response');
+    });
+
+    test('classifyResult=simple + stream 模式 LightLLM 429 应降级到 Claude', async () => {
+      const streamEvents: StreamEvent[] = [];
+      const failingLLM = {
+        complete: async () => {
+          throw new Error('LightLLM API 错误: 429');
+        },
+        // biome-ignore lint/correctness/useYield: test mock intentionally throws without yielding
+        stream: async function* () {
+          throw new Error('LightLLM stream API 错误: 429');
+        },
+        getDefaultModel: () => 'gpt-4o-mini',
+      } as unknown as LightLLMClient;
+
+      const runtime = new AgentRuntime({
+        claudeBridge: createMockClaudeBridge(),
+        lightLLM: failingLLM,
+      });
+
+      const result = await runtime.execute(
+        createParams({
+          classifyResult: {
+            taskType: 'chat',
+            complexity: 'simple',
+            reason: 'test',
+            confidence: 0.9,
+            classifiedBy: 'rule',
+            costUsd: 0,
+          },
+          streamCallback: (e: StreamEvent) => streamEvents.push(e),
+        }),
+      );
+
+      expect(result.complexity).toBe('complex');
+      expect(result.channel).toBe('agent_sdk');
+      expect(result.content).toBe('Claude response');
+    });
+  });
+
   describe('多模态消息 (mediaRefs)', () => {
     test('simple 路径应构造 content array 含图片', async () => {
       let capturedMessages: unknown[] = [];
