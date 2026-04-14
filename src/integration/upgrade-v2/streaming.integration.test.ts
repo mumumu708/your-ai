@@ -18,7 +18,12 @@ import type { StreamResult } from '../../kernel/streaming/stream-handler';
 import type { ChannelStreamAdapter, StreamProtocol } from '../../kernel/streaming/stream-protocol';
 import type { WorkspaceManager } from '../../kernel/workspace';
 import type { StreamEvent } from '../../shared/messaging/stream-event.types';
-import { cleanupController, createMessage, createTestController } from './test-helpers';
+import {
+  cleanupController,
+  createMessage,
+  createMockLightLLM,
+  createTestController,
+} from './test-helpers';
 import type { ControllerTestContext } from './test-helpers';
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -767,5 +772,56 @@ describe('ST-14: Content > 28k truncation', () => {
     expect(lastUpdateText).toContain('内容已截断');
     const xCount = (lastUpdateText.match(/X/g) || []).length;
     expect(xCount).toBe(27900);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ST-15: Gateway quick path must push stream events to avoid deadlock
+// ═══════════════════════════════════════════════════════════════
+
+describe('ST-15: Gateway quick path pushes text_delta+done to stream callback (deadlock fix)', () => {
+  let ctx: ControllerTestContext;
+
+  afterEach(() => {
+    if (ctx) cleanupController(ctx);
+  });
+
+  test('simple message via IntelligenceGateway completes without hanging', async () => {
+    const { adapter, captured } = createCapturingAdapter();
+
+    // LightLLM mock: gateway will handle directly (simple + chat + no attachments)
+    const lightLLM = createMockLightLLM('快速回复');
+
+    // claudeBridge should NOT be called for simple gateway tasks
+    const claudeBridge = {
+      execute: mock(async () => {
+        throw new Error('Should not reach claudeBridge for simple tasks');
+      }),
+      estimateCost: () => 0,
+      getActiveSessions: () => 0,
+    } as unknown as ClaudeAgentBridge;
+
+    ctx = createTestController({
+      claudeBridge,
+      lightLLM,
+      streamAdapterFactory: (_u, _c, _conv) => [adapter],
+      workspaceManager: createCorrectWorkspaceManager(),
+      // No taskStore → bypass TaskDispatcher, go through direct orchestrate path
+      // biome-ignore lint/suspicious/noExplicitAny: test mock
+      taskStore: undefined as any,
+    });
+
+    // Race: if the fix is missing, this will hang forever (deadlock)
+    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000));
+    const resultPromise = ctx.controller.handleIncomingMessage(createMessage({ content: '你好' }));
+    const result = await Promise.race([resultPromise, timeout]);
+
+    // Should NOT have timed out
+    expect(result).not.toBeNull();
+    expect(result?.success).toBe(true);
+
+    // Stream adapter should have received the gateway response via pushed events
+    expect(captured.started).toBe(true);
+    expect(captured.doneText).toBe('快速回复');
   });
 });

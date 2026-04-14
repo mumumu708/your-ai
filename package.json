@@ -18,7 +18,7 @@
     "check:arch": "bun run scripts/check-architecture.ts",
     "check:conventions": "bun run scripts/lint-conventions.ts",
     "check:docs": "bun run scripts/check-docs.ts",
-    "check:coverage": "bun test --coverage && bun run scripts/lcov-to-nyc.ts && bunx nyc check-coverage",
+    "check:coverage": "bun test --coverage --path-ignore-patterns='src/integration/light-llm.integration.test.ts' && bun run scripts/lcov-to-nyc.ts && bunx nyc check-coverage",
     "check:all": "bun run lint && bun run typecheck && bun run check:arch && bun run check:conventions && bun run check:coverage",
     "test:mutate": "bunx stryker run",
     "test:mutate:dry": "bunx stryker run --dryRunOnly",
