@@ -67,9 +67,11 @@ export class CodexAgentBridge implements AgentBridge {
           for (const line of lines) {
             if (!line.trim()) continue;
             try {
-              const event = JSON.parse(line) as { type?: string; role?: string; content?: string };
-              if (event.type === 'message' && event.role === 'assistant') {
-                void params.streamCallback({ type: 'text_delta', text: event.content || '' });
+              const event = JSON.parse(line) as Record<string, unknown>;
+              const item = event.item as Record<string, unknown> | undefined;
+              // Codex JSONL format: { type: "item.completed", item: { type: "agent_message", text: "..." } }
+              if (event.type === 'item.completed' && item?.type === 'agent_message' && item.text) {
+                void params.streamCallback({ type: 'text_delta', text: item.text as string });
               }
             } catch {
               /* ignore non-JSON lines (e.g. stderr leaks) */
@@ -157,21 +159,23 @@ export class CodexAgentBridge implements AgentBridge {
   }
 
   extractContent(jsonlOutput: string): string {
-    // Parse JSONL, find last assistant message
+    // Parse JSONL, collect all agent_message texts
     const lines = jsonlOutput.split('\n').filter(Boolean);
-    let lastContent = '';
+    const messages: string[] = [];
 
     for (const line of lines) {
       try {
-        const event = JSON.parse(line) as { type?: string; role?: string; content?: string };
-        if (event.type === 'message' && event.role === 'assistant' && event.content) {
-          lastContent = event.content;
+        const event = JSON.parse(line) as Record<string, unknown>;
+        const item = event.item as Record<string, unknown> | undefined;
+        // Codex JSONL: { type: "item.completed", item: { type: "agent_message", text: "..." } }
+        if (event.type === 'item.completed' && item?.type === 'agent_message' && item.text) {
+          messages.push(item.text as string);
         }
       } catch {
         /* ignore */
       }
     }
 
-    return lastContent || jsonlOutput.trim();
+    return messages.join('\n\n') || jsonlOutput.trim();
   }
 }

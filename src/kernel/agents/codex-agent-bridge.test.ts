@@ -97,29 +97,29 @@ describe('CodexAgentBridge', () => {
     expect(prompt).toBe('SYS\n\nMSG');
   });
 
-  test('extractContent parses last assistant message from JSONL', () => {
+  test('extractContent parses agent_message from JSONL', () => {
     const bridge = new CodexAgentBridge();
     const jsonl = [
-      JSON.stringify({ type: 'message', role: 'user', content: 'hello' }),
-      JSON.stringify({ type: 'message', role: 'assistant', content: 'first reply' }),
-      JSON.stringify({ type: 'message', role: 'assistant', content: 'final reply' }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'first reply' } }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'final reply' } }),
     ].join('\n');
 
-    expect(bridge.extractContent(jsonl)).toBe('final reply');
+    expect(bridge.extractContent(jsonl)).toBe('first reply\n\nfinal reply');
   });
 
-  test('extractContent returns raw output when no assistant message found', () => {
+  test('extractContent returns raw output when no agent_message found', () => {
     const bridge = new CodexAgentBridge();
     const output = 'plain text output';
 
     expect(bridge.extractContent(output)).toBe('plain text output');
   });
 
-  test('extractContent handles empty content gracefully', () => {
+  test('extractContent handles empty text gracefully', () => {
     const bridge = new CodexAgentBridge();
-    const jsonl = JSON.stringify({ type: 'message', role: 'assistant', content: '' });
+    const jsonl = JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '' } });
 
-    // content is empty string → falsy → falls through to raw trim
+    // text is empty string → falsy → not collected → falls through to raw trim
     expect(bridge.extractContent(jsonl)).toBe(jsonl.trim());
   });
 
@@ -127,7 +127,7 @@ describe('CodexAgentBridge', () => {
     const bridge = new CodexAgentBridge();
     const jsonl = [
       'not json',
-      JSON.stringify({ type: 'message', role: 'assistant', content: 'good' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'good' } }),
       '{invalid json',
     ].join('\n');
 
@@ -142,10 +142,10 @@ describe('CodexAgentBridge', () => {
 
     const resultPromise = bridge.execute(createBaseParams());
 
-    // Simulate JSONL output
+    // Simulate JSONL output (codex format)
     mockProc.stdout.emit(
       'data',
-      Buffer.from(`${JSON.stringify({ type: 'message', role: 'assistant', content: 'Done!' })}\n`),
+      Buffer.from(`${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Done!' } })}\n`),
     );
     mockProc.emit('close', 0);
 
@@ -198,11 +198,11 @@ describe('CodexAgentBridge', () => {
       }),
     );
 
-    // Emit assistant message
+    // Emit agent_message (actual codex JSONL format)
     mockProc.stdout.emit(
       'data',
       Buffer.from(
-        `${JSON.stringify({ type: 'message', role: 'assistant', content: 'streaming...' })}\n`,
+        `${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'streaming...' } })}\n`,
       ),
     );
     mockProc.emit('close', 0);
@@ -228,10 +228,10 @@ describe('CodexAgentBridge', () => {
       }),
     );
 
-    // Emit user message (should be ignored)
+    // Emit non-agent_message event (should be ignored)
     mockProc.stdout.emit(
       'data',
-      Buffer.from(`${JSON.stringify({ type: 'message', role: 'user', content: 'ignored' })}\n`),
+      Buffer.from(`${JSON.stringify({ type: 'turn.started' })}\n`),
     );
     // Emit non-JSON (should be ignored)
     mockProc.stdout.emit('data', Buffer.from('not json\n'));
