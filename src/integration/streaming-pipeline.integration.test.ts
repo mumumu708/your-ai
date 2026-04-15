@@ -156,8 +156,16 @@ describe('流式管道集成测试', () => {
       execute: mock(async (params: { streamCallback?: (e: StreamEvent) => Promise<void> }) => {
         if (params.streamCallback) {
           await params.streamCallback({ type: 'text_delta', text: '分析中...' });
-          await params.streamCallback({ type: 'tool_use', toolName: 'readFile', toolInput: { path: '/a.ts' } });
-          await params.streamCallback({ type: 'tool_result', toolName: 'readFile', text: 'file content' });
+          await params.streamCallback({
+            type: 'tool_use',
+            toolName: 'readFile',
+            toolInput: { path: '/a.ts' },
+          });
+          await params.streamCallback({
+            type: 'tool_result',
+            toolName: 'readFile',
+            text: 'file content',
+          });
           await params.streamCallback({ type: 'text_delta', text: '结果如下' });
           await params.streamCallback({ type: 'done' });
         }

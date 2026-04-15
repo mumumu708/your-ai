@@ -520,7 +520,11 @@ describe('ST-11: Controller filteredCallback → StreamContentFilter suppresses 
       execute: mock(async (params: { streamCallback?: (e: StreamEvent) => Promise<void> }) => {
         if (params.streamCallback) {
           await params.streamCallback({ type: 'text_delta', text: 'start' });
-          await params.streamCallback({ type: 'tool_use', toolName: 'bash', toolInput: { command: 'ls' } });
+          await params.streamCallback({
+            type: 'tool_use',
+            toolName: 'bash',
+            toolInput: { command: 'ls' },
+          });
           await params.streamCallback({ type: 'tool_result', toolName: 'bash', text: 'output' });
           await params.streamCallback({ type: 'text_delta', text: 'end' });
           await params.streamCallback({ type: 'done' });

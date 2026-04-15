@@ -17,7 +17,6 @@ import type {
 } from '../../kernel/agents/agent-bridge';
 import type { CentralControllerDeps } from '../../kernel/central-controller';
 import type { ChannelStreamAdapter } from '../../kernel/streaming/stream-protocol';
-import type { StreamEvent } from '../../shared/messaging/stream-event.types';
 import {
   type ControllerTestContext,
   cleanupController,
@@ -200,13 +199,13 @@ describe('STR-05: streamResultPromise resolves after done event (no hang)', () =
 
     // Race against timeout — if streamResultPromise hangs this will reject
     const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('TIMEOUT: handleIncomingMessage hung waiting for done')), 5000),
+      setTimeout(
+        () => reject(new Error('TIMEOUT: handleIncomingMessage hung waiting for done')),
+        5000,
+      ),
     );
 
-    const result = await Promise.race([
-      ctx.controller.handleIncomingMessage(msg),
-      timeout,
-    ]);
+    const result = await Promise.race([ctx.controller.handleIncomingMessage(msg), timeout]);
 
     expect(result.success).toBe(true);
     expect(captured.doneCalled).toBe(true);
@@ -250,10 +249,7 @@ describe('STR-06: Gateway quick path pushes text_delta+done to streamCallback', 
       setTimeout(() => reject(new Error('TIMEOUT: gateway quick path hung')), 5000),
     );
 
-    const result = await Promise.race([
-      ctx.controller.handleIncomingMessage(msg),
-      timeout,
-    ]);
+    const result = await Promise.race([ctx.controller.handleIncomingMessage(msg), timeout]);
 
     expect(result.success).toBe(true);
     const data = result.data as { content: string; channel?: string };

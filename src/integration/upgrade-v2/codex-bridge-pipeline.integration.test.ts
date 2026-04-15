@@ -22,12 +22,15 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 
-import type { AgentBridge, AgentExecuteParams, AgentResult } from '../../kernel/agents/agent-bridge';
+import type {
+  AgentBridge,
+  AgentExecuteParams,
+  AgentResult,
+} from '../../kernel/agents/agent-bridge';
 import { AgentBridgeWithFallback } from '../../kernel/agents/agent-bridge-fallback';
 import { CodexAgentBridge } from '../../kernel/agents/codex-agent-bridge';
 import type { CentralControllerDeps } from '../../kernel/central-controller';
 import type { ChannelStreamAdapter } from '../../kernel/streaming/stream-protocol';
-import type { StreamEvent } from '../../shared/messaging/stream-event.types';
 import {
   type ControllerTestContext,
   cleanupController,

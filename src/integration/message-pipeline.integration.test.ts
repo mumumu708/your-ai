@@ -8,8 +8,8 @@
  */
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { MessageRouter } from '../gateway/message-router';
-import { AgentRuntime } from '../kernel/agents/agent-runtime';
 import type { AgentBridge, AgentResult } from '../kernel/agents/agent-bridge';
+import { AgentRuntime } from '../kernel/agents/agent-runtime';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
 import { SessionManager } from '../kernel/sessioning/session-manager';

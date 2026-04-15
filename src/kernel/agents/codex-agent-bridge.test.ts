@@ -101,8 +101,14 @@ describe('CodexAgentBridge', () => {
     const bridge = new CodexAgentBridge();
     const jsonl = [
       JSON.stringify({ type: 'turn.started' }),
-      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'first reply' } }),
-      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'final reply' } }),
+      JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'agent_message', text: 'first reply' },
+      }),
+      JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'agent_message', text: 'final reply' },
+      }),
     ].join('\n');
 
     expect(bridge.extractContent(jsonl)).toBe('first reply\n\nfinal reply');
@@ -117,7 +123,10 @@ describe('CodexAgentBridge', () => {
 
   test('extractContent handles empty text gracefully', () => {
     const bridge = new CodexAgentBridge();
-    const jsonl = JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '' } });
+    const jsonl = JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: '' },
+    });
 
     // text is empty string → falsy → not collected → falls through to raw trim
     expect(bridge.extractContent(jsonl)).toBe(jsonl.trim());
@@ -145,7 +154,9 @@ describe('CodexAgentBridge', () => {
     // Simulate JSONL output (codex format)
     mockProc.stdout.emit(
       'data',
-      Buffer.from(`${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Done!' } })}\n`),
+      Buffer.from(
+        `${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Done!' } })}\n`,
+      ),
     );
     mockProc.emit('close', 0);
 
@@ -229,10 +240,7 @@ describe('CodexAgentBridge', () => {
     );
 
     // Emit non-agent_message event (should be ignored)
-    mockProc.stdout.emit(
-      'data',
-      Buffer.from(`${JSON.stringify({ type: 'turn.started' })}\n`),
-    );
+    mockProc.stdout.emit('data', Buffer.from(`${JSON.stringify({ type: 'turn.started' })}\n`));
     // Emit non-JSON (should be ignored)
     mockProc.stdout.emit('data', Buffer.from('not json\n'));
     mockProc.emit('close', 0);

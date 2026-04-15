@@ -85,11 +85,15 @@ export class CodexAgentBridge implements AgentBridge {
       });
 
       if (params.signal) {
-        params.signal.addEventListener('abort', () => {
-          if (!settled) {
-            proc.kill('SIGTERM');
-          }
-        }, { once: true });
+        params.signal.addEventListener(
+          'abort',
+          () => {
+            if (!settled) {
+              proc.kill('SIGTERM');
+            }
+          },
+          { once: true },
+        );
       }
 
       proc.on('close', (code) => {

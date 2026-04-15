@@ -22,8 +22,8 @@ import { ScheduleCancelManager } from '../../kernel/scheduling/schedule-cancel-m
 import { type ScheduledJob, Scheduler } from '../../kernel/scheduling/scheduler';
 import {
   createMessage,
-  createMockChannel,
   createMockAgentBridge,
+  createMockChannel,
   createMockLightLLM,
   createMockMediaProcessor,
   createMockOVDeps,

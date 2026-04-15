@@ -555,25 +555,30 @@ describe('CentralController fallback path (no TaskDispatcher)', () => {
     cleanupController(ctx);
 
     const slowBridge: AgentBridge = {
-      execute: mock(async (params: { signal?: AbortSignal; streamCallback?: (e: unknown) => Promise<void> }) => {
-        // Simulate slow work
-        await new Promise((resolve, reject) => {
-          const timer = setTimeout(resolve, 10000);
-          if (params.signal) {
-            params.signal.addEventListener('abort', () => {
-              clearTimeout(timer);
-              reject(new Error('aborted'));
-            });
-          }
-        });
-        return {
-          content: 'done',
-          tokenUsage: { inputTokens: 10, outputTokens: 5 },
-          toolsUsed: [],
-          finishedNaturally: true,
-          handledBy: 'claude',
-        };
-      }),
+      execute: mock(
+        async (params: {
+          signal?: AbortSignal;
+          streamCallback?: (e: unknown) => Promise<void>;
+        }) => {
+          // Simulate slow work
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(resolve, 10000);
+            if (params.signal) {
+              params.signal.addEventListener('abort', () => {
+                clearTimeout(timer);
+                reject(new Error('aborted'));
+              });
+            }
+          });
+          return {
+            content: 'done',
+            tokenUsage: { inputTokens: 10, outputTokens: 5 },
+            toolsUsed: [],
+            finishedNaturally: true,
+            handledBy: 'claude',
+          };
+        },
+      ),
     };
 
     ctx = createTestController({

@@ -780,10 +780,7 @@ describe('CP-19: Safety valve — LightLLM returns safety phrase → agentBridge
       handledBy: 'codex' as const,
     }));
 
-    const agentBridge = new AgentBridgeWithFallback(
-      failingPrimary,
-      new CodexAgentBridge(),
-    );
+    const agentBridge = new AgentBridgeWithFallback(failingPrimary, new CodexAgentBridge());
 
     const lightLLM = createMockLightLLM('gateway should be bypassed');
 
