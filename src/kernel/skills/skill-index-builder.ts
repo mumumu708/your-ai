@@ -5,6 +5,7 @@
  * consuming ≤ 1% of the context window budget.
  */
 
+import type { OpenVikingClient } from '../memory/openviking/openviking-client';
 import { type SkillFrontmatter, parseFrontmatter } from './skill-frontmatter';
 import { type ReadinessResult, checkReadiness } from './skill-readiness';
 
@@ -12,6 +13,7 @@ export interface SkillEntry {
   name: string;
   description: string;
   dir: string;
+  tags?: string[];
 }
 
 export interface SkillIndexParams {
@@ -84,6 +86,20 @@ export class SkillIndexBuilder {
 
     const { frontmatter } = parseFrontmatter(content);
     return frontmatter;
+  }
+
+  /**
+   * Write skill descriptions into OpenViking for semantic retrieval (DD-022).
+   * Enables per-turn skill recommendations based on query similarity.
+   */
+  async indexToOpenViking(params: SkillIndexParams, ovClient: OpenVikingClient): Promise<number> {
+    let indexed = 0;
+    for (const skill of params.skills) {
+      const content = [skill.description, skill.tags?.join(', ') ?? ''].filter(Boolean).join('\n');
+      await ovClient.write(`viking://skills/${skill.name}`, content);
+      indexed++;
+    }
+    return indexed;
   }
 
   /**

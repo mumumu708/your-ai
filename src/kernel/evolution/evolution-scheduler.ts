@@ -7,7 +7,7 @@ import { reflect } from './reflect';
 const logger = new Logger('EvolutionScheduler');
 
 interface EvolutionJob {
-  type: 'reflect' | 'link' | 'evolve';
+  type: 'reflect' | 'link' | 'evolve' | 'digest';
   payload: Record<string, unknown>;
   retries: number;
 }
@@ -39,6 +39,16 @@ export class EvolutionScheduler {
       links: extractedMemoryUris.length,
       reflects: 3,
     });
+  }
+
+  /** Schedule a digest task (DD-022) */
+  scheduleDigest(userId: string): void {
+    this.enqueue({
+      type: 'digest',
+      payload: { userId },
+      retries: 0,
+    });
+    logger.info('消化任务已调度', { userId });
   }
 
   /** Schedule a single evolve task */
@@ -82,6 +92,14 @@ export class EvolutionScheduler {
             job.payload.newContent as string,
             job.payload.existingUri as string,
           );
+          break;
+        case 'digest':
+          // DD-022: Digest runs as async agent session.
+          // Full implementation requires AgentBridge injection.
+          // For now, log the scheduling — actual execution via CentralController.
+          logger.info('Digest 任务执行（需要 AgentBridge）', {
+            userId: job.payload.userId,
+          });
           break;
       }
     } catch (err) {

@@ -465,6 +465,81 @@ describe('AgentRuntime', () => {
       expect(parts[1]?.type).toBe('image_url');
     });
 
+    test('simple 路径应从 localPath 恢复 base64（base64 被清空后）', async () => {
+      // 准备：写一个临时文件模拟持久化的图片
+      const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+
+      const tmpDir = mkdtempSync(join(tmpdir(), 'rt-test-'));
+      const imgPath = join(tmpDir, 'test.jpg');
+      const imgBuffer = Buffer.from('fake-image-data');
+      writeFileSync(imgPath, imgBuffer);
+
+      let capturedMessages: unknown[] = [];
+      const mockLLM = {
+        complete: async (req: { messages: unknown[] }) => {
+          capturedMessages = req.messages;
+          return {
+            content: '从磁盘恢复的图片',
+            model: 'gpt-4o-mini',
+            usage: { promptTokens: 100, completionTokens: 20, totalCost: 0.001 },
+          };
+        },
+        stream: async function* () {
+          yield { content: '', done: true };
+        },
+        getDefaultModel: () => 'gpt-4o-mini',
+      } as unknown as LightLLMClient;
+
+      const runtime = new AgentRuntime({
+        classifier: createMockClassifier('simple'),
+        lightLLM: mockLLM,
+      });
+
+      await runtime.execute(
+        createParams({
+          classifyResult: {
+            taskType: 'chat',
+            complexity: 'simple',
+            reason: 'test',
+            confidence: 0.9,
+            classifiedBy: 'rule',
+            costUsd: 0,
+          },
+          context: {
+            sessionId: 'sess_recover',
+            messages: [
+              {
+                role: 'user',
+                content: '之前发的图片',
+                timestamp: Date.now(),
+                mediaRefs: [
+                  {
+                    mediaType: 'image',
+                    mimeType: 'image/jpeg',
+                    description: '测试图',
+                    // base64Data 已被清空，只有 localPath
+                    localPath: imgPath,
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+
+      // 应该从 localPath 恢复了 base64，构造了 multimodal content
+      const userMsg = capturedMessages.find(
+        (m: unknown) => (m as { role: string }).role === 'user',
+      ) as { content: unknown };
+      expect(Array.isArray(userMsg.content)).toBe(true);
+      const parts = userMsg.content as Array<{ type: string }>;
+      expect(parts.some((p) => p.type === 'image_url')).toBe(true);
+
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
     test('simple 路径无 mediaRefs 保持字符串 content', async () => {
       let capturedMessages: unknown[] = [];
       const mockLLM = {

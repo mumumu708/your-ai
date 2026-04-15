@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import type { ConfigLoader } from '../memory/config-loader';
 import type { OpenVikingClient } from '../memory/openviking/openviking-client';
-import { ConflictResolver } from './conflict-resolver';
+import type { ConfigLoader } from '../prompt/config-loader';
+import { ConflictResolver } from '../prompt/conflict-resolver';
 import { KnowledgeRouter } from './knowledge-router';
 import { TokenBudgetAllocator } from './token-budget-allocator';
 

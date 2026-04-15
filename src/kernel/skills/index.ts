@@ -19,3 +19,9 @@ export {
   type ParseResult,
 } from './skill-frontmatter';
 export { SkillIndexBuilder, type SkillEntry, type SkillIndexParams } from './skill-index-builder';
+export {
+  SkillPatcher,
+  type SkillPatch,
+  type PendingPatch,
+  type SkillPatcherDeps,
+} from './skill-patcher';

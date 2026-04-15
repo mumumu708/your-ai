@@ -1,5 +1,6 @@
 import {
   type RetrievedMemory,
+  type SkillRecommendation,
   type TurnContext,
   type TurnContextBuildParams,
   estimateTokens,
@@ -35,6 +36,18 @@ export function buildTurnContext(params: TurnContextBuildParams): TurnContext {
   // ── Invoked Skills (post-compaction recovery) ──
   if (params.postCompaction && params.invokedSkills && params.invokedSkills.length > 0) {
     parts.push(buildInvokedSkillsSection(params.invokedSkills));
+  }
+
+  // ── Skill Recommendation (DD-022) ──
+  const skillRec = buildSkillRecommendation(params.skillRecommendations);
+  if (skillRec) {
+    parts.push(skillRec);
+  }
+
+  // ── Digest Available (DD-022) ──
+  const digestSection = buildDigestAvailable(params.digestInsights);
+  if (digestSection) {
+    parts.push(digestSection);
   }
 
   // ── MCP Delta ──
@@ -105,6 +118,33 @@ function buildInvokedSkillsSection(skills: string[]): string {
     lines.push(`- ${skill}`);
   }
   lines.push('</invoked-skills>');
+  return lines.join('\n');
+}
+
+function buildSkillRecommendation(skills?: SkillRecommendation[]): string | null {
+  if (!skills || skills.length === 0) return null;
+
+  const lines: string[] = ['<skill-recommendation>', '可能相关的 skill:'];
+  for (const s of skills) {
+    lines.push(`- /${s.name}: ${s.description.slice(0, 80)}`);
+  }
+  lines.push('如需使用，调用 skill_view 获取完整内容。');
+  lines.push('</skill-recommendation>');
+  return lines.join('\n');
+}
+
+function buildDigestAvailable(insights?: Array<{ topic: string; preview: string }>): string | null {
+  if (!insights || insights.length === 0) return null;
+
+  const lines: string[] = [
+    '<digest-available>',
+    `你最近积累了 ${insights.length} 条关于以下主题的信息：`,
+  ];
+  for (const i of insights) {
+    lines.push(`- ${i.topic}: ${i.preview}`);
+  }
+  lines.push('如需了解详情，可以说"帮我梳理一下"或"消化一下最近的笔记"。');
+  lines.push('</digest-available>');
   return lines.join('\n');
 }
 

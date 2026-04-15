@@ -36,18 +36,27 @@ export interface PromptBuildParams {
   memorySnapshot?: string;
 }
 
+export interface SkillRecommendation {
+  name: string;
+  description: string;
+}
+
 export interface TurnContextBuildParams {
   memories?: RetrievedMemory[];
   executionMode?: string;
   taskType?: string;
   /** 外部注入的 task-guidance 文本（优先于内部 hardcoded 生成） */
   taskGuidance?: string;
+  /** 语义匹配的 skill 推荐（DD-022） */
+  skillRecommendations?: SkillRecommendation[];
   invokedSkills?: string[];
   postCompaction?: boolean;
   mcpServers?: {
     current: string[];
     previous: string[];
   };
+  /** 消化系统产生的待推送洞察（DD-022） */
+  digestInsights?: Array<{ topic: string; preview: string }>;
 }
 
 export interface RetrievedMemory {

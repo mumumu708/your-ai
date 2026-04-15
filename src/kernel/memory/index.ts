@@ -28,8 +28,6 @@ export type {
   Relation,
   MemoryCategory as OVMemoryCategory,
 } from './openviking';
-export { ConfigLoader, type AIEOSConfig } from './config-loader';
-export { UserConfigLoader } from './user-config-loader';
 export { retrieveMemories, type RetrieveOptions } from './memory-retriever-v2';
 export { ContextManager } from './context-manager';
 export { EntityManager, type GraphQueryResult } from './graph/entity-manager';

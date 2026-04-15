@@ -1,4 +1,5 @@
-import { LessonsLearnedUpdater } from '../lessons/lessons-updater';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { UnifiedClassifyResult } from '../shared/classifier/classifier-types';
 import { ERROR_CODES } from '../shared/errors/error-codes';
 import { YourBotError } from '../shared/errors/yourbot-error';
@@ -10,7 +11,7 @@ import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import type { TaskResult } from '../shared/tasking/task-result.types';
 import type { Session, Task, TaskType } from '../shared/tasking/task.types';
 import { isAdminUser } from '../shared/utils/admin';
-import { generateTaskId, generateTraceId } from '../shared/utils/crypto';
+import { generateId, generateTaskId, generateTraceId } from '../shared/utils/crypto';
 import type { AgentBridge } from './agents/agent-bridge';
 import { AgentRuntime, type EnhancedAgentResult } from './agents/agent-runtime';
 import { IntelligenceGateway } from './agents/intelligence-gateway';
@@ -20,11 +21,11 @@ import { McpConfigBuilder } from './agents/mcp-config-builder';
 import { TaskGuidanceBuilder } from './agents/task-guidance-builder';
 import { TaskClassifier } from './classifier/task-classifier';
 import { type AnalysisItem, routeAnalysis } from './evolution/analysis-router';
-import { ConflictResolver } from './evolution/conflict-resolver';
 import { EvolutionScheduler } from './evolution/evolution-scheduler';
 import { FrozenContextManager } from './evolution/frozen-context-manager';
 import { KnowledgeRouter } from './evolution/knowledge-router';
-import { PostResponseAnalyzer } from './evolution/post-response-analyzer';
+import { LessonsLearnedUpdater } from './evolution/learning/lessons-updater';
+import { PostResponseAnalyzer } from './evolution/learning/post-response-analyzer';
 import { ReflectionPromptBuilder } from './evolution/reflection-prompt-builder';
 import { ReflectionTrigger } from './evolution/reflection-trigger';
 import { TokenBudgetAllocator } from './evolution/token-budget-allocator';
@@ -32,17 +33,18 @@ import { FileUploadHandler } from './files/file-upload-handler';
 import { MediaDownloader } from './media/media-downloader';
 import { MediaProcessor } from './media/media-processor';
 import { MediaUnderstanding } from './media/media-understanding';
-import { ConfigLoader } from './memory/config-loader';
 import { ContextManager } from './memory/context-manager';
 import { EntityManager } from './memory/graph/entity-manager';
 import { OpenVikingClient } from './memory/openviking/openviking-client';
 import type { SessionStore } from './memory/session-store';
-import { UserConfigLoader } from './memory/user-config-loader';
 import { OnboardingManager } from './onboarding';
+import { ConfigLoader } from './prompt/config-loader';
+import { ConflictResolver } from './prompt/conflict-resolver';
 import { buildMemorySnapshot } from './prompt/memory-snapshot-builder';
 import { buildPrependContext } from './prompt/prepend-context-builder';
 import { SystemPromptBuilder } from './prompt/system-prompt-builder';
 import { buildTurnContext } from './prompt/turn-context-builder';
+import { UserConfigLoader } from './prompt/user-config-loader';
 import { JobStore } from './scheduling/job-store';
 import { nlToCron } from './scheduling/nl-to-cron';
 import { ScheduleCancelManager } from './scheduling/schedule-cancel-manager';
@@ -55,6 +57,7 @@ import {
   generateBranchName,
 } from './sessioning';
 import { SkillIndexBuilder } from './skills/skill-index-builder';
+import type { SkillManager } from './skills/skill-manager';
 import { StreamContentFilter } from './streaming/stream-content-filter';
 import { StreamHandler } from './streaming/stream-handler';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
@@ -99,6 +102,7 @@ export interface CentralControllerDeps {
   worktreePool?: WorktreePool;
   sessionStore?: SessionStore;
   taskStore?: TaskStore;
+  skillManager?: SkillManager;
 }
 
 export class CentralController {
@@ -140,6 +144,7 @@ export class CentralController {
   private channelResolver?: (channelType: string) => IChannel | undefined;
   private readonly sessionStore?: SessionStore;
   private readonly taskStore?: TaskStore;
+  private readonly skillManager?: SkillManager;
   private readonly systemPromptBuilder: SystemPromptBuilder;
   private readonly intelligenceGateway?: IntelligenceGateway;
   private readonly queueAggregator: QueueAggregator;
@@ -149,10 +154,23 @@ export class CentralController {
   private readonly taskGuidanceBuilder: TaskGuidanceBuilder;
   private readonly taskDispatcher: TaskDispatcher | undefined;
 
+  // ── DD-017: Message debounce for rapid-fire messages ──
+  /** Sessions currently processing a task (sessionKey → true) */
+  private readonly activeSessions = new Set<string>();
+  /** Buffered messages waiting for active task to complete */
+  private readonly messageBuffers = new Map<
+    string,
+    {
+      messages: BotMessage[];
+      waiters: Array<{ resolve: (r: TaskResult) => void; reject: (e: Error) => void }>;
+    }
+  >();
+
   private constructor(deps?: CentralControllerDeps) {
     // Store optional persistence stores
     this.sessionStore = deps?.sessionStore;
     this.taskStore = deps?.taskStore;
+    this.skillManager = deps?.skillManager;
 
     this.sessionManager =
       deps?.sessionManager ?? new SessionManager({ sessionStore: this.sessionStore });
@@ -338,8 +356,9 @@ export class CentralController {
       if (this.sessionStore && session) {
         try {
           const unreflected = this.sessionStore.getUnreflectedSessions(session.userId);
+          const lastReflectionAt = this.sessionStore.getLastReflectionAt(session.userId);
           const shouldReflect = this.reflectionTrigger.shouldReflect({
-            lastReflectionAt: null, // TODO: track last reflection time per user
+            lastReflectionAt,
             unreflectedSessionCount: unreflected.length,
           });
           if (shouldReflect && this.taskDispatcher) {
@@ -381,6 +400,8 @@ export class CentralController {
                 for (const s of sessions) {
                   this.sessionStore?.markReflectionProcessed(s.id);
                 }
+                // Track last reflection time for this user
+                this.sessionStore?.updateLastReflectionTime(session.userId, Date.now());
                 this.logger.info('后台反思任务已提交', {
                   userId: session.userId,
                   sessionCount: sessions.length,
@@ -422,6 +443,119 @@ export class CentralController {
       userId: message.userId,
     });
 
+    // ── DD-017: Debounce rapid-fire text messages within same session ──
+    const sessionKey = `${message.userId}:${message.channel}:${message.conversationId}`;
+    if (message.contentType === 'text' && this.activeSessions.has(sessionKey)) {
+      this.logger.info('消息缓冲（会话繁忙）', {
+        traceId,
+        messageId: message.id,
+        sessionKey,
+      });
+      return this.bufferPendingMessage(sessionKey, message);
+    }
+
+    this.activeSessions.add(sessionKey);
+    try {
+      const result = await this.processMessageInternal(message, traceId);
+
+      // Drain any messages that buffered while we were processing
+      await this.drainMessageBuffer(sessionKey);
+
+      return result;
+    } finally {
+      this.activeSessions.delete(sessionKey);
+    }
+  }
+
+  /**
+   * Buffer a message that arrived while the session is busy processing another task.
+   * The promise resolves when the active task completes and drains the buffer.
+   */
+  private bufferPendingMessage(sessionKey: string, message: BotMessage): Promise<TaskResult> {
+    return new Promise((resolve, reject) => {
+      let entry = this.messageBuffers.get(sessionKey);
+      if (!entry) {
+        entry = { messages: [], waiters: [] };
+        this.messageBuffers.set(sessionKey, entry);
+      }
+      entry.messages.push(message);
+      entry.waiters.push({ resolve, reject });
+    });
+  }
+
+  /**
+   * After a task completes, drain any buffered messages for that session.
+   * Aggregates buffered messages via QueueAggregator before processing.
+   */
+  private async drainMessageBuffer(sessionKey: string): Promise<void> {
+    while (this.messageBuffers.has(sessionKey)) {
+      const entry = this.messageBuffers.get(sessionKey);
+      if (!entry || entry.messages.length === 0) {
+        this.messageBuffers.delete(sessionKey);
+        break;
+      }
+
+      // Take all buffered messages atomically
+      const messages = entry.messages.splice(0);
+      const waiters = entry.waiters.splice(0);
+      this.messageBuffers.delete(sessionKey);
+
+      // Aggregate via QueueAggregator
+      const contents = messages.map((m) => m.content);
+      const aggregated = await this.queueAggregator.aggregate(contents);
+
+      this.logger.info('消息合并', {
+        sessionKey,
+        originalCount: messages.length,
+        mergedCount: aggregated.tasks.length,
+        filteredCount: aggregated.filtered.length,
+        reason: aggregated.reason,
+      });
+
+      // Process merged tasks (usually 0 or 1)
+      let lastResult: TaskResult | undefined;
+      for (const mergedTask of aggregated.tasks) {
+        const primaryMessage = messages[0] as BotMessage;
+        const mergedMessage: BotMessage = {
+          ...primaryMessage,
+          id: generateId('merged'),
+          content: mergedTask.message,
+          metadata: {
+            ...primaryMessage.metadata,
+            mergedFrom: mergedTask.original,
+            mergedCount: messages.length,
+          },
+        };
+
+        const mergeTraceId = generateTraceId();
+        try {
+          lastResult = await this.processMessageInternal(mergedMessage, mergeTraceId);
+        } catch (err) {
+          this.logger.warn('合并消息处理失败', {
+            sessionKey,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // Resolve all waiters — their messages were merged into the task(s) above
+      const mergedResult: TaskResult = lastResult ?? {
+        success: true,
+        taskId: generateTaskId(),
+        data: { content: '', streamed: true, merged: true },
+        completedAt: Date.now(),
+      };
+      for (const w of waiters) {
+        w.resolve({
+          ...mergedResult,
+          data: { ...(mergedResult.data as Record<string, unknown>), streamed: true, merged: true },
+        });
+      }
+    }
+  }
+
+  /** Core message processing logic (extracted from handleIncomingMessage). */
+  private async processMessageInternal(message: BotMessage, traceId: string): Promise<TaskResult> {
     try {
       let session = await this.sessionManager.resolveSession(
         message.userId,
@@ -484,10 +618,7 @@ export class CentralController {
         };
       }
 
-      // TODO DD-017: Use queueAggregator to merge pending messages before task execution.
-      // When TaskDispatcher replaces direct orchestrate() calls, aggregate queued messages here:
-      // const pending = this.taskQueue.getPending(sessionKey);
-      // if (pending.length > 1) { const aggregated = await this.queueAggregator.aggregate(pending); }
+      // DD-017: Message aggregation now handled by handleIncomingMessage debounce + drainMessageBuffer.
 
       // --- File upload detection ---
       if (
@@ -674,6 +805,17 @@ export class CentralController {
   }
 
   async classifyIntent(message: BotMessage): Promise<UnifiedClassifyResult> {
+    // 有附件（图片/文件）的消息强制走 complex — LightLLM 不支持多模态
+    if (message.attachments?.length) {
+      return {
+        taskType: 'chat',
+        complexity: 'complex',
+        reason: '含附件，强制 complex',
+        classifiedBy: 'rule',
+        executionMode: 'sync',
+      };
+    }
+
     const result = await this.classifier.classify(message.content, { userId: message.userId });
 
     // DD-014: Enrich with execution mode classification
@@ -817,11 +959,19 @@ export class CentralController {
     const sessionKey = `${task.message.userId}:${task.message.channel}:${task.message.conversationId}`;
 
     // --- Media processing ---
+    // Set uploads directory so downloader persists files to disk
+    if (task.session.workspacePath) {
+      this.mediaProcessor.setUploadsDir(
+        join(task.session.workspacePath, 'workspace', 'uploads'),
+      );
+    }
+
     let mediaRefs: MediaRef[] | undefined;
     if (task.message.attachments?.length) {
       try {
+        // Claude 原生支持读图片（通过临时文件），跳过 LightLLM understanding 避免冗余调用
         const processed = await this.mediaProcessor.processAttachments(task.message.attachments, {
-          runUnderstanding: true,
+          runUnderstanding: false,
         });
         mediaRefs = processed
           .filter((a) => a.state === 'processed' || a.state === 'downloaded')
@@ -830,6 +980,26 @@ export class CentralController {
         this.logger.warn('媒体处理失败，继续纯文本处理', {
           error: error instanceof Error ? error.message : String(error),
         });
+      }
+    } else {
+      // 当前消息无附件时，从 session 最近消息中取 mediaRefs（支持先发图再发文字的场景）
+      const recentMessages = this.sessionManager.getRecentMessages(sessionKey, 5);
+      for (let i = recentMessages.length - 1; i >= 0; i--) {
+        const msg = recentMessages[i];
+        if (msg?.role === 'user' && msg.mediaRefs?.length) {
+          // Restore base64 from disk if cleared from memory
+          for (const ref of msg.mediaRefs) {
+            if (!ref.base64Data && ref.localPath && existsSync(ref.localPath)) {
+              try {
+                ref.base64Data = readFileSync(ref.localPath).toString('base64');
+              } catch {
+                // ignore read errors
+              }
+            }
+          }
+          mediaRefs = msg.mediaRefs;
+          break;
+        }
       }
     }
 
@@ -973,19 +1143,28 @@ export class CentralController {
           error: err instanceof Error ? err.message : String(err),
         });
         // Fallback to KnowledgeRouter
-        const resolvedContext = await this.knowledgeRouter.buildContext(
-          task.message.userId,
-          task.message.content,
-          contextMessages,
-          'complex',
-          {
-            summaries,
-            workspaceInfo: this.getWorkspaceInfo(),
-            anchorText: anchor ?? undefined,
-            configLoader: task.session.userConfigLoader,
-          },
-        );
-        systemPromptFallback = resolvedContext.systemPrompt;
+        try {
+          const resolvedContext = await this.knowledgeRouter.buildContext(
+            task.message.userId,
+            task.message.content,
+            contextMessages,
+            'complex',
+            {
+              summaries,
+              workspaceInfo: this.getWorkspaceInfo(),
+              anchorText: anchor ?? undefined,
+              configLoader: task.session.userConfigLoader,
+            },
+          );
+          systemPromptFallback = resolvedContext.systemPrompt;
+        } catch (fallbackErr) {
+          // Last resort: minimal hardcoded prompt that doesn't depend on any module
+          this.logger.error('KnowledgeRouter fallback 也失败，使用最小化兜底', {
+            error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
+          });
+          systemPromptFallback =
+            '你是一个 AI 助手。请尽力帮助用户。（系统提示加载失败，使用最小化配置）';
+        }
       }
     }
 
@@ -1071,6 +1250,7 @@ export class CentralController {
               executionMode: task.classifyResult?.executionMode || 'sync',
               classifyResult: task.classifyResult as Record<string, unknown> | undefined,
               maxTurns: task.classifyResult?.taskType === 'harness' ? 100 : 30,
+              mediaRefs,
             },
           });
 
@@ -1145,7 +1325,7 @@ export class CentralController {
       await streamResultPromise;
     }
 
-    // Clear base64 data from mediaRefs to prevent memory bloat in session history
+    // Clear base64 from memory (files already persisted to disk by MediaDownloader)
     if (mediaRefs?.length) {
       for (const ref of mediaRefs) {
         ref.base64Data = undefined;
@@ -1182,7 +1362,22 @@ export class CentralController {
       }
       if (routed.skillCandidates.length > 0) {
         this.logger.debug('分析结果路由到 Skill', { count: routed.skillCandidates.length });
-        // TODO: actual skill creation via skill_manage when structured output available
+        if (this.skillManager && task.session.workspacePath) {
+          for (const candidate of routed.skillCandidates) {
+            const skillName = `auto-${candidate.type}-${Date.now()}`;
+            try {
+              this.skillManager.addSkill(task.session.workspacePath, skillName, {
+                content: `---\nname: ${skillName}\ndescription: Auto-generated ${candidate.type} skill\ntype: ${candidate.type}\n---\n\n${candidate.content}`,
+              });
+              this.logger.info('自动创建技能', { skillName, type: candidate.type });
+            } catch (err) {
+              this.logger.warn('技能创建失败', {
+                skillName,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+        }
       }
     }
 
@@ -1436,6 +1631,7 @@ export class CentralController {
   /** Set channel resolver (called after ChannelManager is created) */
   setChannelResolver(resolver: (channelType: string) => IChannel | undefined): void {
     this.channelResolver = resolver;
+    this.mediaProcessor.setChannelResolver(resolver);
   }
 
   /** Set stream adapter factory (called after channel registration) */

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
-import type { LessonsLearnedUpdater } from '../lessons/lessons-updater';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import type { BotMessage } from '../shared/messaging/bot-message.types';
 import type { IChannel } from '../shared/messaging/channel-adapter.types';
@@ -12,12 +11,13 @@ import { CentralController } from './central-controller';
 import type { CentralControllerDeps } from './central-controller';
 import type { EvolutionScheduler } from './evolution/evolution-scheduler';
 import type { KnowledgeRouter } from './evolution/knowledge-router';
-import type { PostResponseAnalyzer } from './evolution/post-response-analyzer';
+import type { LessonsLearnedUpdater } from './evolution/learning/lessons-updater';
+import type { PostResponseAnalyzer } from './evolution/learning/post-response-analyzer';
 import type { MediaProcessor } from './media/media-processor';
-import type { ConfigLoader } from './memory/config-loader';
 import type { ContextManager } from './memory/context-manager';
 import type { EntityManager } from './memory/graph/entity-manager';
 import type { OpenVikingClient } from './memory/openviking/openviking-client';
+import type { ConfigLoader } from './prompt/config-loader';
 import { Scheduler } from './scheduling/scheduler';
 import { SessionManager } from './sessioning/session-manager';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
@@ -860,6 +860,8 @@ describe('CentralController', () => {
             { ...mockSessionRecord, id: 'sess_reflect_005' },
           ];
         }),
+        getLastReflectionAt: mock(() => null),
+        updateLastReflectionTime: mock(() => {}),
       } as unknown as import('./memory/session-store').SessionStore;
 
       const mockTaskStore = {
@@ -934,6 +936,8 @@ describe('CentralController', () => {
             { ...mockSessionRecord, id: 'sess_fail_005' },
           ];
         }),
+        getLastReflectionAt: mock(() => null),
+        updateLastReflectionTime: mock(() => {}),
       } as unknown as import('./memory/session-store').SessionStore;
 
       // TaskStore: first call (regular dispatch) succeeds, second call (reflection dispatch) fails
@@ -2118,6 +2122,8 @@ describe('CentralController', () => {
           mimeType: a.mimeType,
           description: a.description ?? '[图片]',
         }),
+        setUploadsDir: () => {},
+        setChannelResolver: () => {},
       } as unknown as MediaProcessor;
 
       const controller = CentralController.getInstance({
@@ -2591,6 +2597,8 @@ describe('CentralController', () => {
       const mockSessionStore = {
         close: mock(() => {}),
         getUnreflectedSessions: mock(() => []),
+        getLastReflectionAt: mock(() => null),
+        updateLastReflectionTime: mock(() => {}),
         upsert: mock(() => {}),
         get: mock(() => null),
         closeSession: mock(() => {}),
@@ -2618,6 +2626,191 @@ describe('CentralController', () => {
       });
 
       await expect(controller.shutdown()).resolves.toBeUndefined();
+    });
+  });
+
+  describe('消息合并 (debounce)', () => {
+    test('单条消息应正常处理，无延迟', async () => {
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'reply',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'simple',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      const result = await controller.handleIncomingMessage(message);
+
+      expect(result.success).toBe(true);
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('会话繁忙时后续文本消息应被缓冲', async () => {
+      const agentRuntime = new AgentRuntime();
+      let resolveFirst: (() => void) | undefined;
+      const firstBlocked = new Promise<void>((r) => {
+        resolveFirst = r;
+      });
+
+      let callCount = 0;
+      spyOn(agentRuntime, 'execute').mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          // First call blocks until we release it
+          await firstBlocked;
+        }
+        return {
+          content: `reply-${callCount}`,
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
+          complexity: 'simple',
+          channel: 'agent_sdk',
+          classificationCostUsd: 0,
+        };
+      });
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const msg1 = createMockMessage({ id: 'msg1', content: '你好' });
+      const msg2 = createMockMessage({ id: 'msg2', content: '请帮我查天气' });
+
+      // Start first message processing (will block)
+      const p1 = controller.handleIncomingMessage(msg1);
+
+      // Give the first message time to enter processing
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Send second message while first is processing — should be buffered
+      const p2 = controller.handleIncomingMessage(msg2);
+
+      // Release first message
+      resolveFirst?.();
+
+      const [result1, result2] = await Promise.all([p1, p2]);
+
+      expect(result1.success).toBe(true);
+      expect(result2.success).toBe(true);
+      // Second message should be marked as merged
+      const data2 = result2.data as Record<string, unknown>;
+      expect(data2.merged).toBe(true);
+      // Agent should be called twice: once for first message, once for merged second
+      expect(callCount).toBe(2);
+    });
+
+    test('纯数字噪声消息应被过滤，不产生额外任务', async () => {
+      const agentRuntime = new AgentRuntime();
+      let resolveFirst: (() => void) | undefined;
+      const firstBlocked = new Promise<void>((r) => {
+        resolveFirst = r;
+      });
+
+      let callCount = 0;
+      spyOn(agentRuntime, 'execute').mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          await firstBlocked;
+        }
+        return {
+          content: `reply-${callCount}`,
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
+          complexity: 'simple',
+          channel: 'agent_sdk',
+          classificationCostUsd: 0,
+        };
+      });
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const msg1 = createMockMessage({ id: 'msg1', content: '你好' });
+      // All noise messages (pure numbers)
+      const noise1 = createMockMessage({ id: 'noise1', content: '123' });
+      const noise2 = createMockMessage({ id: 'noise2', content: '456' });
+
+      const p1 = controller.handleIncomingMessage(msg1);
+      await new Promise((r) => setTimeout(r, 50));
+
+      const p2 = controller.handleIncomingMessage(noise1);
+      const p3 = controller.handleIncomingMessage(noise2);
+
+      resolveFirst?.();
+
+      const [result1, result2, result3] = await Promise.all([p1, p2, p3]);
+
+      expect(result1.success).toBe(true);
+      expect(result2.success).toBe(true);
+      expect(result3.success).toBe(true);
+      // Noise messages should be merged (filtered)
+      const data2 = result2.data as Record<string, unknown>;
+      const data3 = result3.data as Record<string, unknown>;
+      expect(data2.merged).toBe(true);
+      expect(data3.merged).toBe(true);
+      // Agent should only be called once (for the first message), noise gets filtered
+      expect(callCount).toBe(1);
+    });
+
+    test('非文本消息（如文件上传）不应被缓冲', async () => {
+      const agentRuntime = new AgentRuntime();
+      let resolveFirst: (() => void) | undefined;
+      const firstBlocked = new Promise<void>((r) => {
+        resolveFirst = r;
+      });
+
+      let callCount = 0;
+      spyOn(agentRuntime, 'execute').mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          await firstBlocked;
+        }
+        return {
+          content: `reply-${callCount}`,
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
+          complexity: 'simple',
+          channel: 'agent_sdk',
+          classificationCostUsd: 0,
+        };
+      });
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const msg1 = createMockMessage({ id: 'msg1', content: '你好' });
+      // File message should NOT be debounced
+      const fileMsg = createMockMessage({
+        id: 'file1',
+        content: 'photo.jpg',
+        contentType: 'file',
+        metadata: { fileName: 'photo.jpg' },
+      });
+
+      const p1 = controller.handleIncomingMessage(msg1);
+      await new Promise((r) => setTimeout(r, 50));
+
+      // File message should go through immediately (not buffered)
+      const p2 = controller.handleIncomingMessage(fileMsg);
+
+      resolveFirst?.();
+
+      const [result1, result2] = await Promise.all([p1, p2]);
+
+      expect(result1.success).toBe(true);
+      expect(result2.success).toBe(true);
+      // File message should NOT be marked as merged
+      const data2 = result2.data as Record<string, unknown>;
+      expect(data2.merged).toBeUndefined();
     });
   });
 });

@@ -1,4 +1,4 @@
-export { buildMemorySnapshot } from './memory-snapshot-builder';
+export { buildMemorySnapshot, computeSnapshotScore } from './memory-snapshot-builder';
 export type { MemoryItem } from './memory-snapshot-builder';
 export { buildPrependContext } from './prepend-context-builder';
 export {
@@ -13,8 +13,12 @@ export type {
   PromptBuildParams,
   PromptSections,
   RetrievedMemory,
+  SkillRecommendation,
   TurnContext,
   TurnContextBuildParams,
 } from './prompt-types';
 export { SystemPromptBuilder } from './system-prompt-builder';
 export { buildTurnContext } from './turn-context-builder';
+export { ConfigLoader, type AIEOSConfig } from './config-loader';
+export { UserConfigLoader } from './user-config-loader';
+export { ConflictResolver } from './conflict-resolver';

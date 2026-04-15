@@ -1,5 +1,11 @@
-import type { AgentExecuteParams, AgentResult } from '../../shared/agents/agent-instance.types';
+import { existsSync, readFileSync } from 'node:fs';
+import type {
+  AgentExecuteParams,
+  AgentResult,
+  ConversationMessage,
+} from '../../shared/agents/agent-instance.types';
 import { Logger } from '../../shared/logging/logger';
+import type { MediaRef } from '../../shared/messaging/media-attachment.types';
 import type { ClassifyContext } from '../classifier/classifier-types';
 import type { TaskClassifier } from '../classifier/task-classifier';
 import type { AgentBridge } from './agent-bridge';
@@ -108,6 +114,8 @@ export class AgentRuntime {
     }
 
     const lastMsg = this.getLastUserMessage(params) ?? '';
+    // Extract mediaRefs from the last user message
+    const lastUserMsg = this.getLastUserConversationMessage(params);
     const result = await this.agentBridge.execute({
       systemPrompt: params.context.systemPrompt ?? '',
       prependContext: '',
@@ -120,6 +128,7 @@ export class AgentRuntime {
         ? async (event) => params.streamCallback!(event)
         : undefined,
       executionMode: 'sync',
+      mediaRefs: lastUserMsg?.mediaRefs,
     });
 
     return {
@@ -149,17 +158,18 @@ export class AgentRuntime {
     }
 
     for (const m of params.context.messages) {
-      // Build multimodal content if the message has media with base64 data
-      if (m.role === 'user' && m.mediaRefs?.some((r) => r.base64Data)) {
+      // Build multimodal content if the message has media (base64 in memory or on disk)
+      if (m.role === 'user' && m.mediaRefs?.some((r) => r.base64Data || r.localPath)) {
         const parts: LightLLMContentPart[] = [];
         if (m.content) {
           parts.push({ type: 'text', text: m.content });
         }
         for (const ref of m.mediaRefs ?? []) {
-          if (ref.base64Data && ref.mimeType) {
+          const base64 = this.resolveMediaBase64(ref);
+          if (base64 && ref.mimeType) {
             parts.push({
               type: 'image_url',
-              image_url: { url: `data:${ref.mimeType};base64,${ref.base64Data}` },
+              image_url: { url: `data:${ref.mimeType};base64,${base64}` },
             });
           }
         }
@@ -217,13 +227,30 @@ export class AgentRuntime {
   }
 
   private getLastUserMessage(params: AgentExecuteParams): string | null {
+    return this.getLastUserConversationMessage(params)?.content ?? null;
+  }
+
+  private getLastUserConversationMessage(params: AgentExecuteParams): ConversationMessage | null {
     const msgs = params.context.messages;
     for (let i = msgs.length - 1; i >= 0; i--) {
       const msg = msgs[i];
       if (msg?.role === 'user') {
-        return msg.content;
+        return msg;
       }
     }
     return null;
+  }
+
+  /** Resolve base64 data from memory or disk */
+  private resolveMediaBase64(ref: MediaRef): string | undefined {
+    if (ref.base64Data) return ref.base64Data;
+    if (ref.localPath && existsSync(ref.localPath)) {
+      try {
+        return readFileSync(ref.localPath).toString('base64');
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
   }
 }

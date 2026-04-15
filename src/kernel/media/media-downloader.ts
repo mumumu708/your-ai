@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Logger } from '../../shared/logging/logger';
 import type { IChannel } from '../../shared/messaging/channel-adapter.types';
 import type { MediaAttachment } from '../../shared/messaging/media-attachment.types';
@@ -5,14 +7,24 @@ import { MEDIA_SIZE_LIMITS, SUPPORTED_IMAGE_MIMES, detectMimeType } from './medi
 
 export interface MediaDownloaderDeps {
   channelResolver?: (channelType: string) => IChannel | undefined;
+  /** Directory to persist downloaded media files. If set, files are written to disk with localPath. */
+  uploadsDir?: string;
 }
 
 export class MediaDownloader {
   private readonly logger = new Logger('MediaDownloader');
-  private readonly deps: MediaDownloaderDeps;
+  private deps: MediaDownloaderDeps;
 
   constructor(deps: MediaDownloaderDeps) {
     this.deps = deps;
+  }
+
+  setChannelResolver(resolver: (channelType: string) => IChannel | undefined): void {
+    this.deps = { ...this.deps, channelResolver: resolver };
+  }
+
+  setUploadsDir(dir: string): void {
+    this.deps = { ...this.deps, uploadsDir: dir };
   }
 
   async download(attachment: MediaAttachment): Promise<MediaAttachment> {
@@ -45,11 +57,31 @@ export class MediaDownloader {
       }
 
       const base64Data = buffer.toString('base64');
+      const mimeType = detectedMime ?? attachment.mimeType;
+
+      // Persist to disk if uploadsDir is configured
+      let localPath: string | undefined;
+      if (this.deps.uploadsDir) {
+        try {
+          const ext = mimeType?.split('/')[1] ?? 'bin';
+          const filename = `${attachment.id ?? Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          const dir = join(this.deps.uploadsDir, 'images');
+          mkdirSync(dir, { recursive: true });
+          localPath = join(dir, filename);
+          writeFileSync(localPath, buffer);
+        } catch (err) {
+          this.logger.warn('媒体写磁盘失败', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
       return {
         ...attachment,
         state: 'downloaded',
         base64Data,
-        mimeType: detectedMime ?? attachment.mimeType,
+        localPath,
+        mimeType,
         sizeBytes: buffer.length,
       };
     } catch (error) {

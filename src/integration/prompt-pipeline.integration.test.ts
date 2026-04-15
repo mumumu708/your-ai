@@ -8,7 +8,7 @@
  * 验证: prompt 组装产出正确结构，包含 memory、context、system instructions
  */
 import { beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
-import type { ConfigLoader } from '../kernel/memory/config-loader';
+import type { ConfigLoader } from '../kernel/prompt/config-loader';
 import { type MemoryItem, buildMemorySnapshot } from '../kernel/prompt/memory-snapshot-builder';
 import { buildPrependContext } from '../kernel/prompt/prepend-context-builder';
 import { SYSTEM_PROMPT_BUDGET } from '../kernel/prompt/prompt-types';

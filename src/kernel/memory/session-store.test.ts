@@ -258,6 +258,65 @@ describe('SessionStore', () => {
     });
   });
 
+  describe('media_refs_json persistence', () => {
+    test('应持久化 mediaRefsJson 并可读回', () => {
+      store.createSession({
+        id: 'sess_media',
+        userId: 'user_a',
+        channel: 'web',
+        startedAt: BASE,
+      });
+
+      const mediaRefs = JSON.stringify([
+        {
+          mediaType: 'image',
+          mimeType: 'image/jpeg',
+          description: '猫',
+          localPath: '/tmp/cat.jpg',
+        },
+      ]);
+
+      store.appendMessage({
+        sessionId: 'sess_media',
+        userId: 'user_a',
+        role: 'user',
+        content: '看看这张图',
+        timestamp: BASE + 1,
+        mediaRefsJson: mediaRefs,
+      });
+      store.flushWriteQueue();
+
+      const messages = store.getSessionMessages('sess_media');
+      expect(messages).toHaveLength(1);
+      expect(messages[0].mediaRefsJson).toBe(mediaRefs);
+
+      const parsed = JSON.parse(messages[0].mediaRefsJson!);
+      expect(parsed[0].localPath).toBe('/tmp/cat.jpg');
+      expect(parsed[0].description).toBe('猫');
+    });
+
+    test('无 mediaRefsJson 时返回 undefined', () => {
+      store.createSession({
+        id: 'sess_nomedia',
+        userId: 'user_a',
+        channel: 'web',
+        startedAt: BASE,
+      });
+
+      store.appendMessage({
+        sessionId: 'sess_nomedia',
+        userId: 'user_a',
+        role: 'user',
+        content: '纯文本消息',
+        timestamp: BASE + 1,
+      });
+      store.flushWriteQueue();
+
+      const messages = store.getSessionMessages('sess_nomedia');
+      expect(messages[0].mediaRefsJson).toBeUndefined();
+    });
+  });
+
   describe('FTS search', () => {
     beforeEach(() => {
       store.createSession({

@@ -88,6 +88,8 @@ export interface MessageRecord {
   content: string;
   timestamp: number;
   tokenEstimate?: number;
+  /** JSON-serialized MediaRef[] (without base64Data) for persistence */
+  mediaRefsJson?: string;
 }
 
 export interface SearchResult {

@@ -16,17 +16,17 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
 import type { CentralControllerDeps } from '../../kernel/central-controller';
 import type { EvolutionScheduler } from '../../kernel/evolution/evolution-scheduler';
 import type { KnowledgeRouter } from '../../kernel/evolution/knowledge-router';
-import type { PostResponseAnalyzer } from '../../kernel/evolution/post-response-analyzer';
-import type { ConfigLoader } from '../../kernel/memory/config-loader';
+import type { LessonsLearnedUpdater } from '../../kernel/evolution/learning/lessons-updater';
+import type { PostResponseAnalyzer } from '../../kernel/evolution/learning/post-response-analyzer';
 import type { ContextManager } from '../../kernel/memory/context-manager';
 import type { EntityManager } from '../../kernel/memory/graph/entity-manager';
 import type { OpenVikingClient } from '../../kernel/memory/openviking/openviking-client';
+import type { ConfigLoader } from '../../kernel/prompt/config-loader';
 import { buildPrependContext } from '../../kernel/prompt/prepend-context-builder';
 import { SystemPromptBuilder } from '../../kernel/prompt/system-prompt-builder';
 import { buildTurnContext } from '../../kernel/prompt/turn-context-builder';
 import { SkillIndexBuilder } from '../../kernel/skills/skill-index-builder';
 import type { SkillEntry } from '../../kernel/skills/skill-index-builder';
-import type { LessonsLearnedUpdater } from '../../lessons/lessons-updater';
 import type { BotMessage } from '../../shared/messaging/bot-message.types';
 
 // ── Test fixtures ──

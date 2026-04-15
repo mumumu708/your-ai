@@ -1,10 +1,10 @@
 import type { ConversationMessage } from '../../shared/agents/agent-instance.types';
 import { Logger } from '../../shared/logging/logger';
-import type { AIEOSConfig, ConfigLoader } from '../memory/config-loader';
 import { retrieveMemories } from '../memory/memory-retriever-v2';
 import type { ContextSummary } from '../memory/memory-types';
 import type { OpenVikingClient } from '../memory/openviking/openviking-client';
-import type { ConflictResolver } from './conflict-resolver';
+import type { AIEOSConfig, ConfigLoader } from '../prompt/config-loader';
+import type { ConflictResolver } from '../prompt/conflict-resolver';
 import type {
   KnowledgeFragment,
   KnowledgeRouterConfig,

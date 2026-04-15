@@ -47,6 +47,7 @@ export class SessionStore {
         content TEXT NOT NULL,
         timestamp INTEGER NOT NULL,
         token_estimate INTEGER,
+        media_refs_json TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id)
       );
 
@@ -58,6 +59,14 @@ export class SessionStore {
         content=session_messages,
         content_rowid=id,
         tokenize='unicode61'
+      );
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS user_metadata (
+        user_id TEXT PRIMARY KEY,
+        last_reflection_at INTEGER,
+        reflection_count INTEGER DEFAULT 0
       );
     `);
 
@@ -132,13 +141,21 @@ export class SessionStore {
 
     const batch = this.writeQueue.splice(0);
     const insert = this.db.prepare(
-      `INSERT INTO session_messages (session_id, user_id, role, content, timestamp, token_estimate)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO session_messages (session_id, user_id, role, content, timestamp, token_estimate, media_refs_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
 
     const tx = this.db.transaction((messages: MessageRecord[]) => {
       for (const m of messages) {
-        insert.run(m.sessionId, m.userId, m.role, m.content, m.timestamp, m.tokenEstimate ?? null);
+        insert.run(
+          m.sessionId,
+          m.userId,
+          m.role,
+          m.content,
+          m.timestamp,
+          m.tokenEstimate ?? null,
+          m.mediaRefsJson ?? null,
+        );
       }
     });
     tx(batch);
@@ -198,7 +215,7 @@ export class SessionStore {
     if (limit) {
       const rows = this.db
         .prepare(
-          `SELECT id, session_id, user_id, role, content, timestamp, token_estimate
+          `SELECT id, session_id, user_id, role, content, timestamp, token_estimate, media_refs_json
            FROM session_messages WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?`,
         )
         .all(sessionId, limit) as Array<Record<string, unknown>>;
@@ -206,7 +223,7 @@ export class SessionStore {
     }
     const rows = this.db
       .prepare(
-        `SELECT id, session_id, user_id, role, content, timestamp, token_estimate
+        `SELECT id, session_id, user_id, role, content, timestamp, token_estimate, media_refs_json
          FROM session_messages WHERE session_id = ? ORDER BY timestamp ASC`,
       )
       .all(sessionId) as Array<Record<string, unknown>>;
@@ -236,6 +253,27 @@ export class SessionStore {
       )
       .all(userId) as Array<Record<string, unknown>>;
     return rows.map(mapSessionRow);
+  }
+
+  // ── User metadata ──
+
+  getLastReflectionAt(userId: string): number | null {
+    const row = this.db
+      .prepare('SELECT last_reflection_at FROM user_metadata WHERE user_id = ?')
+      .get(userId) as { last_reflection_at: number | null } | null;
+    return row?.last_reflection_at ?? null;
+  }
+
+  updateLastReflectionTime(userId: string, timestamp: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO user_metadata (user_id, last_reflection_at, reflection_count)
+         VALUES (?, ?, 1)
+         ON CONFLICT(user_id) DO UPDATE SET
+           last_reflection_at = excluded.last_reflection_at,
+           reflection_count = reflection_count + 1`,
+      )
+      .run(userId, timestamp);
   }
 
   // ── Lifecycle ──
@@ -285,5 +323,6 @@ function mapMessageRow(row: Record<string, unknown>): MessageRecord {
     content: row.content as string,
     timestamp: row.timestamp as number,
     tokenEstimate: (row.token_estimate as number) ?? undefined,
+    mediaRefsJson: (row.media_refs_json as string) ?? undefined,
   };
 }

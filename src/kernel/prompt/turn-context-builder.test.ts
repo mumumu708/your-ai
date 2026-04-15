@@ -162,6 +162,59 @@ describe('buildTurnContext', () => {
     });
   });
 
+  describe('skill recommendation (DD-022)', () => {
+    test('有推荐时生成 skill-recommendation section', () => {
+      const result = buildTurnContext({
+        skillRecommendations: [
+          { name: 'debug-ts', description: 'TypeScript 调试技能' },
+          { name: 'graphify', description: '知识图谱生成' },
+        ],
+      });
+
+      expect(result.content).toContain('<skill-recommendation>');
+      expect(result.content).toContain('/debug-ts');
+      expect(result.content).toContain('/graphify');
+      expect(result.content).toContain('</skill-recommendation>');
+    });
+
+    test('无推荐时不生成 section', () => {
+      const result = buildTurnContext({ skillRecommendations: [] });
+      expect(result.content).not.toContain('<skill-recommendation>');
+    });
+
+    test('描述超过 80 字符被截断', () => {
+      const longDesc = '这是一段非常长的技能描述'.repeat(10);
+      const result = buildTurnContext({
+        skillRecommendations: [{ name: 'test', description: longDesc }],
+      });
+      // 每行描述应不超过 80 字符
+      const descLine = result.content.split('\n').find((l) => l.includes('/test:'));
+      const afterColon = descLine!.split(': ').slice(1).join(': ');
+      expect(afterColon.length).toBeLessThanOrEqual(80);
+    });
+  });
+
+  describe('digest available (DD-022)', () => {
+    test('有洞察时生成 digest-available section', () => {
+      const result = buildTurnContext({
+        digestInsights: [
+          { topic: 'Rust 所有权', preview: '关于借用和生命周期的碎片已聚类' },
+          { topic: 'TypeScript 技巧', preview: '类型体操相关笔记汇总' },
+        ],
+      });
+
+      expect(result.content).toContain('<digest-available>');
+      expect(result.content).toContain('Rust 所有权');
+      expect(result.content).toContain('TypeScript 技巧');
+      expect(result.content).toContain('</digest-available>');
+    });
+
+    test('无洞察时不生成 section', () => {
+      const result = buildTurnContext({ digestInsights: [] });
+      expect(result.content).not.toContain('<digest-available>');
+    });
+  });
+
   describe('组合场景', () => {
     test('所有 section 同时存在', () => {
       const result = buildTurnContext({

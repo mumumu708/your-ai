@@ -1,5 +1,5 @@
 import { Logger } from '../../shared/logging/logger';
-import type { ConfigLoader } from '../memory/config-loader';
+import type { ConfigLoader } from '../prompt/config-loader';
 import { buildMemorySnapshot } from './memory-snapshot-builder';
 import {
   CHANNEL_CAPABILITIES,

@@ -77,6 +77,11 @@ export class SessionManager {
       // Sync to WorkingMemory for automatic compression
       session.workingMemory?.addMessage(message);
       // Persist to SQLite (batched async write)
+      // Serialize mediaRefs (without base64Data) for persistence
+      let mediaRefsJson: string | undefined;
+      if (message.mediaRefs?.length) {
+        mediaRefsJson = JSON.stringify(message.mediaRefs.map(({ base64Data: _, ...rest }) => rest));
+      }
       this.sessionStore?.appendMessage({
         sessionId: session.id,
         userId: session.userId,
@@ -84,6 +89,7 @@ export class SessionManager {
         content: message.content,
         timestamp: message.timestamp,
         tokenEstimate: Math.ceil(message.content.length / 4),
+        mediaRefsJson,
       });
     }
   }
