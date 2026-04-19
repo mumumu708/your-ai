@@ -88,6 +88,15 @@ describe('IntelligenceGateway', () => {
       const params = makeGatewayParams({ message: '我们之前讨论过什么' });
       expect(gw.canHandleDirectly(params)).toBe(false);
     });
+
+    test('消息引用图片/截图 → 不直接处理', () => {
+      const gw = new IntelligenceGateway(createMockLightLlm(), createMockAgent());
+      expect(
+        gw.canHandleDirectly(makeGatewayParams({ message: '评价一下这张图片里的目录设计' })),
+      ).toBe(false);
+      expect(gw.canHandleDirectly(makeGatewayParams({ message: '看看这个截图' }))).toBe(false);
+      expect(gw.canHandleDirectly(makeGatewayParams({ message: '这张照片是什么' }))).toBe(false);
+    });
   });
 
   describe('handle — 直接处理', () => {

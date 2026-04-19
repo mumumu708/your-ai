@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import * as child_process from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { existsSync, readFileSync } from 'node:fs';
 
+import type { MediaRef } from '../../shared/messaging/media-attachment.types';
 import type { AgentExecuteParams } from './agent-bridge';
 import { CodexAgentBridge } from './codex-agent-bridge';
 
@@ -309,5 +311,89 @@ describe('CodexAgentBridge', () => {
 
     mockProc.emit('close', 0);
     await resultPromise;
+  });
+
+  describe('mediaRefs → --image 处理', () => {
+    const PNG_1PX_BASE64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+    test('buildArgs 无 mediaRefs 时不添加 --image', () => {
+      const bridge = new CodexAgentBridge();
+      const args = bridge.buildArgs(createBaseParams());
+      expect(args).not.toContain('--image');
+    });
+
+    test('buildArgs 有 imagePaths 时添加 --image 参数', () => {
+      const bridge = new CodexAgentBridge();
+      const args = bridge.buildArgs(createBaseParams(), ['/tmp/img-0.png', '/tmp/img-1.png']);
+      const imageIdx = args.indexOf('--image');
+      expect(imageIdx).toBeGreaterThan(-1);
+      expect(args[imageIdx + 1]).toBe('/tmp/img-0.png');
+      // Second image
+      const secondIdx = args.indexOf('--image', imageIdx + 1);
+      expect(secondIdx).toBeGreaterThan(imageIdx);
+      expect(args[secondIdx + 1]).toBe('/tmp/img-1.png');
+    });
+
+    test('execute 写入临时文件并传 --image 给 codex', async () => {
+      const bridge = new CodexAgentBridge();
+      const mockProc = createMockProcess();
+      spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+      const mediaRefs: MediaRef[] = [
+        { mediaType: 'image', mimeType: 'image/png', base64Data: PNG_1PX_BASE64 },
+      ];
+
+      const resultPromise = bridge.execute(createBaseParams({ mediaRefs }));
+
+      // Verify spawn was called with --image flag pointing to a temp file
+      const spawnArgs = spawnSpy.mock.calls[0]?.[1] as string[];
+      const imageIdx = spawnArgs.indexOf('--image');
+      expect(imageIdx).toBeGreaterThan(-1);
+      const tempPath = spawnArgs[imageIdx + 1]!;
+      expect(tempPath).toContain('yourbot-codex-img-');
+      expect(tempPath).toMatch(/\.png$/);
+      // Temp file should exist and contain the image data
+      expect(existsSync(tempPath)).toBe(true);
+      const written = readFileSync(tempPath);
+      expect(written.toString('base64')).toBe(PNG_1PX_BASE64);
+
+      mockProc.emit('close', 0);
+      await resultPromise;
+    });
+
+    test('execute 忽略非 image 类型的 mediaRefs', async () => {
+      const bridge = new CodexAgentBridge();
+      const mockProc = createMockProcess();
+      spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+      const mediaRefs: MediaRef[] = [
+        { mediaType: 'audio', mimeType: 'audio/mp3', base64Data: 'abc' },
+      ];
+
+      const resultPromise = bridge.execute(createBaseParams({ mediaRefs }));
+
+      const spawnArgs = spawnSpy.mock.calls[0]?.[1] as string[];
+      expect(spawnArgs).not.toContain('--image');
+
+      mockProc.emit('close', 0);
+      await resultPromise;
+    });
+
+    test('execute 无 base64Data 且无 localPath 时跳过', async () => {
+      const bridge = new CodexAgentBridge();
+      const mockProc = createMockProcess();
+      spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+      const mediaRefs: MediaRef[] = [{ mediaType: 'image', mimeType: 'image/png' }];
+
+      const resultPromise = bridge.execute(createBaseParams({ mediaRefs }));
+
+      const spawnArgs = spawnSpy.mock.calls[0]?.[1] as string[];
+      expect(spawnArgs).not.toContain('--image');
+
+      mockProc.emit('close', 0);
+      await resultPromise;
+    });
   });
 });

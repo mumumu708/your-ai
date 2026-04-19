@@ -11,9 +11,13 @@ export class ClaudeBridgeAdapter implements AgentBridge {
 
   async execute(params: AgentExecuteParams): Promise<AgentResult> {
     // Build user message with prependContext injected (BUG-01 fix)
-    const userContent = params.prependContext
+    // For image-only messages, userMessage may be empty — use media description as fallback
+    let userContent = params.prependContext
       ? `${params.prependContext}\n\n${params.userMessage}`
       : params.userMessage;
+    if (!userContent && params.mediaRefs?.length) {
+      userContent = params.mediaRefs.map((r) => `[${r.description || '图片'}]`).join(' ');
+    }
     const oldResult = await this.bridge.execute({
       sessionId: params.sessionId,
       messages: userContent ? [{ role: 'user', content: userContent }] : [],
@@ -27,6 +31,7 @@ export class ClaudeBridgeAdapter implements AgentBridge {
             void params.streamCallback?.(event);
           }
         : undefined,
+      mediaRefs: params.mediaRefs,
     });
 
     return {

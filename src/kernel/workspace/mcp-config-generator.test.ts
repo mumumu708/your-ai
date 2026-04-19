@@ -50,16 +50,17 @@ describe('McpConfigGenerator', () => {
   });
 
   describe('generateMcpJson', () => {
-    test('应该生成包含3个内置 Server 的 .mcp.json', () => {
+    test('应该生成包含2个内置 Server 的 .mcp.json', () => {
       const generator = new McpConfigGenerator();
       const context = createContext();
       generator.generateMcpJson(context);
 
       const mcpJson: McpJsonConfig = JSON.parse(readFileSync(join(TEST_DIR, '.mcp.json'), 'utf-8'));
 
-      expect(Object.keys(mcpJson.mcpServers)).toContain('feishu-server');
-      expect(Object.keys(mcpJson.mcpServers)).toContain('memory-server');
-      expect(Object.keys(mcpJson.mcpServers)).toContain('scheduler-server');
+      // Registry uses 'memory' / 'scheduler' as server ids (no -server suffix)
+      expect(Object.keys(mcpJson.mcpServers)).toContain('memory');
+      expect(Object.keys(mcpJson.mcpServers)).toContain('scheduler');
+      expect(Object.keys(mcpJson.mcpServers)).not.toContain('feishu');
     });
 
     test('内置 Server 应该包含 userId 环境变量', () => {
@@ -69,11 +70,9 @@ describe('McpConfigGenerator', () => {
 
       const mcpJson: McpJsonConfig = JSON.parse(readFileSync(join(TEST_DIR, '.mcp.json'), 'utf-8'));
 
-      expect(mcpJson.mcpServers['feishu-server'].env?.YOURBOT_USER_ID).toBe('user_42');
-      expect(mcpJson.mcpServers['memory-server'].env?.YOURBOT_USER_ID).toBe('user_42');
-      expect(mcpJson.mcpServers['memory-server'].env?.MEMORY_STORE_PATH).toBe(
-        '/data/yourbot/memory/user_42',
-      );
+      expect(mcpJson.mcpServers.memory.env?.YOURBOT_USER_ID).toBe('user_42');
+      // Registry now also carries OPENVIKING_URL so the server can reach OV
+      expect(mcpJson.mcpServers.memory.env?.OPENVIKING_URL).toBeDefined();
     });
 
     test('应该包含有权限的第三方 Server', () => {
@@ -211,9 +210,10 @@ describe('McpConfigGenerator', () => {
         readFileSync(join(TEST_DIR, '.claude', 'settings.json'), 'utf-8'),
       );
 
-      expect(settings.permissions.allow).toContain('mcp__feishu_server__*');
-      expect(settings.permissions.allow).toContain('mcp__memory_server__*');
-      expect(settings.permissions.allow).toContain('mcp__scheduler_server__*');
+      // Permission patterns derived from registry toolNamespace (memory/scheduler)
+      expect(settings.permissions.allow).not.toContain('mcp__feishu__*');
+      expect(settings.permissions.allow).toContain('mcp__memory__*');
+      expect(settings.permissions.allow).toContain('mcp__scheduler__*');
       expect(settings.permissions.allow).toContain('Bash(*)');
       expect(settings.model).toBe('claude-sonnet-4-20250514');
     });

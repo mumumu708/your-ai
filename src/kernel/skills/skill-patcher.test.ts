@@ -76,7 +76,13 @@ describe('SkillPatcher', () => {
 
   test('approvePending 批准 pending patch', async () => {
     await patcher.applyPatches([
-      { action: 'create', skillName: 'pending-one', content: 'p', source: 'evolution', confidence: 0.4 },
+      {
+        action: 'create',
+        skillName: 'pending-one',
+        content: 'p',
+        source: 'evolution',
+        confidence: 0.4,
+      },
     ]);
 
     expect(patcher.getPendingPatches()).toHaveLength(1);

@@ -64,12 +64,38 @@ describe('clusterItemsWithOV', () => {
       find: mock(async (opts: { query: string }) => {
         if (opts.query.includes('Rust')) {
           return [
-            { uri: 'a', abstract: 'Rust 所有权', score: 0.9, context_type: 'memory', match_reason: '' },
-            { uri: 'b', abstract: 'Rust 借用', score: 0.8, context_type: 'memory', match_reason: '' },
-            { uri: 'c', abstract: 'Rust 生命周期', score: 0.7, context_type: 'memory', match_reason: '' },
+            {
+              uri: 'a',
+              abstract: 'Rust 所有权',
+              score: 0.9,
+              context_type: 'memory',
+              match_reason: '',
+            },
+            {
+              uri: 'b',
+              abstract: 'Rust 借用',
+              score: 0.8,
+              context_type: 'memory',
+              match_reason: '',
+            },
+            {
+              uri: 'c',
+              abstract: 'Rust 生命周期',
+              score: 0.7,
+              context_type: 'memory',
+              match_reason: '',
+            },
           ];
         }
-        return [{ uri: opts.query, abstract: opts.query, score: 0.9, context_type: 'memory', match_reason: '' }];
+        return [
+          {
+            uri: opts.query,
+            abstract: opts.query,
+            score: 0.9,
+            context_type: 'memory',
+            match_reason: '',
+          },
+        ];
       }),
     } as unknown as OpenVikingClient;
 

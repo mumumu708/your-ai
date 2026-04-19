@@ -80,7 +80,7 @@ export class LightLLMClient {
 
     this.logger.debug('LightLLM complete 请求', { model, messageCount: request.messages.length });
 
-    const maxAttempts = 3;
+    const maxAttempts = 6;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const response = await fetch(url, {
         method: 'POST',
@@ -271,9 +271,9 @@ export class LightLLMClient {
     return status === 429 || status === 502 || status === 503 || status === 504;
   }
 
-  /** 指数退避: 500ms, 1500ms, ... */
+  /** 指数退避: 500ms, 1s, 2s, 4s, 8s, 最多 15s */
   retryDelay(attempt: number): number {
-    return Math.min(500 * 2 ** (attempt - 1), 3000);
+    return Math.min(500 * 2 ** (attempt - 1), 15000);
   }
 
   sleep(ms: number): Promise<void> {

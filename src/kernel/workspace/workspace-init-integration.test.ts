@@ -196,9 +196,9 @@ describe('Workspace Init Integration — New User First Conversation', () => {
 
     const mcpConfig = JSON.parse(readFileSync(paths.mcpJsonPath, 'utf-8'));
     expect(mcpConfig.mcpServers).toBeDefined();
-    expect(mcpConfig.mcpServers['feishu-server']).toBeDefined();
-    expect(mcpConfig.mcpServers['memory-server']).toBeDefined();
-    expect(mcpConfig.mcpServers['scheduler-server']).toBeDefined();
+    // Registry uses 'memory' / 'scheduler' as ids (refactored 2026-04-17)
+    expect(mcpConfig.mcpServers.memory).toBeDefined();
+    expect(mcpConfig.mcpServers.scheduler).toBeDefined();
   });
 
   test('.claude/settings.json 应存在且包含 permissions', () => {

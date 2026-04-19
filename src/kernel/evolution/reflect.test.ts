@@ -20,7 +20,7 @@ bunMock.module('@anthropic-ai/sdk', () => {
 function createMockOV(): OpenVikingClient {
   return {
     find: mock(async () => []),
-    abstract: mock(async () => 'abstract text'),
+    read: mock(async () => 'memory content for reflection'),
     write: mock(async () => {}),
   } as unknown as OpenVikingClient;
 }
@@ -43,19 +43,14 @@ describe('reflect', () => {
     const memories = Array.from({ length: 6 }, (_, i) => ({ uri: `v://m${i}` }));
     (ov.find as ReturnType<typeof mock>).mockResolvedValue(memories);
 
-    mockCreate.mockResolvedValue({
-      content: [
-        {
-          type: 'text',
-          text: '- 洞察: users prefer short answers\n- 洞察: common theme is efficiency',
-        },
-      ],
-    });
+    const llmCall = mock(
+      async () => '- 洞察: users prefer short answers\n- 洞察: common theme is efficiency',
+    );
 
-    await reflect(ov, 'preferences');
+    await reflect(ov, 'preferences', llmCall);
     expect(ov.write).toHaveBeenCalledTimes(2);
     const firstWriteUri = (ov.write as ReturnType<typeof mock>).mock.calls[0][0] as string;
-    expect(firstWriteUri).toContain('viking://user/memories/semantic/');
+    expect(firstWriteUri).toContain('viking://user/default/memories/semantic/');
   });
 
   test('handles empty insights from LLM', async () => {
@@ -63,11 +58,7 @@ describe('reflect', () => {
     const memories = Array.from({ length: 6 }, (_, i) => ({ uri: `v://m${i}` }));
     (ov.find as ReturnType<typeof mock>).mockResolvedValue(memories);
 
-    mockCreate.mockResolvedValue({
-      content: [{ type: 'text', text: 'no insights found' }],
-    });
-
-    await reflect(ov, 'facts');
+    await reflect(ov, 'facts', async () => 'no insights found');
     expect(ov.write).not.toHaveBeenCalled();
   });
 
@@ -76,9 +67,23 @@ describe('reflect', () => {
     const memories = Array.from({ length: 6 }, (_, i) => ({ uri: `v://m${i}` }));
     (ov.find as ReturnType<typeof mock>).mockResolvedValue(memories);
 
-    mockCreate.mockResolvedValue({ content: [] });
-
-    await reflect(ov, 'facts');
+    await reflect(ov, 'facts', async () => '');
     expect(ov.write).not.toHaveBeenCalled();
+  });
+
+  test('skips silently when no llmCall and no ANTHROPIC_API_KEY', async () => {
+    const ov = createMockOV();
+    const memories = Array.from({ length: 6 }, (_, i) => ({ uri: `v://m${i}` }));
+    (ov.find as ReturnType<typeof mock>).mockResolvedValue(memories);
+
+    const prev = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = undefined;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      await reflect(ov, 'facts'); // no llmCall passed
+      expect(ov.write).not.toHaveBeenCalled();
+    } finally {
+      if (prev !== undefined) process.env.ANTHROPIC_API_KEY = prev;
+    }
   });
 });

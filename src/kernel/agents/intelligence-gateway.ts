@@ -76,7 +76,7 @@ export class IntelligenceGateway {
   /** 启发式检测：消息是否可能需要工具 */
   mightNeedTools(content: string): boolean {
     const toolIndicators = [
-      /文件|文档|代码|搜索|查[找询]|计算|分析|创建|修改|删除/,
+      /文件|文档|代码|搜索|查[找询]|计算|分析|创建|修改|删除|图片|截图|照片/,
       /file|code|search|create|modify|delete|calculate|analyze/i,
       /帮我|请你|能不能|可以.*吗/,
     ];
@@ -86,8 +86,15 @@ export class IntelligenceGateway {
   /** 启发式检测：消息是否可能需要记忆检索 */
   mightNeedMemory(content: string): boolean {
     const memoryIndicators = [
+      // Explicit memory references
       /之前|上次|上周|昨天|记得|提到过|讨论过|我说过/,
       /previously|last time|remember|mentioned|discussed/i,
+      // Personal questions that need user memory
+      /我的|我[在从去做了有没]|我[是叫住]|[你我].*[几什哪][么个时]|[你我].*过[几什哪]|参加过/,
+      // Questions about specific people/events (likely need stored memories)
+      /[月份日].*[做了去过参]|天气.*取消|具体|哪[些项个几次位]/,
+      // Temporal references indicating historical recall
+      /[0-9]{4}年|[0-9]{1,2}月|月份|春节|元旦|周[一二三四五六日末]/,
     ];
     return memoryIndicators.some((r) => r.test(content));
   }

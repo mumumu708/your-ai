@@ -1,3 +1,4 @@
+import type { MediaRef } from '../../shared/messaging/media-attachment.types';
 import type { StreamEvent } from '../../shared/messaging/stream-event.types';
 
 /** Agent provider 标识 — 内置 + 可扩展 */
@@ -47,6 +48,8 @@ export interface AgentExecuteParams {
   executionMode: ExecutionMode;
   /** 分类结果（透传给 Agent 实现） */
   classifyResult?: Record<string, unknown>;
+  /** 当前消息附带的媒体引用（图片等） */
+  mediaRefs?: MediaRef[];
 }
 
 /** Agent 执行结果 */

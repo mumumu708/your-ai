@@ -1,6 +1,11 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { ERROR_CODES } from '../../shared/errors/error-codes';
 import { YourBotError } from '../../shared/errors/yourbot-error';
 import { Logger } from '../../shared/logging/logger';
+import type { MediaRef } from '../../shared/messaging/media-attachment.types';
 import type { StreamEvent } from '../../shared/messaging/stream-event.types';
 
 export interface AgentBridgeParams {
@@ -16,6 +21,8 @@ export interface AgentBridgeParams {
   cwd?: string;
   /** Claude CLI session ID for resuming conversations */
   claudeSessionId?: string;
+  /** Media references (images) to include in the message */
+  mediaRefs?: MediaRef[];
 }
 
 export interface AgentBridgeResult {
@@ -114,14 +121,35 @@ export class ClaudeAgentBridge {
       messageCount: params.messages.length,
     });
 
+    // Write media to temp files so Claude can read them
+    let tempDir: string | undefined;
+    let imagePaths: string[] = [];
     try {
+      if (params.mediaRefs?.length) {
+        const written = await this.writeMediaTempFiles(params.mediaRefs);
+        tempDir = written.tempDir;
+        imagePaths = written.paths;
+      }
+
       // Determine resume vs fresh mode
       const isResume = !!params.claudeSessionId;
 
-      // Build the prompt
-      const prompt = isResume
+      // Build the prompt (inject image file references if present)
+      let rawPrompt = isResume
         ? (params.messages[params.messages.length - 1]?.content ?? '')
         : this.buildPrompt(params.messages);
+
+      if (imagePaths.length > 0) {
+        const imageInstructions = imagePaths
+          .map(
+            (p, i) =>
+              `[附件图片${imagePaths.length > 1 ? ` ${i + 1}` : ''}] 请用 Read 工具查看: ${p}`,
+          )
+          .join('\n');
+        rawPrompt = `${rawPrompt}\n\n${imageInstructions}`;
+      }
+
+      const prompt = rawPrompt;
 
       // Build args
       const args: string[] = [
@@ -216,6 +244,10 @@ export class ClaudeAgentBridge {
       });
     } finally {
       this.activeSessions--;
+      // Clean up temp image files
+      if (tempDir) {
+        rm(tempDir, { recursive: true, force: true }).catch(() => {});
+      }
     }
   }
 
@@ -459,5 +491,29 @@ export class ClaudeAgentBridge {
     }
 
     return parts.join('\n\n');
+  }
+
+  /**
+   * Write media base64 data to temp files so Claude CLI can read them.
+   * Returns the temp directory and list of file paths.
+   */
+  private async writeMediaTempFiles(
+    mediaRefs: MediaRef[],
+  ): Promise<{ tempDir: string; paths: string[] }> {
+    const imageRefs = mediaRefs.filter((r) => r.mediaType === 'image' && r.base64Data);
+    if (imageRefs.length === 0) return { tempDir: '', paths: [] };
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'yourbot-img-'));
+    const paths: string[] = [];
+
+    for (const [i, ref] of imageRefs.entries()) {
+      const ext = ref.mimeType?.split('/')[1] ?? 'png';
+      const filePath = join(tempDir, `image-${i}.${ext}`);
+      await writeFile(filePath, Buffer.from(ref.base64Data ?? '', 'base64'));
+      paths.push(filePath);
+    }
+
+    this.logger.info('图片临时文件已写入', { tempDir, count: paths.length });
+    return { tempDir, paths };
   }
 }

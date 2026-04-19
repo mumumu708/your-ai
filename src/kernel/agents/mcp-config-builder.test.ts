@@ -10,68 +10,25 @@ describe('McpConfigBuilder', () => {
         executionMode: 'sync',
         taskType: 'chat',
         userId: 'user-123',
+        deployRoot: '/tmp/bench',
       });
 
       const memory = config.mcpServers.find((s) => s.name === 'memory');
       expect(memory).toBeDefined();
-      expect(memory?.env?.USER_ID).toBe('user-123');
+      expect(memory?.env?.YOURBOT_USER_ID).toBe('user-123');
     });
 
-    test('memory server 应该有完整的 command 和 args', () => {
+    test('memory server 走 registry 中的脚本路径', () => {
       const config = builder.build({
         executionMode: 'sync',
         taskType: 'chat',
         userId: 'user-456',
+        deployRoot: '/tmp/bench',
       });
 
       const memory = config.mcpServers.find((s) => s.name === 'memory');
       expect(memory?.command).toBe('bun');
-      expect(memory?.args).toEqual(['run', 'src/mcp-servers/memory-server/index.ts']);
-    });
-  });
-
-  describe('skill server', () => {
-    test('sync + chat → 不包含 skill server', () => {
-      const config = builder.build({
-        executionMode: 'sync',
-        taskType: 'chat',
-        userId: 'user-1',
-      });
-
-      expect(config.mcpServers.find((s) => s.name === 'skill')).toBeUndefined();
-    });
-
-    test('async 模式 → 包含 skill server 且属性正确', () => {
-      const config = builder.build({
-        executionMode: 'async',
-        taskType: 'chat',
-        userId: 'user-1',
-      });
-
-      const skill = config.mcpServers.find((s) => s.name === 'skill');
-      expect(skill).toBeDefined();
-      expect(skill?.command).toBe('bun');
-      expect(skill?.args).toEqual(['run', 'src/mcp-servers/skill-server/index.ts']);
-    });
-
-    test('long-horizon 模式 → 包含 skill server', () => {
-      const config = builder.build({
-        executionMode: 'long-horizon',
-        taskType: 'deep-research',
-        userId: 'user-1',
-      });
-
-      expect(config.mcpServers.find((s) => s.name === 'skill')).toBeDefined();
-    });
-
-    test('sync + harness → 包含 skill server', () => {
-      const config = builder.build({
-        executionMode: 'sync',
-        taskType: 'harness',
-        userId: 'user-1',
-      });
-
-      expect(config.mcpServers.find((s) => s.name === 'skill')).toBeDefined();
+      expect(memory?.args).toEqual(['run', '/tmp/bench/mcp-servers/memory/index.ts']);
     });
   });
 
@@ -86,17 +43,18 @@ describe('McpConfigBuilder', () => {
       expect(config.mcpServers.find((s) => s.name === 'scheduler')).toBeUndefined();
     });
 
-    test('scheduled 任务 → 包含 scheduler server 且属性正确', () => {
+    test('scheduled 任务 → 包含 scheduler server', () => {
       const config = builder.build({
         executionMode: 'async',
         taskType: 'scheduled',
         userId: 'user-1',
+        deployRoot: '/tmp/bench',
       });
 
       const scheduler = config.mcpServers.find((s) => s.name === 'scheduler');
       expect(scheduler).toBeDefined();
       expect(scheduler?.command).toBe('bun');
-      expect(scheduler?.args).toEqual(['run', 'src/mcp-servers/scheduler-server/index.ts']);
+      expect(scheduler?.args).toEqual(['run', '/tmp/bench/mcp-servers/scheduler/index.ts']);
     });
 
     test('automation 任务 → 包含 scheduler server', () => {
@@ -139,7 +97,7 @@ describe('McpConfigBuilder', () => {
   });
 
   describe('组合场景', () => {
-    test('scheduled + async + 用户自定义 → memory + skill + scheduler + custom', () => {
+    test('scheduled + async + 用户自定义 → memory + scheduler + custom', () => {
       const config = builder.build({
         executionMode: 'async',
         taskType: 'scheduled',
@@ -149,10 +107,9 @@ describe('McpConfigBuilder', () => {
 
       const names = config.mcpServers.map((s) => s.name);
       expect(names).toContain('memory');
-      expect(names).toContain('skill');
       expect(names).toContain('scheduler');
       expect(names).toContain('my-tool');
-      expect(config.mcpServers.length).toBe(4);
+      expect(config.mcpServers.length).toBe(3);
     });
 
     test('sync + chat → 仅 memory', () => {

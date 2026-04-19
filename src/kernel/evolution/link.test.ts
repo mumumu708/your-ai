@@ -4,7 +4,7 @@ import { linkMemory } from './link';
 
 function createMockOV(): OpenVikingClient {
   return {
-    abstract: mock(async () => 'memory abstract'),
+    read: mock(async () => 'memory content for linking'),
     search: mock(async () => []),
     link: mock(async () => {}),
   } as unknown as OpenVikingClient;

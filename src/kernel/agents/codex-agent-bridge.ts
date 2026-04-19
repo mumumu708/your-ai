@@ -1,6 +1,11 @@
 import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { Logger } from '../../shared/logging/logger';
+import type { MediaRef } from '../../shared/messaging/media-attachment.types';
 import type { AgentBridge, AgentExecuteParams, AgentResult } from './agent-bridge';
 
 const logger = new Logger('CodexAgentBridge');
@@ -22,7 +27,16 @@ export class CodexAgentBridge implements AgentBridge {
   }
 
   async execute(params: AgentExecuteParams): Promise<AgentResult> {
-    const args = this.buildArgs(params);
+    // Write media to temp files for --image flag
+    let tempDir: string | undefined;
+    let imagePaths: string[] = [];
+    if (params.mediaRefs?.length) {
+      const written = this.writeMediaTempFiles(params.mediaRefs);
+      tempDir = written.tempDir;
+      imagePaths = written.paths;
+    }
+
+    const args = this.buildArgs(params, imagePaths);
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -117,6 +131,11 @@ export class CodexAgentBridge implements AgentBridge {
           void params.streamCallback({ type: 'done' });
         }
 
+        // Clean up temp image files
+        if (tempDir) {
+          void rm(tempDir, { recursive: true, force: true }).catch(() => {});
+        }
+
         resolve({
           content,
           tokenUsage: { inputTokens: 0, outputTokens: 0 }, // Codex doesn't expose token usage easily
@@ -128,6 +147,9 @@ export class CodexAgentBridge implements AgentBridge {
       proc.on('error', (err) => {
         if (settled) return;
         settle();
+        if (tempDir) {
+          void rm(tempDir, { recursive: true, force: true }).catch(() => {});
+        }
         if (params.streamCallback) {
           void params.streamCallback({ type: 'done' });
         }
@@ -136,7 +158,7 @@ export class CodexAgentBridge implements AgentBridge {
     });
   }
 
-  buildArgs(params: AgentExecuteParams): string[] {
+  buildArgs(params: AgentExecuteParams, imagePaths: string[] = []): string[] {
     const args = ['exec'];
 
     // Full auto mode
@@ -153,6 +175,35 @@ export class CodexAgentBridge implements AgentBridge {
       args.push('-C', params.workspacePath);
     }
 
+    // Inject MCP servers via -c overrides
+    // Codex reads MCP config from ~/.codex/config.toml; we override per-invocation
+    if (params.mcpConfig?.mcpServers?.length) {
+      for (const server of params.mcpConfig.mcpServers) {
+        const key = `mcp_servers.${server.name}`;
+        args.push('-c', `${key}.command="${server.command}"`);
+        if (server.args && server.args.length > 0) {
+          const argsArr = JSON.stringify(server.args);
+          args.push('-c', `${key}.args=${argsArr}`);
+        }
+        if (server.env && Object.keys(server.env).length > 0) {
+          // TOML inline table: { KEY = "value", ... }
+          const envPairs = Object.entries(server.env)
+            .map(([k, v]) => `${k} = "${String(v).replace(/"/g, '\\"')}"`)
+            .join(', ');
+          args.push('-c', `${key}.env={ ${envPairs} }`);
+        }
+      }
+    }
+
+    // Attach images via native --image flag
+    for (const imgPath of imagePaths) {
+      args.push('--image', imgPath);
+    }
+
+    // '--' separates options from positional prompt
+    // (required because --image <FILE>... is variadic and would consume the prompt)
+    args.push('--');
+
     // System prompt as part of the message
     const fullPrompt = [params.systemPrompt, params.prependContext, params.userMessage]
       .filter(Boolean)
@@ -160,6 +211,41 @@ export class CodexAgentBridge implements AgentBridge {
     args.push(fullPrompt);
 
     return args;
+  }
+
+  /** Write media base64 data to temp files for Codex --image flag. */
+  private writeMediaTempFiles(mediaRefs: MediaRef[]): { tempDir: string; paths: string[] } {
+    // Resolve base64 from memory or disk for each image ref
+    const resolved: Array<{ base64: string; mimeType?: string }> = [];
+    for (const ref of mediaRefs) {
+      if (ref.mediaType !== 'image') continue;
+      const base64 = ref.base64Data ?? this.readLocalPath(ref.localPath);
+      if (base64) resolved.push({ base64, mimeType: ref.mimeType });
+    }
+    if (resolved.length === 0) return { tempDir: '', paths: [] };
+
+    const tempDir = join(tmpdir(), `yourbot-codex-img-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+
+    const paths: string[] = [];
+    for (const [i, { base64, mimeType }] of resolved.entries()) {
+      const ext = mimeType?.split('/')[1] ?? 'png';
+      const filePath = join(tempDir, `image-${i}.${ext}`);
+      writeFileSync(filePath, Buffer.from(base64, 'base64'));
+      paths.push(filePath);
+    }
+
+    logger.info('Codex 图片临时文件', { tempDir, count: paths.length });
+    return { tempDir, paths };
+  }
+
+  private readLocalPath(localPath?: string): string | undefined {
+    if (!localPath || !existsSync(localPath)) return undefined;
+    try {
+      return readFileSync(localPath).toString('base64');
+    } catch {
+      return undefined;
+    }
   }
 
   extractContent(jsonlOutput: string): string {
