@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
-import { ConfigLoader } from './config-loader';
 import type { OpenVikingClient } from '../memory/openviking/openviking-client';
+import { ConfigLoader } from './config-loader';
 
 function createMockOV(): OpenVikingClient {
   return {

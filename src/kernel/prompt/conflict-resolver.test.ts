@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { ConflictResolver } from './conflict-resolver';
 import type { KnowledgeFragment } from '../evolution/evolution-types';
+import { ConflictResolver } from './conflict-resolver';
 
 function makeFragment(
   source: KnowledgeFragment['source'],

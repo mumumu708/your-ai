@@ -42,7 +42,7 @@ describe('retrieveMemories', () => {
     const result = await retrieveMemories(ov, { query: 'test', tokenBudget: 4000 });
     expect(result).toHaveLength(1);
     expect(result[0].level).toBe('L1');
-    expect(ov.overview).toHaveBeenCalled();
+    expect(ov.read).toHaveBeenCalled();
   });
 
   test('loads L0 context when budget between 100 and 2000', async () => {
@@ -79,7 +79,7 @@ describe('retrieveMemories', () => {
     expect(result).toHaveLength(0);
   });
 
-  test('uses read() for file URIs instead of overview/abstract', async () => {
+  test('L1 always uses read() for full content', async () => {
     const ov = createMockOV();
     mockFindOnce(ov, [
       {
@@ -94,7 +94,6 @@ describe('retrieveMemories', () => {
     const result = await retrieveMemories(ov, { query: 'test', tokenBudget: 4000 });
     expect(result).toHaveLength(1);
     expect(ov.read).toHaveBeenCalledWith('viking://mem/file.md');
-    expect(ov.overview).not.toHaveBeenCalled();
   });
 
   test('uses read() for file URIs at L0 level', async () => {
@@ -133,9 +132,10 @@ describe('retrieveMemories', () => {
         match_reason: 'r',
       },
     ]);
-    (ov.overview as ReturnType<typeof mock>).mockImplementation(async (uri: string) => {
+    // Both read() calls fail for 'fail' URI → skipped; 'ok' URI succeeds
+    (ov.read as ReturnType<typeof mock>).mockImplementation(async (uri: string) => {
       if (uri.includes('fail')) throw new Error('load failed');
-      return `overview of ${uri}`;
+      return `content of ${uri}`;
     });
 
     const result = await retrieveMemories(ov, { query: 'test', tokenBudget: 6000 });

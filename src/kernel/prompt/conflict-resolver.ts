@@ -1,4 +1,8 @@
-import type { ConflictResolution, KnowledgeFragment, RuleClassification } from '../evolution/evolution-types';
+import type {
+  ConflictResolution,
+  KnowledgeFragment,
+  RuleClassification,
+} from '../evolution/evolution-types';
 
 interface ConflictPair {
   a: RegExp;

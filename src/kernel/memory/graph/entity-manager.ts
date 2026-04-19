@@ -69,9 +69,21 @@ export class EntityManager {
     const uri = `viking://agent/graph/entities/${entitySlug}`;
     const result: GraphQueryResult = { entity: entitySlug, relations: [] };
 
+    // Helper: abstract() only works on directories; use read() with truncation for files
+    const getContent = async (targetUri: string): Promise<string> => {
+      const last = targetUri.split('/').pop() ?? '';
+      const isFile = last.includes('.');
+      if (isFile) return (await this.ov.read(targetUri)).slice(0, 200);
+      try {
+        return await this.ov.abstract(targetUri);
+      } catch {
+        return (await this.ov.read(targetUri)).slice(0, 200);
+      }
+    };
+
     const relations = await this.ov.relations(uri);
     for (const rel of relations) {
-      const abstract = await this.ov.abstract(rel.uri);
+      const abstract = await getContent(rel.uri);
       result.relations.push({
         target: rel.uri,
         reason: rel.reason,
@@ -81,7 +93,7 @@ export class EntityManager {
       if (depth > 1) {
         const subRelations = await this.ov.relations(rel.uri);
         for (const sub of subRelations) {
-          const subAbstract = await this.ov.abstract(sub.uri);
+          const subAbstract = await getContent(sub.uri);
           result.relations.push({
             target: sub.uri,
             reason: sub.reason,

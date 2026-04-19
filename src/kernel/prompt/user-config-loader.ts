@@ -1,8 +1,8 @@
 import { join } from 'node:path';
 import { Logger } from '../../shared/logging/logger';
+import type { OpenVikingClient } from '../memory/openviking/openviking-client';
 import type { AIEOSConfig } from './config-loader';
 import type { ConfigLoader } from './config-loader';
-import type { OpenVikingClient } from '../memory/openviking/openviking-client';
 
 const VIKING_USER_CONFIG_URI = 'viking://user';
 

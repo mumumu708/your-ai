@@ -133,11 +133,33 @@ export class OpenVikingClient {
 
   // ─── Resources ─────────────────────────────────────────────
 
+  /**
+   * Add a resource (content, URL, or local path) to the knowledge base.
+   *
+   * Per OV docs, `/api/v1/resources` accepts either:
+   *   - `content`: raw text/markdown body (+ optional `uri` target)
+   *   - `path`: URL or local file/directory path (OV parses and ingests)
+   *
+   * All forms are indexed and L0/L1 summaries auto-generated.
+   */
   async addResource(
-    content: string,
+    params:
+      | string
+      | {
+          content?: string;
+          path?: string;
+          uri?: string;
+          reason?: string;
+          format?: string;
+          parent?: string;
+        },
     options?: { uri?: string; format?: string },
-  ): Promise<{ uri: string }> {
-    return this.request('POST', '/api/v1/resources', { content, ...options });
+  ): Promise<{ uri?: string; root_uri?: string }> {
+    // Backward-compat: addResource(content, { uri, format })
+    // New form: addResource({ content | path, uri, reason, ... })
+    const body =
+      typeof params === 'string' ? { content: params, ...(options ?? {}) } : params;
+    return this.request('POST', '/api/v1/resources', body);
   }
 
   // ─── File System ───────────────────────────────────────────
@@ -280,7 +302,13 @@ export class OpenVikingClient {
     });
   }
 
-  async commit(sessionId: string): Promise<{ memories_extracted: number }> {
+  async commit(sessionId: string): Promise<{
+    memories_extracted?: number;
+    status?: string;
+    task_id?: string;
+    archive_uri?: string;
+    archived?: boolean;
+  }> {
     return this.request('POST', `/api/v1/sessions/${sessionId}/commit`);
   }
 }

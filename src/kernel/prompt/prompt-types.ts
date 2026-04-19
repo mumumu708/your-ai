@@ -18,6 +18,8 @@ export interface PromptSections {
   identity: string;
   soul: string;
   protocol: string;
+  /** Viking MCP tool usage hints (when to remember vs add_resource vs search) */
+  memoryTools: string;
   skillIndex: string;
   memorySnapshot: string;
   runtimeHints: string;

@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  buildMemorySnapshot,
-  computeSnapshotScore,
-} from './memory-snapshot-builder';
+import { buildMemorySnapshot, computeSnapshotScore } from './memory-snapshot-builder';
 import type { MemoryItem } from './memory-snapshot-builder';
 import { estimateTokens } from './prompt-types';
 
@@ -86,9 +83,19 @@ describe('buildMemorySnapshot', () => {
   test('高 importance + 近期的条目排在前面', () => {
     const now = Date.now();
     const memories: MemoryItem[] = [
-      { content: '旧的低优先', category: 'fact', importance: 0.2, updatedAt: now - 90 * 86_400_000 },
+      {
+        content: '旧的低优先',
+        category: 'fact',
+        importance: 0.2,
+        updatedAt: now - 90 * 86_400_000,
+      },
       { content: '新的高优先', category: 'fact', importance: 0.9, updatedAt: now },
-      { content: '旧的高优先', category: 'fact', importance: 0.9, updatedAt: now - 60 * 86_400_000 },
+      {
+        content: '旧的高优先',
+        category: 'fact',
+        importance: 0.9,
+        updatedAt: now - 60 * 86_400_000,
+      },
       { content: '新的低优先', category: 'fact', importance: 0.2, updatedAt: now },
     ];
 
