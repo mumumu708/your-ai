@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { GitOperations } from './git-operations';
 import { WorktreePool } from './worktree-pool';
 
@@ -117,8 +117,8 @@ describe('WorktreePool', () => {
     const p2 = pool.run('t2', 'agent/feat/b', async () => 'should-not-run');
 
     const results = await Promise.allSettled([p1, p2]);
-    expect(results[0]!.status).toBe('fulfilled');
-    expect(results[1]!.status).toBe('rejected');
+    expect(results[0]?.status).toBe('fulfilled');
+    expect(results[1]?.status).toBe('rejected');
   });
 
   test('任务异常时应正确释放 slot', async () => {
@@ -201,7 +201,7 @@ describe('WorktreePool', () => {
 
     await pool.run('t1', 'agent/feat/test', async () => {});
 
-    expect(gitOps.addCalls[0]!.baseBranch).toBe('develop');
+    expect(gitOps.addCalls[0]?.baseBranch).toBe('develop');
   });
 
   test('addWorktree 失败时应回滚 slot 并唤醒等待者', async () => {

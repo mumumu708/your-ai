@@ -21,12 +21,21 @@ export function buildOVConf(options: OVConfOptions = {}): Record<string, unknown
     process.env.VOLCENGINE_API_KEY ??
     '4aa5617e-edf1-4ce6-a861-4ab8a020ec2a';
 
+  const vlmModel =
+    options.vlmModel ||
+    process.env.OV_VLM_MODEL ||
+    'doubao-seed-1-8-251228';
+  const embeddingModel =
+    options.embeddingModel ||
+    process.env.OV_EMBEDDING_MODEL ||
+    'doubao-embedding-vision-250615';
+
   return {
     vlm: {
       provider: 'volcengine',
       api_key: apiKey,
-      model: options.vlmModel ?? 'doubao-seed-1-8-251228',
-      api_base: 'https://ark.cn-beijing.volces.com/api/v3',
+      model: vlmModel,
+      api_base: 'https://ark.cn-beijing.volces.com/api/coding/v3',
       temperature: 0.1,
       max_retries: 3,
     },
@@ -34,8 +43,8 @@ export function buildOVConf(options: OVConfOptions = {}): Record<string, unknown
       dense: {
         provider: 'volcengine',
         api_key: apiKey,
-        model: options.embeddingModel ?? 'doubao-embedding-vision-250615',
-        api_base: 'https://ark.cn-beijing.volces.com/api/v3',
+        model: embeddingModel,
+        api_base: 'https://ark.cn-beijing.volces.com/api/coding/v3',
         dimension: 1024,
         input: 'multimodal',
       },

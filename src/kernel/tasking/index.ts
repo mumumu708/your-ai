@@ -3,3 +3,7 @@ export {
   ConcurrencyController,
   type ConcurrencyConfig,
 } from './concurrency-controller';
+export { TaskStore } from './task-store';
+export { TaskDispatcher, type TaskHandler as DispatcherTaskHandler } from './task-dispatcher';
+export { QueueAggregator, type AggregationResult } from './queue-aggregator';
+export { classifyExecutionMode } from './execution-mode-classifier';

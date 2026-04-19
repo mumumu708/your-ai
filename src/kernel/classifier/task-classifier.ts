@@ -268,7 +268,7 @@ export class TaskClassifier {
     const codeBlockMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
     if (codeBlockMatch) {
       try {
-        return JSON.parse(codeBlockMatch[1]!.trim());
+        return JSON.parse(codeBlockMatch[1]?.trim() ?? '');
       } catch {
         // continue
       }

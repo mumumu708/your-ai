@@ -7,7 +7,10 @@
     "dev": "bun run src/gateway/index.ts",
     "start": "pm2 start ecosystem.config.js",
     "test": "bun test",
-    "test:coverage": "bun test --coverage",
+    "test:coverage": "bun test --coverage && bun run scripts/lcov-to-nyc.ts && bunx nyc report",
+    "test:coverage:html": "bun test --coverage && bun run scripts/lcov-to-nyc.ts && bunx nyc report --reporter=html",
+    "coverage:report": "bunx nyc report",
+    "coverage:check": "bunx nyc check-coverage",
     "lint": "bunx biome check src/",
     "lint:fix": "bunx biome check --write src/",
     "format": "bunx biome format --write src/",
@@ -15,8 +18,10 @@
     "check:arch": "bun run scripts/check-architecture.ts",
     "check:conventions": "bun run scripts/lint-conventions.ts",
     "check:docs": "bun run scripts/check-docs.ts",
-    "check:coverage": "bun run scripts/check-coverage.ts",
-    "check:all": "bun run lint && bun run typecheck && bun run check:arch && bun run check:conventions && bun test && bun run check:coverage",
+    "check:coverage": "bun test --coverage --path-ignore-patterns='src/integration/light-llm.integration.test.ts' && bun run scripts/lcov-to-nyc.ts && bunx nyc check-coverage",
+    "check:all": "bun run lint && bun run typecheck && bun run check:arch && bun run check:conventions && bun run check:coverage",
+    "test:mutate": "bunx stryker run",
+    "test:mutate:dry": "bunx stryker run --dryRunOnly",
     "db:init": "bun run infra/scripts/db-init.ts",
     "db:migrate": "bun run infra/scripts/db-migrate.ts"
   },
@@ -32,9 +37,17 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
+    "@istanbuljs/nyc-config-typescript": "^1.0.2",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/typescript-checker": "^9.6.1",
     "@types/better-sqlite3": "^7.6.0",
     "@types/bun": "^1.2.0",
+    "@types/istanbul-lib-coverage": "^2.0.6",
     "drizzle-kit": "^0.30.0",
+    "istanbul-lib-coverage": "^3.2.2",
+    "istanbul-lib-report": "^3.0.1",
+    "istanbul-reports": "^3.2.0",
+    "nyc": "^18.0.0",
     "typescript": "^5.9.3"
   }
 }

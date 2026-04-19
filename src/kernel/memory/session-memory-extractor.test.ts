@@ -153,4 +153,22 @@ describe('SessionMemoryExtractor', () => {
       expect(items.length).toBeGreaterThan(0);
     });
   });
+
+  describe('edge cases', () => {
+    test('buildRuleSummary truncates first user message longer than 100 chars', async () => {
+      const longMsg = 'A'.repeat(150);
+      const messages = [msg('user', longMsg), msg('assistant', 'ok')];
+      const result = await extractor.extract('sess_edge_1', 'user_edge', messages);
+      // Summary should contain truncated message (ends with ...)
+      expect(result.summary).toContain('...');
+    });
+
+    test('extract handles messages with no user messages (all assistant)', async () => {
+      const messages = [msg('assistant', 'Hello'), msg('assistant', 'How can I help?')];
+      const result = await extractor.extract('sess_edge_2', 'user_edge', messages);
+      expect(result.messageCount).toBe(2);
+      // No user content → actionItems and preferences should be empty
+      expect(result.actionItems).toHaveLength(0);
+    });
+  });
 });

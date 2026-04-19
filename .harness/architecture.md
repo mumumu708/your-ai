@@ -25,6 +25,13 @@
 │    light-llm-client.ts — OpenAI 兼容 API 客户端               │
 │    process-security.ts — 子进程安全控制                         │
 │    agent-lifecycle.ts  — Agent 生命周期管理                     │
+│    --- DD-014 新增（与旧模块并存） ---                           │
+│    agent-bridge.ts     — 统一 AgentBridge 接口定义（DD-014）    │
+│    agent-bridge-fallback.ts — AgentBridge 容错包装（Claude→Codex）│
+│    intelligence-gateway.ts — Layer 1 快速预处理层               │
+│    task-guidance-builder.ts — 任务指引生成器                     │
+│    mcp-config-builder.ts — 动态 MCP 配置构建器                  │
+│    index.ts            — barrel export                         │
 │  classifier/           — TaskClassifier（统一分类：规则+LLM→UnifiedClassifyResult）│
 │  memory/               — 记忆系统                              │
 │    config-loader.ts    — 全局 AIEOS 配置加载（config/ 目录）     │
@@ -45,6 +52,11 @@
 │  onboarding/           — 新用户引导（多步对话状态机）              │
 │  sessioning/           — 会话管理 · 消息序列化 · WorktreePool 并行隔离 │
 │  scheduling/           — 定时任务（NL→Cron + 调度器 + 取消管理 + JobStore）│
+│  prompt/               — System Prompt 组装器（DD-018）            │
+│    system-prompt-builder.ts — 冻结区构建（session 级）              │
+│    prepend-context-builder.ts — 首轮 OVERRIDE 注入                │
+│    turn-context-builder.ts — 每轮动态注入（memory/guidance/delta） │
+│    memory-snapshot-builder.ts — MEMORY.md 快照生成                │
 │  skills/               — 技能管理与部署                          │
 │  workspace/            — 用户工作空间初始化 + MCP 配置            │
 │  streaming/            — 流式输出处理                            │
@@ -54,7 +66,11 @@
 │    media-understanding.ts — 调用 Vision API 生成图片描述           │
 │    media-processor.ts  — 串联下载+理解的编排器                     │
 │  files/                — 文件上传处理 + 配额管理                  │
-│  tasking/              — 任务队列 + 并发控制                     │
+│  tasking/              — 任务调度 + 持久化 + 并发控制              │
+│    task-store.ts       — SQLite 任务持久化（CRUD + 启动恢复）      │
+│    task-dispatcher.ts  — 会话串行 + 跨会话并发调度器                │
+│    task-queue.ts       — (旧) 任务队列（待废弃）                   │
+│    concurrency-controller.ts — (旧) 并发控制（待废弃）             │
 │  security/             — 加密 · RBAC · 限流                     │
 │  monitoring/           — 审计日志 · 告警规则 · 工具调用监控        │
 ├─────────────────────────────────────────────────────────────┤
@@ -62,7 +78,7 @@
 │  纯类型 · 工具函数 · 零业务依赖                                  │
 │                                                             │
 │  messaging/  — BotMessage/StreamEvent/ChannelAdapter/MediaAttachment 类型│
-│  tasking/    — Task/TaskType/TaskResult 类型                  │
+│  tasking/    — Task/TaskType/TaskResult/TaskRecord/TaskPayload 类型│
 │  classifier/ — UnifiedClassifyResult 等分类器类型              │
 │  errors/     — YourBotError + ERROR_CODES                    │
 │  logging/    — Logger 类 + 日志级别                            │

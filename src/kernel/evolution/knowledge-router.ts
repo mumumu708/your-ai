@@ -1,10 +1,10 @@
 import type { ConversationMessage } from '../../shared/agents/agent-instance.types';
 import { Logger } from '../../shared/logging/logger';
-import type { AIEOSConfig, ConfigLoader } from '../memory/config-loader';
 import { retrieveMemories } from '../memory/memory-retriever-v2';
 import type { ContextSummary } from '../memory/memory-types';
 import type { OpenVikingClient } from '../memory/openviking/openviking-client';
-import type { ConflictResolver } from './conflict-resolver';
+import type { AIEOSConfig, ConfigLoader } from '../prompt/config-loader';
+import type { ConflictResolver } from '../prompt/conflict-resolver';
 import type {
   KnowledgeFragment,
   KnowledgeRouterConfig,
@@ -73,16 +73,37 @@ export class KnowledgeRouter {
       fragments.push(this.toFragment('user', line, priority, ruleClass));
     }
 
-    // Simple tasks: only identity + soul
+    // Simple tasks: identity + soul + lightweight memory retrieval
+    // Even simple questions may need user memories to answer correctly
+    // (e.g., "what's my name?" or "did I go to X?")
     if (complexity === 'simple') {
-      const { resolved, conflicts } = this.conflictResolver.resolve(
-        fragments.filter((f) => f.source === 'identity' || f.source === 'soul'),
-      );
+      // Still retrieve memories, but with a smaller budget
+      const simpleQuery = this.buildSearchQuery(currentMessage, recentMessages);
+      let simpleMemoryContents: string[] = [];
+      if (simpleQuery) {
+        const simpleBudget = this.config.maxContextTokens * 0.15;
+        const memories = await retrieveMemories(this.ovClient, {
+          query: simpleQuery,
+          tokenBudget: simpleBudget,
+          memoryTopK: 10,
+        });
+        simpleMemoryContents = memories.map((m) => m.content);
+        for (const mem of memories) {
+          fragments.push({
+            source: 'memory',
+            content: mem.content,
+            priority: 4,
+            tokens: this.allocator.estimateTokens(mem.content),
+          });
+        }
+      }
 
-      const budget = Math.floor(this.config.maxContextTokens * 0.3);
+      const { resolved, conflicts } = this.conflictResolver.resolve(fragments);
+
+      const budget = Math.floor(this.config.maxContextTokens * 0.4);
       const allocated = this.allocator.allocate(resolved, budget, {
-        identity: 0.6,
-        memory: 0.2,
+        identity: 0.4,
+        memory: 0.4,
         session: 0.2,
       });
 
@@ -94,7 +115,7 @@ export class KnowledgeRouter {
         fragments: allocated,
         totalTokens,
         conflictsResolved: conflicts,
-        retrievedMemories: [],
+        retrievedMemories: simpleMemoryContents,
       };
     }
 

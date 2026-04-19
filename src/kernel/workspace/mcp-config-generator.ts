@@ -1,5 +1,10 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  buildAllowPatternsForServer,
+  getBuiltinMcpServers,
+  resolveScriptPath,
+} from '../../../mcp-servers/registry';
 import { Logger } from '../../shared/logging/logger';
 
 // --- Types ---
@@ -113,37 +118,39 @@ export class McpConfigGenerator {
 
   getBuiltinServers(context: WorkspaceContext): Record<string, McpServerEntry> {
     const servers: Record<string, McpServerEntry> = {};
+    const deployRoot = process.env.YOURBOT_ROOT;
 
-    servers['feishu-server'] = {
-      command: 'bun',
-      args: ['run', '/opt/yourbot/mcp-servers/feishu/index.ts'],
-      env: {
-        FEISHU_APP_ID: process.env.FEISHU_APP_ID ?? '',
-        FEISHU_APP_SECRET: process.env.FEISHU_APP_SECRET ?? '',
-        YOURBOT_USER_ID: context.userId,
-        YOURBOT_TENANT_ID: context.tenantId,
-      },
+    // Memory — always enabled
+    const memDef = getBuiltinMcpServers().memory;
+    servers[memDef.id] = {
+      command: memDef.command,
+      args: ['run', resolveScriptPath(deployRoot, memDef.scriptRelativePath)],
+      env: this.buildServerEnv(memDef.envTemplate ?? {}, context),
     };
 
-    servers['memory-server'] = {
-      command: 'bun',
-      args: ['run', '/opt/yourbot/mcp-servers/memory/index.ts'],
-      env: {
-        MEMORY_STORE_PATH: `/data/yourbot/memory/${context.userId}`,
-        YOURBOT_USER_ID: context.userId,
-      },
-    };
-
-    servers['scheduler-server'] = {
-      command: 'bun',
-      args: ['run', '/opt/yourbot/mcp-servers/scheduler/index.ts'],
-      env: {
-        SCHEDULER_DB_URL: process.env.SCHEDULER_DB_URL ?? '',
-        YOURBOT_USER_ID: context.userId,
-      },
+    // Scheduler — always present in workspace config; agent uses it based on task type
+    const schedDef = getBuiltinMcpServers().scheduler;
+    servers[schedDef.id] = {
+      command: schedDef.command,
+      args: ['run', resolveScriptPath(deployRoot, schedDef.scriptRelativePath)],
+      env: this.buildServerEnv(schedDef.envTemplate ?? {}, context),
     };
 
     return servers;
+  }
+
+  private buildServerEnv(
+    template: Record<string, string>,
+    context: WorkspaceContext,
+  ): Record<string, string> {
+    const resolved: Record<string, string> = {};
+    for (const [key, value] of Object.entries(template)) {
+      resolved[key] = value
+        .replace('{{USER_ID}}', context.userId)
+        .replace('{{TENANT_ID}}', context.tenantId)
+        .replace('{{SCHEDULER_DB_URL}}', process.env.SCHEDULER_DB_URL ?? '');
+    }
+    return resolved;
   }
 
   getThirdPartyServers(context: WorkspaceContext): Record<string, McpServerEntry> {
@@ -179,9 +186,9 @@ export class McpConfigGenerator {
 
   buildPermissions(context: WorkspaceContext): { allow: string[]; deny: string[] } {
     const allow: string[] = [
-      'mcp__feishu_server__*',
-      'mcp__memory_server__*',
-      'mcp__scheduler_server__*',
+      // MCP tool permissions derived from registry
+      ...buildAllowPatternsForServer(getBuiltinMcpServers().memory),
+      ...buildAllowPatternsForServer(getBuiltinMcpServers().scheduler),
       'Bash(*)',
       'Edit(*)',
       'Write(*)',

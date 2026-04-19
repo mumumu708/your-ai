@@ -19,6 +19,18 @@ export class MediaProcessor {
     this.understanding = deps.understanding;
   }
 
+  setChannelResolver(
+    resolver: (
+      channelType: string,
+    ) => import('../../shared/messaging/channel-adapter.types').IChannel | undefined,
+  ): void {
+    this.downloader.setChannelResolver(resolver);
+  }
+
+  setUploadsDir(dir: string): void {
+    this.downloader.setUploadsDir(dir);
+  }
+
   async processAttachments(
     attachments: MediaAttachment[],
     options?: { runUnderstanding?: boolean },

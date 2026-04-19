@@ -1,13 +1,19 @@
-import type { AgentExecuteParams, AgentResult } from '../../shared/agents/agent-instance.types';
+import { existsSync, readFileSync } from 'node:fs';
+import type {
+  AgentExecuteParams,
+  AgentResult,
+  ConversationMessage,
+} from '../../shared/agents/agent-instance.types';
 import { Logger } from '../../shared/logging/logger';
+import type { MediaRef } from '../../shared/messaging/media-attachment.types';
 import type { ClassifyContext } from '../classifier/classifier-types';
 import type { TaskClassifier } from '../classifier/task-classifier';
-import type { ClaudeAgentBridge } from './claude-agent-bridge';
+import type { AgentBridge } from './agent-bridge';
 import type { LightLLMClient, LightLLMContentPart, LightLLMMessage } from './light-llm-client';
 
 export interface AgentRuntimeDeps {
   classifier?: TaskClassifier | null;
-  claudeBridge?: ClaudeAgentBridge | null;
+  agentBridge?: AgentBridge | null;
   lightLLM?: LightLLMClient | null;
 }
 
@@ -20,12 +26,12 @@ export interface EnhancedAgentResult extends AgentResult {
 export class AgentRuntime {
   private readonly logger = new Logger('AgentRuntime');
   private readonly classifier: TaskClassifier | null;
-  private readonly claudeBridge: ClaudeAgentBridge | null;
+  private readonly agentBridge: AgentBridge | null;
   private readonly lightLLM: LightLLMClient | null;
 
   constructor(deps: AgentRuntimeDeps = {}) {
     this.classifier = deps.classifier ?? null;
-    this.claudeBridge = deps.claudeBridge ?? null;
+    this.agentBridge = deps.agentBridge ?? null;
     this.lightLLM = deps.lightLLM ?? null;
   }
 
@@ -50,7 +56,14 @@ export class AgentRuntime {
         classifiedBy: params.classifyResult.classifiedBy,
       });
       if (params.classifyResult.complexity === 'simple') {
-        return this.executeSimple(params, params.classifyResult.costUsd);
+        try {
+          return await this.executeSimple(params, params.classifyResult.costUsd);
+        } catch (error) {
+          this.logger.warn('LightLLM 失败，降级到 Claude', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return this.executeComplex(params, params.classifyResult.costUsd);
+        }
       }
       return this.executeComplex(params, params.classifyResult.costUsd);
     }
@@ -89,10 +102,10 @@ export class AgentRuntime {
     params: AgentExecuteParams,
     classificationCostUsd = 0,
   ): Promise<EnhancedAgentResult> {
-    if (!this.claudeBridge) {
-      this.logger.warn('ClaudeAgentBridge 未配置，返回占位结果');
+    if (!this.agentBridge) {
+      this.logger.warn('AgentBridge 未配置，返回占位结果');
       return {
-        content: '[AgentRuntime] Claude Agent Bridge 未配置。',
+        content: '[AgentRuntime] Agent Bridge 未配置。',
         tokenUsage: { inputTokens: 0, outputTokens: 0 },
         complexity: 'complex',
         channel: 'agent_sdk',
@@ -100,25 +113,27 @@ export class AgentRuntime {
       };
     }
 
-    const result = await this.claudeBridge.execute({
+    const lastMsg = this.getLastUserMessage(params) ?? '';
+    // Extract mediaRefs from the last user message
+    const lastUserMsg = this.getLastUserConversationMessage(params);
+    const result = await this.agentBridge.execute({
+      systemPrompt: params.context.systemPrompt ?? '',
+      prependContext: '',
+      userMessage: lastMsg,
       sessionId: params.context.sessionId,
-      messages: params.context.messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
-      systemPrompt: params.context.systemPrompt,
-      signal: params.signal,
-      onStream: params.streamCallback,
-      cwd: params.context.workspacePath,
       claudeSessionId: params.context.claudeSessionId,
+      workspacePath: params.context.workspacePath,
+      signal: params.signal,
+      streamCallback: params.streamCallback
+        ? async (event) => params.streamCallback!(event)
+        : undefined,
+      executionMode: 'sync',
+      mediaRefs: lastUserMsg?.mediaRefs,
     });
 
     return {
       content: result.content,
-      tokenUsage: {
-        inputTokens: result.usage.inputTokens,
-        outputTokens: result.usage.outputTokens,
-      },
+      tokenUsage: result.tokenUsage,
       toolsUsed: result.toolsUsed,
       claudeSessionId: result.claudeSessionId,
       complexity: 'complex',
@@ -143,17 +158,18 @@ export class AgentRuntime {
     }
 
     for (const m of params.context.messages) {
-      // Build multimodal content if the message has media with base64 data
-      if (m.role === 'user' && m.mediaRefs?.some((r) => r.base64Data)) {
+      // Build multimodal content if the message has media (base64 in memory or on disk)
+      if (m.role === 'user' && m.mediaRefs?.some((r) => r.base64Data || r.localPath)) {
         const parts: LightLLMContentPart[] = [];
         if (m.content) {
           parts.push({ type: 'text', text: m.content });
         }
         for (const ref of m.mediaRefs ?? []) {
-          if (ref.base64Data && ref.mimeType) {
+          const base64 = this.resolveMediaBase64(ref);
+          if (base64 && ref.mimeType) {
             parts.push({
               type: 'image_url',
-              image_url: { url: `data:${ref.mimeType};base64,${ref.base64Data}` },
+              image_url: { url: `data:${ref.mimeType};base64,${base64}` },
             });
           }
         }
@@ -211,13 +227,30 @@ export class AgentRuntime {
   }
 
   private getLastUserMessage(params: AgentExecuteParams): string | null {
+    return this.getLastUserConversationMessage(params)?.content ?? null;
+  }
+
+  private getLastUserConversationMessage(params: AgentExecuteParams): ConversationMessage | null {
     const msgs = params.context.messages;
     for (let i = msgs.length - 1; i >= 0; i--) {
       const msg = msgs[i];
       if (msg?.role === 'user') {
-        return msg.content;
+        return msg;
       }
     }
     return null;
+  }
+
+  /** Resolve base64 data from memory or disk */
+  private resolveMediaBase64(ref: MediaRef): string | undefined {
+    if (ref.base64Data) return ref.base64Data;
+    if (ref.localPath && existsSync(ref.localPath)) {
+      try {
+        return readFileSync(ref.localPath).toString('base64');
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
   }
 }

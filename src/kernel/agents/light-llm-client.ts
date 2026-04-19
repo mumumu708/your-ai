@@ -45,7 +45,7 @@ export interface LightLLMConfig {
 function loadConfig(): LightLLMConfig {
   const apiKey = process.env.LIGHT_LLM_API_KEY ?? '';
   const baseUrl = process.env.LIGHT_LLM_BASE_URL ?? 'https://api.openai.com/v1';
-  const defaultModel = process.env.LIGHT_LLM_MODEL ?? 'gpt-4o-mini';
+  const defaultModel = process.env.LIGHT_LLM_MODEL ?? 'glm-4.5-air';
 
   return { apiKey, baseUrl, defaultModel };
 }
@@ -80,7 +80,7 @@ export class LightLLMClient {
 
     this.logger.debug('LightLLM complete 请求', { model, messageCount: request.messages.length });
 
-    const maxAttempts = 2;
+    const maxAttempts = 6;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const response = await fetch(url, {
         method: 'POST',
@@ -99,6 +99,16 @@ export class LightLLMClient {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'unknown');
+        if (this.isRetryable(response.status) && attempt < maxAttempts) {
+          const delayMs = this.retryDelay(attempt);
+          this.logger.warn('LightLLM 请求失败，重试中', {
+            status: response.status,
+            attempt,
+            nextRetryMs: delayMs,
+          });
+          await this.sleep(delayMs);
+          continue;
+        }
         throw new YourBotError(ERROR_CODES.LLM_API_ERROR, `LightLLM API 错误: ${response.status}`, {
           status: response.status,
           body: errorText,
@@ -158,23 +168,37 @@ export class LightLLMClient {
 
     this.logger.debug('LightLLM stream 请求', { model });
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: request.messages,
-        max_tokens: request.maxTokens ?? 1024,
-        temperature: request.temperature ?? 0.7,
-        stream: true,
-      }),
-    });
+    const maxAttempts = 3;
+    let response: Response | undefined;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: request.messages,
+          max_tokens: request.maxTokens ?? 1024,
+          temperature: request.temperature ?? 0.7,
+          stream: true,
+        }),
+      });
 
-    if (!response.ok) {
+      if (response.ok) break;
+
       const errorText = await response.text().catch(() => 'unknown');
+      if (this.isRetryable(response.status) && attempt < maxAttempts) {
+        const delayMs = this.retryDelay(attempt);
+        this.logger.warn('LightLLM stream 请求失败，重试中', {
+          status: response.status,
+          attempt,
+          nextRetryMs: delayMs,
+        });
+        await this.sleep(delayMs);
+        continue;
+      }
       throw new YourBotError(
         ERROR_CODES.LLM_API_ERROR,
         `LightLLM stream API 错误: ${response.status}`,
@@ -183,6 +207,10 @@ export class LightLLMClient {
           body: errorText,
         },
       );
+    }
+
+    if (!response?.ok) {
+      throw new YourBotError(ERROR_CODES.LLM_API_ERROR, 'LightLLM stream: 重试耗尽');
     }
 
     const reader = response.body?.getReader();
@@ -236,6 +264,20 @@ export class LightLLMClient {
 
   getDefaultModel(): string {
     return this.config.defaultModel;
+  }
+
+  /** 429 / 502 / 503 / 504 属于可重试状态码 */
+  isRetryable(status: number): boolean {
+    return status === 429 || status === 502 || status === 503 || status === 504;
+  }
+
+  /** 指数退避: 500ms, 1s, 2s, 4s, 8s, 最多 15s */
+  retryDelay(attempt: number): number {
+    return Math.min(500 * 2 ** (attempt - 1), 15000);
+  }
+
+  sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private estimateCost(model: string, promptTokens: number, completionTokens: number): number {

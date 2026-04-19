@@ -260,4 +260,145 @@ describe('FeishuStreamAdapter', () => {
       expect(allSequences[i]).toBeGreaterThan(allSequences[i - 1]);
     }
   });
+
+  describe('内容过滤 (StreamContentFilter 集成)', () => {
+    test('tool_start chunk 应该显示状态行而不是累积到正文', async () => {
+      const deps = createMockDeps();
+      const adapter = new FeishuStreamAdapter('chat_001', deps, 0);
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk(
+        '\n> 🔧 memory_search ...\n',
+        createProtocol({ type: 'tool_start', data: { toolName: 'memory_search' } }),
+      );
+
+      expect(deps.textUpdates.length).toBe(1);
+      // 状态行显示，而非原始 tool label 文本
+      expect(deps.textUpdates[0].text).toBe('🔍 正在搜索记忆...');
+    });
+
+    test('tool_result chunk 应该被完全抑制', async () => {
+      const deps = createMockDeps();
+      const adapter = new FeishuStreamAdapter('chat_001', deps, 0);
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk('Hello', createProtocol());
+      const countAfterText = deps.textUpdates.length;
+
+      await adapter.sendChunk('> ✅ 完成\n\n', createProtocol({ type: 'tool_result' }));
+
+      // tool_result suppressed — no new update
+      expect(deps.textUpdates.length).toBe(countAfterText);
+    });
+
+    test('tool_start 后跟 text_delta 应该合并显示：正文 + 状态行', async () => {
+      const deps = createMockDeps();
+      const adapter = new FeishuStreamAdapter('chat_001', deps, 0);
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk('思考中', createProtocol());
+      await adapter.sendChunk(
+        '',
+        createProtocol({ type: 'tool_start', data: { toolName: 'Bash' } }),
+      );
+
+      // Combined: contentBuffer + statusLine
+      const lastUpdate = deps.textUpdates[deps.textUpdates.length - 1];
+      expect(lastUpdate.text).toBe('思考中\n\n⚡ 正在执行命令...');
+    });
+
+    test('tool_start 后跟 text_delta 应该清除状态行', async () => {
+      const deps = createMockDeps();
+      const adapter = new FeishuStreamAdapter('chat_001', deps, 0);
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk(
+        '',
+        createProtocol({ type: 'tool_start', data: { toolName: 'Bash' } }),
+      );
+      await adapter.sendChunk('结果回来了', createProtocol());
+
+      // Status line cleared after text_delta
+      const lastUpdate = deps.textUpdates[deps.textUpdates.length - 1];
+      expect(lastUpdate.text).toBe('结果回来了');
+      expect(lastUpdate.text).not.toContain('⚡');
+    });
+
+    test('仅有状态行时（无正文）应该正常显示状态行', async () => {
+      const deps = createMockDeps();
+      const adapter = new FeishuStreamAdapter('chat_001', deps, 0);
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk(
+        '',
+        createProtocol({ type: 'tool_start', data: { toolName: 'Read' } }),
+      );
+
+      expect(deps.textUpdates.length).toBe(1);
+      expect(deps.textUpdates[0].text).toBe('📄 正在读取文件...');
+    });
+
+    test('sendDone 最终渲染不应包含状态行', async () => {
+      const deps = createMockDeps();
+      const adapter = new FeishuStreamAdapter('chat_001', deps, 0);
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk(
+        '',
+        createProtocol({ type: 'tool_start', data: { toolName: 'Bash' } }),
+      );
+      await adapter.sendDone('最终回复', createProtocol({ type: 'stream_end' }));
+
+      const finalUpdate = deps.textUpdates[deps.textUpdates.length - 1];
+      expect(finalUpdate.text).toBe('最终回复');
+      expect(finalUpdate.text).not.toContain('⚡');
+    });
+
+    test('existingCardId 应该跳过卡片创建，直接复用', async () => {
+      const deps = createMockDeps();
+      const adapter = new FeishuStreamAdapter('chat_001', deps, 0, 'pre_card_001');
+
+      await adapter.onStreamStart('msg_001');
+
+      // Should NOT create a new card or send card message
+      expect(deps.createdCards.length).toBe(0);
+      expect(deps.sentCardMessages.length).toBe(0);
+
+      // Should use the existing card for updates
+      await adapter.sendChunk('Hello', createProtocol());
+      expect(deps.textUpdates.length).toBe(1);
+      expect(deps.textUpdates[0].cardId).toBe('pre_card_001');
+    });
+
+    test('existingCardId 应该在 sendDone 时正常关闭', async () => {
+      const deps = createMockDeps();
+      const adapter = new FeishuStreamAdapter('chat_001', deps, 0, 'pre_card_001');
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk('Hello', createProtocol());
+      await adapter.sendDone('Final', createProtocol({ type: 'stream_end' }));
+
+      expect(deps.closedCards[0]).toBe('pre_card_001');
+      expect(deps.addedButtons[0].cardId).toBe('pre_card_001');
+    });
+
+    test('连续 tool_start 事件只保留最后一个状态行', async () => {
+      const deps = createMockDeps();
+      const adapter = new FeishuStreamAdapter('chat_001', deps, 0);
+
+      await adapter.onStreamStart('msg_001');
+      await adapter.sendChunk(
+        '',
+        createProtocol({ type: 'tool_start', data: { toolName: 'Read' } }),
+      );
+      await adapter.sendChunk(
+        '',
+        createProtocol({ type: 'tool_start', data: { toolName: 'Bash' } }),
+      );
+
+      const lastUpdate = deps.textUpdates[deps.textUpdates.length - 1];
+      expect(lastUpdate.text).toBe('⚡ 正在执行命令...');
+      expect(lastUpdate.text).not.toContain('📄');
+    });
+  });
 });

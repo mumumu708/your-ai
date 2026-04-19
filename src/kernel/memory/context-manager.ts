@@ -38,11 +38,14 @@ export class ContextManager {
     // Retrieve key memories to build anchor text
     const keyMemories = await this.ov.find({
       query: '当前会话关键信息',
-      target_uri: 'viking://user/memories',
+      target_uri: 'viking://user/default/memories',
       limit: 10,
     });
 
-    const abstracts = await Promise.all(keyMemories.map((m) => this.ov.abstract(m.uri)));
+    // abstract() only works on directories — memory URIs are .md files, use read()
+    const abstracts = await Promise.all(
+      keyMemories.map(async (m) => (await this.ov.read(m.uri)).slice(0, 200)),
+    );
 
     const anchor = ['## 关键记忆（上下文压缩后保留）', ...abstracts.map((a) => `- ${a}`)].join(
       '\n',

@@ -8,11 +8,12 @@ const logger = new Logger('EvolutionLink');
  * creates VikingFS links for pairs with score > 0.75.
  */
 export async function linkMemory(ov: OpenVikingClient, newMemoryUri: string): Promise<void> {
-  const content = await ov.abstract(newMemoryUri);
+  // abstract() only works on directories — memory URIs are .md files, use read()
+  const content = (await ov.read(newMemoryUri)).slice(0, 500);
 
   const similar = await ov.search({
     query: content,
-    target_uri: 'viking://user/memories',
+    target_uri: 'viking://user/default/memories',
     limit: 5,
   });
 

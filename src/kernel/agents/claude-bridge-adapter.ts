@@ -1,0 +1,50 @@
+import type { AgentBridge, AgentExecuteParams, AgentResult } from './agent-bridge';
+import type { ClaudeAgentBridge } from './claude-agent-bridge';
+
+/**
+ * ClaudeBridgeAdapter — 将旧 ClaudeAgentBridge 适配为新 AgentBridge 接口。
+ *
+ * 不修改 ClaudeAgentBridge 本身，通过适配器模式桥接两套接口。
+ */
+export class ClaudeBridgeAdapter implements AgentBridge {
+  constructor(private readonly bridge: ClaudeAgentBridge) {}
+
+  async execute(params: AgentExecuteParams): Promise<AgentResult> {
+    // Build user message with prependContext injected (BUG-01 fix)
+    // For image-only messages, userMessage may be empty — use media description as fallback
+    let userContent = params.prependContext
+      ? `${params.prependContext}\n\n${params.userMessage}`
+      : params.userMessage;
+    if (!userContent && params.mediaRefs?.length) {
+      userContent = params.mediaRefs.map((r) => `[${r.description || '图片'}]`).join(' ');
+    }
+    const oldResult = await this.bridge.execute({
+      sessionId: params.sessionId,
+      messages: userContent ? [{ role: 'user', content: userContent }] : [],
+      systemPrompt: params.systemPrompt,
+      cwd: params.workspacePath,
+      claudeSessionId: params.claudeSessionId,
+      signal: params.signal,
+      onStream: params.streamCallback
+        ? (event) => {
+            // Fire-and-forget: bridge uses sync callback, gateway uses async
+            void params.streamCallback?.(event);
+          }
+        : undefined,
+      mediaRefs: params.mediaRefs,
+    });
+
+    return {
+      content: oldResult.content,
+      tokenUsage: {
+        inputTokens: oldResult.usage.inputTokens,
+        outputTokens: oldResult.usage.outputTokens,
+      },
+      toolsUsed: oldResult.toolsUsed,
+      claudeSessionId: oldResult.claudeSessionId,
+      turnsUsed: oldResult.turns,
+      finishedNaturally: true,
+      handledBy: 'claude',
+    };
+  }
+}

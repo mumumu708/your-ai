@@ -17,7 +17,9 @@
         "src/kernel/sessioning/branch-name-generator.ts",
         "src/kernel/scheduling/scheduler.ts",
         "src/kernel/scheduling/job-store.ts",
-        "src/kernel/scheduling/schedule-cancel-manager.ts"
+        "src/kernel/scheduling/schedule-cancel-manager.ts",
+        "src/kernel/prompt/system-prompt-builder.ts",
+        "src/kernel/prompt/index.ts"
       ],
       "description": "架构概览"
     },
@@ -72,6 +74,7 @@
         "src/gateway/channels/feishu.gateway.ts",
         "src/gateway/channels/feishu-cardkit-client.ts",
         "src/gateway/channels/adapters/feishu-stream-adapter.ts",
+        "src/kernel/streaming/stream-content-filter.ts",
         "src/gateway/channels/telegram.gateway.ts",
         "src/gateway/channels/web.gateway.ts",
         "src/gateway/middleware/pipeline.ts",
@@ -103,6 +106,18 @@
       "description": "Agent 引擎"
     },
     {
+      "doc": ".harness/design-docs/014-unified-agent-execution.md",
+      "sources": [
+        "src/kernel/agents/agent-bridge.ts",
+        "src/kernel/agents/agent-bridge-fallback.ts",
+        "src/kernel/agents/intelligence-gateway.ts",
+        "src/kernel/agents/task-guidance-builder.ts",
+        "src/kernel/agents/mcp-config-builder.ts",
+        "src/kernel/agents/index.ts"
+      ],
+      "description": "统一执行 Agent 两层架构（DD-014）"
+    },
+    {
       "doc": ".harness/design-docs/006-evolution-system.md",
       "sources": [
         "src/kernel/evolution/knowledge-router.ts",
@@ -131,6 +146,18 @@
       "description": "新用户引导系统"
     },
     {
+      "doc": ".harness/design-docs/018-system-prompt-builder.md",
+      "sources": [
+        "src/kernel/prompt/system-prompt-builder.ts",
+        "src/kernel/prompt/prepend-context-builder.ts",
+        "src/kernel/prompt/turn-context-builder.ts",
+        "src/kernel/prompt/memory-snapshot-builder.ts",
+        "src/kernel/prompt/prompt-types.ts",
+        "src/kernel/prompt/index.ts"
+      ],
+      "description": "System Prompt 组装器"
+    },
+    {
       "doc": ".harness/design-docs/009-scheduler-lifecycle.md",
       "sources": [
         "src/kernel/scheduling/scheduler.ts",
@@ -140,6 +167,54 @@
         "src/kernel/classifier/task-classifier.ts"
       ],
       "description": "Scheduler 生命周期与持久化"
+    },
+    {
+      "doc": ".harness/design-docs/016-session-history-persistence.md",
+      "sources": [
+        "infra/database/session-db.ts",
+        "src/kernel/memory/session-store.ts",
+        "src/kernel/sessioning/session-manager.ts",
+        "src/shared/tasking/task.types.ts"
+      ],
+      "description": "Session 历史持久化（SQLite FTS）"
+    },
+    {
+      "doc": ".harness/design-docs/017-async-task-executor.md",
+      "sources": [
+        "src/kernel/tasking/task-store.ts",
+        "src/kernel/tasking/task-dispatcher.ts",
+        "src/shared/tasking/task.types.ts"
+      ],
+      "description": "任务调度与状态持久化"
+    },
+    {
+      "doc": ".harness/design-docs/013-task-scheduling-upgrade.md",
+      "sources": [
+        "src/kernel/tasking/queue-aggregator.ts",
+        "src/kernel/tasking/execution-mode-classifier.ts"
+      ],
+      "description": "任务调度细化（消息聚合 + 执行模式分类）"
+    },
+    {
+      "doc": ".harness/design-docs/015-skill-system-upgrade.md",
+      "sources": [
+        "src/kernel/skills/skill-readiness.ts",
+        "src/kernel/skills/skill-frontmatter.ts",
+        "src/kernel/skills/skill-index-builder.ts",
+        "src/kernel/skills/index.ts"
+      ],
+      "description": "Skill 系统升级（渐进式披露 + 就绪检查）"
+    },
+    {
+      "doc": ".harness/design-docs/012-memory-reflection-upgrade.md",
+      "sources": [
+        "src/kernel/evolution/reflection-trigger.ts",
+        "src/kernel/evolution/reflection-prompt-builder.ts",
+        "src/kernel/evolution/analysis-router.ts",
+        "src/kernel/evolution/frozen-context-manager.ts",
+        "src/kernel/evolution/index.ts"
+      ],
+      "description": "记忆和反思升级（DD-012 构建块）"
     }
   ]
 }

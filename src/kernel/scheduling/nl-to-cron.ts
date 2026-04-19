@@ -124,7 +124,7 @@ const NL_RULES: NlRule[] = [
       /every\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\s+at\s+(\d{1,2}):(\d{2})/i,
     ],
     extract: (m) => {
-      const dow = WEEKDAY_MAP_EN[m[1]!.toLowerCase()] ?? '0';
+      const dow = WEEKDAY_MAP_EN[m[1]?.toLowerCase() ?? ''] ?? '0';
       return `${Number.parseInt(m[3]!, 10)} ${Number.parseInt(m[2]!, 10)} * * ${dow}`;
     },
     description: '每周某天指定时间',

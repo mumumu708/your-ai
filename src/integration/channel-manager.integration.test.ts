@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
 import { ChannelManager } from '../gateway/channel-manager';
 import { WebChannel } from '../gateway/channels/web.gateway';
 import { MessageRouter } from '../gateway/message-router';
-import type { AgentBridgeResult, ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
+import type { AgentBridge, AgentResult } from '../kernel/agents/agent-bridge';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
 import type {
@@ -22,20 +22,19 @@ import { createMockOVDeps } from '../test-utils/mock-ov-deps';
 const WS_PORT_A = 19878;
 const WS_PORT_B = 19879;
 
-function createMockClaudeBridge(response = 'reply'): ClaudeAgentBridge {
+function createMockAgentBridge(response = 'reply'): AgentBridge {
   return {
     execute: mock(
       async () =>
         ({
           content: response,
+          tokenUsage: { inputTokens: 5, outputTokens: 3 },
           toolsUsed: [],
-          turns: 1,
-          usage: { inputTokens: 5, outputTokens: 3, costUsd: 0.001 },
-        }) satisfies AgentBridgeResult,
+          finishedNaturally: true,
+          handledBy: 'claude' as const,
+        }) satisfies AgentResult,
     ),
-    estimateCost: () => 0.001,
-    getActiveSessions: () => 0,
-  } as unknown as ClaudeAgentBridge;
+  };
 }
 
 /** Simple in-memory mock channel for non-WS channels (e.g. feishu, telegram) */
@@ -104,7 +103,7 @@ describe('ChannelManager 多通道集成测试', () => {
 
   test('多通道注册后 healthCheck 应该反映所有通道状态', async () => {
     const controller = CentralController.getInstance({
-      claudeBridge: createMockClaudeBridge(),
+      agentBridge: createMockAgentBridge(),
       classifier: new TaskClassifier(null),
       ...createMockOVDeps(),
     });
@@ -127,9 +126,9 @@ describe('ChannelManager 多通道集成测试', () => {
   });
 
   test('不同通道的消息应该经过同一管道，响应分发到各自通道', async () => {
-    const claudeBridge = createMockClaudeBridge();
+    const agentBridge = createMockAgentBridge();
     let callIdx = 0;
-    (claudeBridge.execute as ReturnType<typeof mock>).mockImplementation(async () => {
+    (agentBridge.execute as ReturnType<typeof mock>).mockImplementation(async () => {
       callIdx++;
       return {
         content: `reply_${callIdx}`,
@@ -140,7 +139,7 @@ describe('ChannelManager 多通道集成测试', () => {
     });
 
     const controller = CentralController.getInstance({
-      claudeBridge,
+      agentBridge,
       classifier: new TaskClassifier(null),
       ...createMockOVDeps(),
     });
@@ -181,7 +180,7 @@ describe('ChannelManager 多通道集成测试', () => {
 
   test('重复注册同一类型通道应该抛错', async () => {
     const controller = CentralController.getInstance({
-      claudeBridge: createMockClaudeBridge(),
+      agentBridge: createMockAgentBridge(),
       classifier: new TaskClassifier(null),
       ...createMockOVDeps(),
     });
@@ -204,7 +203,7 @@ describe('ChannelManager 多通道集成测试', () => {
 
   test('shutdownAll 应该关闭所有注册通道', async () => {
     const controller = CentralController.getInstance({
-      claudeBridge: createMockClaudeBridge(),
+      agentBridge: createMockAgentBridge(),
       classifier: new TaskClassifier(null),
       ...createMockOVDeps(),
     });
@@ -225,10 +224,10 @@ describe('ChannelManager 多通道集成测试', () => {
   });
 
   test('WebChannel + MockChannel 混合注册应该正常工作', async () => {
-    const claudeBridge = createMockClaudeBridge('mixed reply');
+    const agentBridge = createMockAgentBridge('mixed reply');
 
     const controller = CentralController.getInstance({
-      claudeBridge,
+      agentBridge,
       classifier: new TaskClassifier(null),
       ...createMockOVDeps(),
     });
@@ -261,10 +260,10 @@ describe('ChannelManager 多通道集成测试', () => {
   });
 
   test('真实 WebSocket 通过 ChannelManager 注册后消息应该正常处理', async () => {
-    const claudeBridge = createMockClaudeBridge('ws channelmanager reply');
+    const agentBridge = createMockAgentBridge('ws channelmanager reply');
 
     const controller = CentralController.getInstance({
-      claudeBridge,
+      agentBridge,
       classifier: new TaskClassifier(null),
       ...createMockOVDeps(),
     });

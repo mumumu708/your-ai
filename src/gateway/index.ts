@@ -1,8 +1,16 @@
 import { Hono } from 'hono';
+import { closeSessionDatabase, getSessionDatabase } from '../../infra/database/session-db';
+import type { AgentBridge } from '../kernel/agents/agent-bridge';
+import { AgentBridgeWithFallback } from '../kernel/agents/agent-bridge-fallback';
 import { ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
+import { ClaudeBridgeAdapter } from '../kernel/agents/claude-bridge-adapter';
+import { CodexAgentBridge } from '../kernel/agents/codex-agent-bridge';
 import { LightLLMClient } from '../kernel/agents/light-llm-client';
+import { OpenCodeAgentBridge } from '../kernel/agents/opencode-agent-bridge';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
+import { SessionStore } from '../kernel/memory/session-store';
+import { TaskStore } from '../kernel/tasking/task-store';
 import { WorkspaceManager } from '../kernel/workspace';
 import { Logger } from '../shared/logging/logger';
 import type { ChannelType } from '../shared/messaging';
@@ -30,11 +38,52 @@ const wsPort = Number(process.env.WS_PORT) || 3001;
 
 // --- Bootstrap LLM clients ---
 
-function bootstrapClaudeBridge(): ClaudeAgentBridge | undefined {
-  const claudePath = process.env.CLAUDE_PATH ?? 'claude';
-  const model = process.env.CLAUDE_MODEL ?? 'sonnet';
-  logger.info('Claude Code Bridge 初始化', { claudePath, model });
-  return new ClaudeAgentBridge({ claudePath, defaultModel: model });
+/** Create a named AgentBridge instance by provider id */
+function createAgentBridge(provider: string): AgentBridge | undefined {
+  switch (provider) {
+    case 'claude': {
+      const claudePath = process.env.CLAUDE_PATH ?? 'claude';
+      const model = process.env.CLAUDE_MODEL ?? 'sonnet';
+      logger.info('Claude Code Bridge 初始化', { claudePath, model });
+      return new ClaudeBridgeAdapter(new ClaudeAgentBridge({ claudePath, defaultModel: model }));
+    }
+    case 'codex':
+      logger.info('Codex Bridge 初始化');
+      return new CodexAgentBridge();
+    case 'opencode': {
+      const opencodePath = process.env.OPENCODE_PATH ?? 'opencode';
+      logger.info('OpenCode Bridge 初始化', { opencodePath });
+      return new OpenCodeAgentBridge({ opencodePath });
+    }
+    default:
+      logger.warn('未知 agent provider，跳过', { provider });
+      return undefined;
+  }
+}
+
+/**
+ * Build the complex-task agent bridge based on env config.
+ *
+ * COMPLEX_AGENT_PRIMARY  — primary provider id (default: 'claude')
+ * COMPLEX_AGENT_FALLBACK — fallback provider id (default: whichever isn't primary)
+ */
+function bootstrapAgentBridge(): AgentBridge | undefined {
+  const primaryId = process.env.COMPLEX_AGENT_PRIMARY ?? 'claude';
+  const fallbackId =
+    process.env.COMPLEX_AGENT_FALLBACK ?? (primaryId === 'claude' ? 'codex' : 'claude');
+
+  const primary = createAgentBridge(primaryId);
+  if (!primary) return undefined;
+
+  const fallback = createAgentBridge(fallbackId);
+
+  logger.info('Agent Bridge 配置', {
+    primary: primaryId,
+    fallback: fallback ? fallbackId : 'none',
+  });
+
+  if (!fallback) return primary;
+  return new AgentBridgeWithFallback(primary, fallback, primaryId, fallbackId);
 }
 
 function bootstrapLightLLM(): LightLLMClient | undefined {
@@ -52,17 +101,30 @@ function bootstrapLightLLM(): LightLLMClient | undefined {
 
 // --- Create core instances ---
 
-const claudeBridge = bootstrapClaudeBridge();
+const agentBridge = bootstrapAgentBridge();
 const lightLLM = bootstrapLightLLM();
 const classifier = new TaskClassifier(lightLLM);
 const workspaceManager = new WorkspaceManager();
 
+// Initialize session database and persistence stores
+const sessionDb = getSessionDatabase();
+const sessionStore = new SessionStore(sessionDb);
+const taskStore = new TaskStore(sessionDb);
+
+// Mark any tasks that were 'running' in a previous process as interrupted
+const interrupted = taskStore.markInterruptedOnStartup();
+if (interrupted > 0) {
+  logger.warn(`Marked ${interrupted} running tasks as interrupted on startup`);
+}
+
 // Create controller first (singleton), channelResolver will be set after channelManager is created
 const controller = CentralController.getInstance({
-  claudeBridge,
+  agentBridge,
   lightLLM,
   classifier,
   workspaceManager,
+  sessionStore,
+  taskStore,
 });
 
 const router = new MessageRouter(controller);
@@ -108,7 +170,9 @@ app.get('/health', async (c) => {
     channels: channelHealth.details,
     registeredChannels: channelManager.getRegisteredTypes(),
     llm: {
-      claude: claudeBridge ? 'enabled' : 'disabled',
+      agent: agentBridge
+        ? `enabled (${process.env.COMPLEX_AGENT_PRIMARY ?? 'claude'})`
+        : 'disabled',
       lightLLM: lightLLM ? 'enabled' : 'disabled',
     },
   });
@@ -215,7 +279,9 @@ function setupGracefulShutdown(): void {
     logger.info(`收到 ${signal} 信号，正在关闭...`);
     controller.stopScheduler();
     await channelManager.shutdownAll();
+    await controller.shutdown();
     CentralController.resetInstance();
+    closeSessionDatabase();
     logger.info('所有通道已关闭，进程退出');
     process.exit(0);
   };
@@ -343,7 +409,7 @@ connect();
 
 logger.info('Gateway 启动中', { port, wsPort });
 logger.info('LLM 配置', {
-  claude: claudeBridge ? 'enabled' : 'disabled',
+  agent: agentBridge ? 'enabled' : 'disabled',
   lightLLM: lightLLM ? 'enabled' : 'disabled',
 });
 
@@ -353,20 +419,29 @@ registerChannels()
     const feishuChannel = channelManager.getChannel('feishu') as FeishuChannel | undefined;
     if (feishuChannel) {
       const cardKitClient = new FeishuCardKitClient(feishuChannel.getClient());
-      controller.setStreamAdapterFactory((userId, channel, conversationId) => {
+
+      // DD-021: Wire placeholder sender for Feishu channel
+      controller.setPlaceholderSender((chatId) => cardKitClient.sendPlaceholder(chatId));
+
+      controller.setStreamAdapterFactory((userId, channel, conversationId, options) => {
         if (channel === 'feishu') {
           return [
-            new FeishuStreamAdapter(conversationId, {
-              createStreamingCard: (text) => cardKitClient.createStreamingCard(text),
-              sendCardMessage: (chatId, cardId) => cardKitClient.sendCardMessage(chatId, cardId),
-              streamUpdateText: (cardId, elemId, text, seq) =>
-                cardKitClient.streamUpdateText(cardId, elemId, text, seq),
-              closeStreamingMode: (cardId, seq) => cardKitClient.closeStreamingMode(cardId, seq),
-              addActionButtons: (cardId, afterId, btns, seq) =>
-                cardKitClient.addActionButtons(cardId, afterId, btns, seq),
-              sendTextMessage: (_chatId, text) =>
-                feishuChannel.sendMessage(userId, { type: 'text', text }),
-            }),
+            new FeishuStreamAdapter(
+              conversationId,
+              {
+                createStreamingCard: (text) => cardKitClient.createStreamingCard(text),
+                sendCardMessage: (chatId, cardId) => cardKitClient.sendCardMessage(chatId, cardId),
+                streamUpdateText: (cardId, elemId, text, seq) =>
+                  cardKitClient.streamUpdateText(cardId, elemId, text, seq),
+                closeStreamingMode: (cardId, seq) => cardKitClient.closeStreamingMode(cardId, seq),
+                addActionButtons: (cardId, afterId, btns, seq) =>
+                  cardKitClient.addActionButtons(cardId, afterId, btns, seq),
+                sendTextMessage: (_chatId, text) =>
+                  feishuChannel.sendMessage(userId, { type: 'text', text }),
+              },
+              300,
+              options?.existingCardId,
+            ),
           ];
         }
         return [];

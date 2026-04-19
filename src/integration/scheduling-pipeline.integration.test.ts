@@ -8,7 +8,7 @@
  * 所有 LLM 后端均使用 mock，不产生真实 API 调用。
  */
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
-import type { AgentBridgeResult, ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
+import type { AgentBridge, AgentResult } from '../kernel/agents/agent-bridge';
 import type { LightLLMClient } from '../kernel/agents/light-llm-client';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
@@ -48,23 +48,22 @@ function createScheduleClassifierLLM(): LightLLMClient {
   } as unknown as LightLLMClient;
 }
 
-function createMockClaudeBridge(response = 'Claude says hi'): ClaudeAgentBridge {
+function createMockAgentBridge(response = 'Claude says hi'): AgentBridge {
   return {
-    execute: mock(async (params: { onStream?: (e: StreamEvent) => void }) => {
-      if (params.onStream) {
-        params.onStream({ type: 'text_delta', text: response });
-        params.onStream({ type: 'done' });
+    execute: mock(async (params: { streamCallback?: (e: StreamEvent) => Promise<void> }) => {
+      if (params.streamCallback) {
+        await params.streamCallback({ type: 'text_delta', text: response });
+        await params.streamCallback({ type: 'done' });
       }
       return {
         content: response,
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
         toolsUsed: [],
-        turns: 1,
-        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001 },
-      } satisfies AgentBridgeResult;
+        finishedNaturally: true,
+        handledBy: 'claude' as const,
+      } satisfies AgentResult;
     }),
-    estimateCost: () => 0.001,
-    getActiveSessions: () => 0,
-  } as unknown as ClaudeAgentBridge;
+  };
 }
 
 // ── Tests ─────────────────────────────────────────────────
@@ -92,9 +91,9 @@ describe('定时调度管道集成测试', () => {
 
   describe('消息分类 → 定时任务注册', () => {
     test('包含 "每天" 的消息应该被分类为 scheduled 并注册 Scheduler Job', async () => {
-      const claudeBridge = createMockClaudeBridge();
+      const agentBridge = createMockAgentBridge();
       const controller = CentralController.getInstance({
-        claudeBridge,
+        agentBridge,
         classifier: new TaskClassifier(createScheduleClassifierLLM()),
         scheduler,
       });
@@ -114,9 +113,9 @@ describe('定时调度管道集成测试', () => {
     });
 
     test('"提醒我" 的消息应该正确分类为 scheduled 并注册', async () => {
-      const claudeBridge = createMockClaudeBridge();
+      const agentBridge = createMockAgentBridge();
       const controller = CentralController.getInstance({
-        claudeBridge,
+        agentBridge,
         classifier: new TaskClassifier(createScheduleClassifierLLM()),
         scheduler,
       });
@@ -206,7 +205,7 @@ describe('定时调度管道集成测试', () => {
   describe('Job 生命周期管理', () => {
     test('注册的 Job 应该支持 pause / resume / cancel', async () => {
       const controller = CentralController.getInstance({
-        claudeBridge: createMockClaudeBridge(),
+        agentBridge: createMockAgentBridge(),
         classifier: new TaskClassifier(createScheduleClassifierLLM()),
         scheduler,
       });
@@ -233,7 +232,7 @@ describe('定时调度管道集成测试', () => {
 
     test('多个用户的定时任务应该隔离', async () => {
       const controller = CentralController.getInstance({
-        claudeBridge: createMockClaudeBridge(),
+        agentBridge: createMockAgentBridge(),
         classifier: new TaskClassifier(createScheduleClassifierLLM()),
         scheduler,
       });

@@ -1,5 +1,5 @@
 import { Logger } from '../../shared/logging/logger';
-import type { UserConfigLoader } from '../memory/user-config-loader';
+import type { UserConfigLoader } from '../prompt/user-config-loader';
 
 const MAX_FILE_SIZE = 100 * 1024; // 100KB
 const ALLOWED_EXTENSIONS = ['.md', '.txt'];

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { LightLLMClient } from '../agents/light-llm-client';
-import type { UserConfigLoader } from '../memory/user-config-loader';
+import type { UserConfigLoader } from '../prompt/user-config-loader';
 import { OnboardingManager } from './onboarding-manager';
 
 function createMockUserConfigLoader(): UserConfigLoader {

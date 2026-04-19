@@ -4,6 +4,7 @@ import type { Session } from '../../shared/tasking/task.types';
 import { generateSessionId } from '../../shared/utils/crypto';
 import type { ContextSummary, SessionSummary } from '../memory/memory-types';
 import { SessionMemoryExtractor } from '../memory/session-memory-extractor';
+import type { SessionStore } from '../memory/session-store';
 import { WorkingMemory } from '../memory/working-memory';
 
 export type SessionCloseCallback = (
@@ -17,10 +18,12 @@ export class SessionManager {
   private readonly sessions: Map<string, Session> = new Map();
   private readonly sessionTimeout: number;
   private readonly memoryExtractor = new SessionMemoryExtractor();
+  private readonly sessionStore?: SessionStore;
   private onSessionClose: SessionCloseCallback | null = null;
 
-  constructor(options: { sessionTimeoutMs?: number } = {}) {
+  constructor(options: { sessionTimeoutMs?: number; sessionStore?: SessionStore } = {}) {
     this.sessionTimeout = options.sessionTimeoutMs ?? 1800000; // 30 minutes
+    this.sessionStore = options.sessionStore;
   }
 
   setOnSessionClose(callback: SessionCloseCallback): void {
@@ -55,6 +58,13 @@ export class SessionManager {
       workingMemory: new WorkingMemory({ maxTokens: 100000 }),
     };
     this.sessions.set(key, session);
+    this.sessionStore?.createSession({
+      id: session.id,
+      userId,
+      channel,
+      conversationId,
+      startedAt: session.createdAt,
+    });
     this.logger.info('会话创建', { sessionId: session.id, key });
     return session;
   }
@@ -66,6 +76,21 @@ export class SessionManager {
       session.lastActiveAt = Date.now();
       // Sync to WorkingMemory for automatic compression
       session.workingMemory?.addMessage(message);
+      // Persist to SQLite (batched async write)
+      // Serialize mediaRefs (without base64Data) for persistence
+      let mediaRefsJson: string | undefined;
+      if (message.mediaRefs?.length) {
+        mediaRefsJson = JSON.stringify(message.mediaRefs.map(({ base64Data: _, ...rest }) => rest));
+      }
+      this.sessionStore?.appendMessage({
+        sessionId: session.id,
+        userId: session.userId,
+        role: message.role,
+        content: message.content,
+        timestamp: message.timestamp,
+        tokenEstimate: Math.ceil(message.content.length / 4),
+        mediaRefsJson,
+      });
     }
   }
 
@@ -101,8 +126,30 @@ export class SessionManager {
     }
   }
 
+  /** DD-021: Bind a Feishu thread ID to a session for grouped replies */
+  updateThreadBinding(sessionKey: string, threadId: string): void {
+    const session = this.findSessionByKey(sessionKey);
+    if (session) {
+      session.threadId = threadId;
+      this.logger.info('ThreadId 已绑定', { sessionId: session.id, threadId });
+    }
+  }
+
   getSessionByKey(key: string): Session | undefined {
     return this.sessions.get(key);
+  }
+
+  /**
+   * Destroy a session without triggering onSessionClose callback.
+   * Used by benchmark QA phase to avoid polluting the memory store.
+   */
+  destroySession(key: string): void {
+    const session = this.findSessionByKey(key);
+    if (session) {
+      session.status = 'closed';
+      this.sessions.delete(key);
+      this.logger.debug('会话销毁（无回调）', { sessionId: session.id, key });
+    }
   }
 
   private findSessionByKey(key: string): Session | undefined {
@@ -126,7 +173,10 @@ export class SessionManager {
    * Close a session: extract memory summary and trigger callback.
    * The callback now receives the sessionId for OpenViking commit.
    */
-  async closeSession(sessionKey: string): Promise<SessionSummary | null> {
+  async closeSession(
+    sessionKey: string,
+    reason: 'idle_timeout' | 'user_end' | 'admin_close' | 'process_restart' = 'idle_timeout',
+  ): Promise<SessionSummary | null> {
     const session = this.findSessionByKey(sessionKey);
     if (!session) return null;
 
@@ -144,7 +194,11 @@ export class SessionManager {
       sessionId: session.id,
       messageCount: session.messages.length,
       keywords: summary.keywords.length,
+      reason,
     });
+
+    // Persist session close to SQLite
+    this.sessionStore?.closeSession(session.id, reason, summary.summary);
 
     if (this.onSessionClose) {
       await this.onSessionClose(summary, session.id, session);

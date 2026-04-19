@@ -140,6 +140,136 @@ describe('MediaDownloader', () => {
     });
   });
 
+  describe('setChannelResolver — late binding', () => {
+    test('构造时无 channelResolver → 下载失败；setChannelResolver 后 → 下载成功', async () => {
+      const mockChannel = {
+        downloadFile: async () => PNG_BYTES,
+      } as unknown as IChannel;
+
+      // 构造时不传 channelResolver（模拟 CentralController 初始化时序）
+      const downloader = new MediaDownloader({});
+
+      const attachment = makeAttachment({
+        sourceRef: { channel: 'feishu', messageId: 'msg1', fileKey: 'key1' },
+      });
+
+      // 修复前的行为：channelResolver 为 undefined，下载失败
+      const before = await downloader.download(attachment);
+      expect(before.state).toBe('failed');
+
+      // 延迟注入 channelResolver（模拟 setChannelResolver 调用）
+      downloader.setChannelResolver((type) => (type === 'feishu' ? mockChannel : undefined));
+
+      // 修复后的行为：channelResolver 已注入，下载成功
+      const after = await downloader.download(attachment);
+      expect(after.state).toBe('downloaded');
+      expect(after.mimeType).toBe('image/png');
+      expect(after.base64Data).toBeDefined();
+    });
+
+    test('setChannelResolver 替换已有 resolver', async () => {
+      const brokenChannel = {
+        downloadFile: async () => {
+          throw new Error('old channel broken');
+        },
+      } as unknown as IChannel;
+      const workingChannel = {
+        downloadFile: async () => JPEG_BYTES,
+      } as unknown as IChannel;
+
+      const downloader = new MediaDownloader({
+        channelResolver: () => brokenChannel,
+      });
+
+      const attachment = makeAttachment({
+        sourceRef: { channel: 'feishu', messageId: 'msg1', fileKey: 'key1' },
+      });
+
+      // 旧 resolver → 下载异常
+      const before = await downloader.download(attachment);
+      expect(before.state).toBe('failed');
+
+      // 替换 resolver
+      downloader.setChannelResolver(() => workingChannel);
+
+      const after = await downloader.download(attachment);
+      expect(after.state).toBe('downloaded');
+      expect(after.mimeType).toBe('image/jpeg');
+    });
+  });
+
+  describe('disk persistence (uploadsDir)', () => {
+    test('设置 uploadsDir 后下载应写磁盘并设 localPath', async () => {
+      const { mkdtempSync, existsSync, readFileSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+
+      const uploadsDir = mkdtempSync(join(tmpdir(), 'dl-test-'));
+      const base64 = JPEG_BYTES.toString('base64');
+
+      const downloader = new MediaDownloader({ uploadsDir });
+
+      const attachment = makeAttachment({
+        sourceRef: { channel: 'web', base64 },
+      });
+
+      const result = await downloader.download(attachment);
+      expect(result.state).toBe('downloaded');
+      expect(result.localPath).toBeDefined();
+      expect(existsSync(result.localPath!)).toBe(true);
+
+      // 文件内容应与原始 buffer 一致
+      const onDisk = readFileSync(result.localPath!);
+      expect(onDisk.length).toBe(JPEG_BYTES.length);
+
+      // 清理
+      const { rmSync } = await import('node:fs');
+      rmSync(uploadsDir, { recursive: true, force: true });
+    });
+
+    test('未设置 uploadsDir 时 localPath 为 undefined', async () => {
+      const base64 = JPEG_BYTES.toString('base64');
+      const downloader = new MediaDownloader({});
+
+      const attachment = makeAttachment({
+        sourceRef: { channel: 'web', base64 },
+      });
+
+      const result = await downloader.download(attachment);
+      expect(result.state).toBe('downloaded');
+      expect(result.localPath).toBeUndefined();
+    });
+
+    test('setUploadsDir 动态设置后生效', async () => {
+      const { mkdtempSync, existsSync, rmSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+
+      const uploadsDir = mkdtempSync(join(tmpdir(), 'dl-test-'));
+      const base64 = PNG_BYTES.toString('base64');
+
+      const downloader = new MediaDownloader({});
+
+      // 第一次下载：无 uploadsDir
+      const first = await downloader.download(
+        makeAttachment({ id: 'a1', sourceRef: { channel: 'web', base64 } }),
+      );
+      expect(first.localPath).toBeUndefined();
+
+      // 动态设置
+      downloader.setUploadsDir(uploadsDir);
+
+      // 第二次下载：有 uploadsDir
+      const second = await downloader.download(
+        makeAttachment({ id: 'a2', sourceRef: { channel: 'web', base64 } }),
+      );
+      expect(second.localPath).toBeDefined();
+      expect(existsSync(second.localPath!)).toBe(true);
+
+      rmSync(uploadsDir, { recursive: true, force: true });
+    });
+  });
+
   describe('download — validation', () => {
     test('fails for unsupported MIME type', async () => {
       // BMP header (not supported)

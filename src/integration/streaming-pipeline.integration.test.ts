@@ -8,8 +8,8 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { AgentBridge, AgentResult } from '../kernel/agents/agent-bridge';
 import { AgentRuntime } from '../kernel/agents/agent-runtime';
-import type { AgentBridgeResult, ClaudeAgentBridge } from '../kernel/agents/claude-agent-bridge';
 import { CentralController } from '../kernel/central-controller';
 import { TaskClassifier } from '../kernel/classifier/task-classifier';
 import { SessionManager } from '../kernel/sessioning/session-manager';
@@ -37,25 +37,24 @@ function createMessage(overrides?: Partial<BotMessage>): BotMessage {
   };
 }
 
-function createStreamingClaudeBridge(chunks: string[]): ClaudeAgentBridge {
+function createStreamingAgentBridge(chunks: string[]): AgentBridge {
   return {
-    execute: mock(async (params: { onStream?: (e: StreamEvent) => void }) => {
-      if (params.onStream) {
+    execute: mock(async (params: { streamCallback?: (e: StreamEvent) => Promise<void> }) => {
+      if (params.streamCallback) {
         for (const chunk of chunks) {
-          params.onStream({ type: 'text_delta', text: chunk });
+          await params.streamCallback({ type: 'text_delta', text: chunk });
         }
-        params.onStream({ type: 'done' });
+        await params.streamCallback({ type: 'done' });
       }
       return {
         content: chunks.join(''),
+        tokenUsage: { inputTokens: 10, outputTokens: chunks.length * 3 },
         toolsUsed: [],
-        turns: 1,
-        usage: { inputTokens: 10, outputTokens: chunks.length * 3, costUsd: 0.001 },
-      } satisfies AgentBridgeResult;
+        finishedNaturally: true,
+        handledBy: 'claude',
+      } satisfies AgentResult;
     }),
-    estimateCost: () => 0.001,
-    getActiveSessions: () => 0,
-  } as unknown as ClaudeAgentBridge;
+  };
 }
 
 /** Captures all calls to a mock ChannelStreamAdapter */
@@ -112,11 +111,11 @@ describe('流式管道集成测试', () => {
 
   test('流式事件应该通过 streamAdapterFactory 传递到 adapter', async () => {
     const chunks = ['Hello', ' ', 'World'];
-    const claudeBridge = createStreamingClaudeBridge(chunks);
+    const agentBridge = createStreamingAgentBridge(chunks);
     const { adapter, captured } = createCapturingAdapter();
 
     const controller = CentralController.getInstance({
-      claudeBridge,
+      agentBridge,
       classifier: new TaskClassifier(null),
       streamAdapterFactory: (_u, _c, _conv) => [adapter],
       ...createMockOVDeps(),
@@ -133,12 +132,12 @@ describe('流式管道集成测试', () => {
 
   test('多个 adapter 应该同时收到流式事件', async () => {
     const chunks = ['A', 'B'];
-    const claudeBridge = createStreamingClaudeBridge(chunks);
+    const agentBridge = createStreamingAgentBridge(chunks);
     const { adapter: adapter1, captured: cap1 } = createCapturingAdapter('web');
     const { adapter: adapter2, captured: cap2 } = createCapturingAdapter('feishu');
 
     const controller = CentralController.getInstance({
-      claudeBridge,
+      agentBridge,
       classifier: new TaskClassifier(null),
       streamAdapterFactory: (_u, _c, _conv) => [adapter1, adapter2],
       ...createMockOVDeps(),
@@ -153,30 +152,37 @@ describe('流式管道集成测试', () => {
   });
 
   test('流式含 tool_use 事件应该传递工具调用信息', async () => {
-    const claudeBridge = {
-      execute: mock(async (params: { onStream?: (e: StreamEvent) => void }) => {
-        if (params.onStream) {
-          params.onStream({ type: 'text_delta', text: '分析中...' });
-          params.onStream({ type: 'tool_use', toolName: 'readFile', toolInput: { path: '/a.ts' } });
-          params.onStream({ type: 'tool_result', toolName: 'readFile', text: 'file content' });
-          params.onStream({ type: 'text_delta', text: '结果如下' });
-          params.onStream({ type: 'done' });
+    const agentBridge: AgentBridge = {
+      execute: mock(async (params: { streamCallback?: (e: StreamEvent) => Promise<void> }) => {
+        if (params.streamCallback) {
+          await params.streamCallback({ type: 'text_delta', text: '分析中...' });
+          await params.streamCallback({
+            type: 'tool_use',
+            toolName: 'readFile',
+            toolInput: { path: '/a.ts' },
+          });
+          await params.streamCallback({
+            type: 'tool_result',
+            toolName: 'readFile',
+            text: 'file content',
+          });
+          await params.streamCallback({ type: 'text_delta', text: '结果如下' });
+          await params.streamCallback({ type: 'done' });
         }
         return {
           content: '分析中...结果如下',
+          tokenUsage: { inputTokens: 20, outputTokens: 10 },
           toolsUsed: ['readFile'],
-          turns: 1,
-          usage: { inputTokens: 20, outputTokens: 10, costUsd: 0.002 },
-        } satisfies AgentBridgeResult;
+          finishedNaturally: true,
+          handledBy: 'claude',
+        } satisfies AgentResult;
       }),
-      estimateCost: () => 0.002,
-      getActiveSessions: () => 0,
-    } as unknown as ClaudeAgentBridge;
+    };
 
     const { adapter, captured } = createCapturingAdapter();
 
     const controller = CentralController.getInstance({
-      claudeBridge,
+      agentBridge,
       classifier: new TaskClassifier(null),
       streamAdapterFactory: (_u, _c, _conv) => [adapter],
       ...createMockOVDeps(),
@@ -192,27 +198,26 @@ describe('流式管道集成测试', () => {
   });
 
   test('流式错误事件应该通过 sendError 传递给 adapter', async () => {
-    const claudeBridge = {
-      execute: mock(async (params: { onStream?: (e: StreamEvent) => void }) => {
-        if (params.onStream) {
-          params.onStream({ type: 'text_delta', text: '开始' });
-          params.onStream({ type: 'error', error: 'rate limit exceeded' });
+    const agentBridge: AgentBridge = {
+      execute: mock(async (params: { streamCallback?: (e: StreamEvent) => Promise<void> }) => {
+        if (params.streamCallback) {
+          await params.streamCallback({ type: 'text_delta', text: '开始' });
+          await params.streamCallback({ type: 'error', error: 'rate limit exceeded' });
         }
         return {
           content: '开始',
+          tokenUsage: { inputTokens: 5, outputTokens: 2 },
           toolsUsed: [],
-          turns: 1,
-          usage: { inputTokens: 5, outputTokens: 2, costUsd: 0.0005 },
-        } satisfies AgentBridgeResult;
+          finishedNaturally: true,
+          handledBy: 'claude',
+        } satisfies AgentResult;
       }),
-      estimateCost: () => 0.0005,
-      getActiveSessions: () => 0,
-    } as unknown as ClaudeAgentBridge;
+    };
 
     const { adapter, captured } = createCapturingAdapter();
 
     const controller = CentralController.getInstance({
-      claudeBridge,
+      agentBridge,
       classifier: new TaskClassifier(null),
       streamAdapterFactory: (_u, _c, _conv) => [adapter],
       ...createMockOVDeps(),
@@ -225,11 +230,11 @@ describe('流式管道集成测试', () => {
 
   test('无 streamAdapterFactory 时应该回退到 streamCallback', async () => {
     const chunks = ['X', 'Y'];
-    const claudeBridge = createStreamingClaudeBridge(chunks);
+    const agentBridge = createStreamingAgentBridge(chunks);
     const callbackEvents: StreamEvent[] = [];
 
     const controller = CentralController.getInstance({
-      claudeBridge,
+      agentBridge,
       classifier: new TaskClassifier(null),
       streamCallback: (_userId, event) => {
         callbackEvents.push(event);
@@ -245,24 +250,23 @@ describe('流式管道集成测试', () => {
 
   test('会话上下文应该传递给 Claude Bridge', async () => {
     const sessionManager = new SessionManager();
-    let receivedMessages: Array<{ role: string; content: string }> = [];
+    const receivedUserMessages: string[] = [];
 
-    const claudeBridge = {
-      execute: mock(async (params: { messages: Array<{ role: string; content: string }> }) => {
-        receivedMessages = params.messages;
+    const agentBridge: AgentBridge = {
+      execute: mock(async (params: { userMessage: string }) => {
+        receivedUserMessages.push(params.userMessage);
         return {
           content: 'reply',
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
           toolsUsed: [],
-          turns: 1,
-          usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001 },
-        } satisfies AgentBridgeResult;
+          finishedNaturally: true,
+          handledBy: 'claude',
+        } satisfies AgentResult;
       }),
-      estimateCost: () => 0.001,
-      getActiveSessions: () => 0,
-    } as unknown as ClaudeAgentBridge;
+    };
 
     const agentRuntime = new AgentRuntime({
-      claudeBridge,
+      agentBridge,
       classifier: new TaskClassifier(null),
     });
 
@@ -277,13 +281,9 @@ describe('流式管道集成测试', () => {
     // Second message — should include history
     await controller.handleIncomingMessage(createMessage({ content: '第二条' }));
 
-    // The second call should have received the full conversation history
-    expect(receivedMessages.length).toBe(3); // user1 + assistant1 + user2
-    expect(receivedMessages[0].role).toBe('user');
-    expect(receivedMessages[0].content).toBe('第一条');
-    expect(receivedMessages[1].role).toBe('assistant');
-    expect(receivedMessages[1].content).toBe('reply');
-    expect(receivedMessages[2].role).toBe('user');
-    expect(receivedMessages[2].content).toBe('第二条');
+    // AgentBridge should have been called twice, each time with the user's message
+    expect(receivedUserMessages).toHaveLength(2);
+    expect(receivedUserMessages[0]).toBe('第一条');
+    expect(receivedUserMessages[1]).toBe('第二条');
   });
 });

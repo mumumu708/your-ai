@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import type { ConfigLoader } from '../memory/config-loader';
 import type { OpenVikingClient } from '../memory/openviking/openviking-client';
-import { ConflictResolver } from './conflict-resolver';
+import type { ConfigLoader } from '../prompt/config-loader';
+import { ConflictResolver } from '../prompt/conflict-resolver';
 import { KnowledgeRouter } from './knowledge-router';
 import { TokenBudgetAllocator } from './token-budget-allocator';
 
@@ -48,13 +48,12 @@ describe('KnowledgeRouter', () => {
     });
   });
 
-  test('simple 任务应该仅加载 identity + soul', async () => {
+  test('simple 任务也应该进行轻量记忆检索', async () => {
     const result = await router.buildContext('user1', 'Hello', [], 'simple');
 
     expect(result.systemPrompt).toContain('Agent Identity');
     expect(result.systemPrompt).toContain('Agent Soul');
-    expect(result.systemPrompt).not.toContain('User Profile');
-    expect(result.retrievedMemories.length).toBe(0);
+    // Simple tasks now also retrieve memories with smaller budget
     expect(result.totalTokens).toBeGreaterThan(0);
     logSpy.mockRestore();
   });

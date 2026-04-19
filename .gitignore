@@ -3,6 +3,9 @@ dist/
 .env
 *.db
 coverage/
+.nyc_output/
+.stryker-tmp/
+reports/mutation/
 logs/
 data/
 user-space/*/
@@ -15,3 +18,5 @@ openviking-data/*
 .worktrees/
 
 graphify-out/
+
+test-data/

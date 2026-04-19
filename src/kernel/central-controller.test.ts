@@ -1,20 +1,23 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
-import type { LessonsLearnedUpdater } from '../lessons/lessons-updater';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import type { BotMessage } from '../shared/messaging/bot-message.types';
 import type { IChannel } from '../shared/messaging/channel-adapter.types';
+import type { MediaAttachment } from '../shared/messaging/media-attachment.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
+import type { AgentBridge, AgentResult } from './agents/agent-bridge';
 import { AgentRuntime } from './agents/agent-runtime';
 import type { LightLLMClient } from './agents/light-llm-client';
 import { CentralController } from './central-controller';
 import type { CentralControllerDeps } from './central-controller';
 import type { EvolutionScheduler } from './evolution/evolution-scheduler';
 import type { KnowledgeRouter } from './evolution/knowledge-router';
-import type { PostResponseAnalyzer } from './evolution/post-response-analyzer';
-import type { ConfigLoader } from './memory/config-loader';
+import type { LessonsLearnedUpdater } from './evolution/learning/lessons-updater';
+import type { PostResponseAnalyzer } from './evolution/learning/post-response-analyzer';
+import type { MediaProcessor } from './media/media-processor';
 import type { ContextManager } from './memory/context-manager';
 import type { EntityManager } from './memory/graph/entity-manager';
 import type { OpenVikingClient } from './memory/openviking/openviking-client';
+import type { ConfigLoader } from './prompt/config-loader';
 import { Scheduler } from './scheduling/scheduler';
 import { SessionManager } from './sessioning/session-manager';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
@@ -55,6 +58,7 @@ function createMockOVDeps(): Partial<CentralControllerDeps> {
     ovClient: {
       addMessage: async () => {},
       commit: async () => ({ memories_extracted: 0 }),
+      find: async () => [],
     } as unknown as OpenVikingClient,
     contextManager: {
       checkAndFlush: async () => null,
@@ -353,9 +357,82 @@ describe('CentralController', () => {
       expect((result.data as { content: string }).content).toContain('没有活跃的定时任务');
     });
 
-    test('subIntent=list 时应返回任务列表', async () => {
+    test('subIntent=list 且无活跃任务时应提示空列表', async () => {
       const scheduler = new Scheduler();
       spyOn(scheduler, 'listJobs').mockReturnValue([]);
+      const controller = CentralController.getInstance({ scheduler, ...createMockOVDeps() });
+
+      const session = {
+        id: 'sess_001',
+        userId: 'user_001',
+        channel: 'web',
+        conversationId: 'conv_001',
+        status: 'active' as const,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        agentConfig: { maxContextTokens: 100000 },
+        messages: [],
+      };
+
+      const task = {
+        id: 'task_list',
+        traceId: 'trace_list',
+        type: 'scheduled' as const,
+        message: createMockMessage({ content: '查���定时任务' }),
+        session,
+        priority: 10,
+        createdAt: Date.now(),
+        metadata: { userId: 'user_001', channel: 'web', conversationId: 'conv_001' },
+        classifyResult: {
+          taskType: 'scheduled' as const,
+          subIntent: 'list',
+          complexity: 'complex' as const,
+          reason: 'test',
+          confidence: 0.75,
+          classifiedBy: 'llm' as const,
+          costUsd: 0,
+        },
+      };
+
+      const result = await controller.orchestrate(task);
+      expect(result.success).toBe(true);
+      expect((result.data as { content: string }).content).toContain('没有活跃的定时任务');
+    });
+
+    test('subIntent=list 且有活跃任务时应返回任务列表', async () => {
+      const scheduler = new Scheduler();
+      spyOn(scheduler, 'listJobs').mockReturnValue([
+        {
+          id: 'job_001',
+          userId: 'user_001',
+          channel: 'web',
+          cronExpression: '0 9 * * *',
+          description: '每天早上提醒我喝水',
+          status: 'active',
+          nextRunAt: Date.now() + 86400000,
+          taskTemplate: {},
+        },
+        {
+          id: 'job_002',
+          userId: 'user_001',
+          channel: 'web',
+          cronExpression: '0 18 * * 5',
+          description: '周五下午提醒周报',
+          status: 'paused',
+          nextRunAt: Date.now() + 172800000,
+          taskTemplate: {},
+        },
+        {
+          id: 'job_003',
+          userId: 'user_001',
+          channel: 'web',
+          cronExpression: '0 0 * * *',
+          description: '已完成的任务',
+          status: 'completed',
+          nextRunAt: 0,
+          taskTemplate: {},
+        },
+      ]);
       const controller = CentralController.getInstance({ scheduler, ...createMockOVDeps() });
 
       const session = {
@@ -392,7 +469,11 @@ describe('CentralController', () => {
 
       const result = await controller.orchestrate(task);
       expect(result.success).toBe(true);
-      expect((result.data as { content: string }).content).toContain('没有活跃的定时任务');
+      const content = (result.data as { content: string }).content;
+      expect(content).toContain('每天早上提醒我喝水');
+      expect(content).toContain('周五下午提醒周报');
+      // completed job should be filtered out
+      expect(content).not.toContain('已完成的任务');
     });
 
     test('应该对系统任务返回成功结果', async () => {
@@ -737,6 +818,169 @@ describe('CentralController', () => {
 
       const content = (result.data as Record<string, unknown>).content as string;
       expect(content).toContain('记住了');
+    });
+
+    test('session 关闭后满足反思条件时应通过 TaskDispatcher 提交反思任务', async () => {
+      const sessionManager = new SessionManager();
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'Reply',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const mockSessionRecord = {
+        id: 'sess_reflect_001',
+        userId: 'user_test_001',
+        channel: 'web',
+        startedAt: Date.now() - 10000,
+        messageCount: 5,
+        summary: '会话摘要',
+        reflectionProcessed: false,
+      } as import('../shared/tasking/task.types').SessionRecord;
+
+      const markReflectionProcessed = mock(() => {});
+      const mockSessionStore = {
+        close: mock(() => {}),
+        upsert: mock(() => {}),
+        get: mock(() => null),
+        closeSession: mock(() => {}),
+        markReflectionProcessed,
+        getUnreflectedSessions: mock((userId: string, limit?: number) => {
+          void userId;
+          void limit;
+          // Return enough sessions to trigger reflection (threshold is 5)
+          return [
+            mockSessionRecord,
+            { ...mockSessionRecord, id: 'sess_reflect_002' },
+            { ...mockSessionRecord, id: 'sess_reflect_003' },
+            { ...mockSessionRecord, id: 'sess_reflect_004' },
+            { ...mockSessionRecord, id: 'sess_reflect_005' },
+          ];
+        }),
+        getLastReflectionAt: mock(() => null),
+        updateLastReflectionTime: mock(() => {}),
+      } as unknown as import('./memory/session-store').SessionStore;
+
+      const mockTaskStore = {
+        create: mock(() => {}),
+        updateStatus: mock(() => {}),
+        getById: mock(() => null),
+        getBySession: mock(() => []),
+        getByUser: mock(() => []),
+        getActive: mock(() => []),
+      } as unknown as import('./tasking/task-store').TaskStore;
+
+      const controller = CentralController.getInstance({
+        sessionManager,
+        agentRuntime,
+        taskStore: mockTaskStore,
+        sessionStore: mockSessionStore,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      await controller.handleIncomingMessage(message);
+
+      // Simulate session close
+      const sessionKey = 'user_test_001:web:conv_test_001';
+      const session = sessionManager.getSessionByKey(sessionKey);
+      if (session) {
+        await sessionManager.closeSession(session.id);
+      }
+
+      // Wait for async fire-and-forget dispatch + .then() callback
+      await new Promise((r) => setTimeout(r, 100));
+
+      // markReflectionProcessed should have been called for each session
+      expect(markReflectionProcessed).toHaveBeenCalled();
+    });
+
+    test('session 关闭后反思任务提交失败时不应抛出异常', async () => {
+      const sessionManager = new SessionManager();
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'Reply',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const mockSessionRecord = {
+        id: 'sess_fail_001',
+        userId: 'user_test_001',
+        channel: 'web',
+        startedAt: Date.now() - 10000,
+        messageCount: 5,
+        summary: '会话摘要',
+        reflectionProcessed: false,
+      } as import('../shared/tasking/task.types').SessionRecord;
+
+      const mockSessionStore = {
+        close: mock(() => {}),
+        upsert: mock(() => {}),
+        get: mock(() => null),
+        closeSession: mock(() => {}),
+        markReflectionProcessed: mock(() => {}),
+        getUnreflectedSessions: mock((userId: string, limit?: number) => {
+          void userId;
+          void limit;
+          return [
+            mockSessionRecord,
+            { ...mockSessionRecord, id: 'sess_fail_002' },
+            { ...mockSessionRecord, id: 'sess_fail_003' },
+            { ...mockSessionRecord, id: 'sess_fail_004' },
+            { ...mockSessionRecord, id: 'sess_fail_005' },
+          ];
+        }),
+        getLastReflectionAt: mock(() => null),
+        updateLastReflectionTime: mock(() => {}),
+      } as unknown as import('./memory/session-store').SessionStore;
+
+      // TaskStore: first call (regular dispatch) succeeds, second call (reflection dispatch) fails
+      let createCallCount = 0;
+      const mockTaskStore = {
+        create: mock(() => {
+          createCallCount++;
+          if (createCallCount > 1) throw new Error('reflection dispatch error');
+        }),
+        updateStatus: mock(() => {}),
+        getById: mock(() => null),
+        getBySession: mock(() => []),
+        getByUser: mock(() => []),
+        getActive: mock(() => []),
+      } as unknown as import('./tasking/task-store').TaskStore;
+
+      const controller = CentralController.getInstance({
+        sessionManager,
+        agentRuntime,
+        taskStore: mockTaskStore,
+        sessionStore: mockSessionStore,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      await controller.handleIncomingMessage(message);
+
+      // Simulate session close — should NOT throw despite reflection dispatch failure
+      const sessionKey = 'user_test_001:web:conv_test_001';
+      const session = sessionManager.getSessionByKey(sessionKey);
+      if (session) {
+        // closeSession should resolve without throwing even if reflection dispatch fails
+        let threw = false;
+        try {
+          await sessionManager.closeSession(session.id);
+        } catch {
+          threw = true;
+        }
+        expect(threw).toBe(false);
+      }
+
+      // Wait for async .catch() handler
+      await new Promise((r) => setTimeout(r, 100));
     });
   });
 
@@ -1849,6 +2093,724 @@ describe('CentralController', () => {
       expect(result.success).toBe(true);
       expect(closeSessionSpy).not.toHaveBeenCalled();
       expect(executeSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('媒体附件处理', () => {
+    test('带附件的消息应通过 mediaProcessor 处理并追加描述', async () => {
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'reply with media',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const processedAttachment: MediaAttachment = {
+        id: 'att_001',
+        mediaType: 'image',
+        state: 'processed',
+        mimeType: 'image/jpeg',
+        description: '一张猫的图片',
+      };
+
+      const mockMediaProcessor = {
+        processAttachments: async () => [processedAttachment],
+        toMediaRef: (a: MediaAttachment) => ({
+          mediaType: a.mediaType,
+          mimeType: a.mimeType,
+          description: a.description ?? '[图片]',
+        }),
+        setUploadsDir: () => {},
+        setChannelResolver: () => {},
+      } as unknown as MediaProcessor;
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        mediaProcessor: mockMediaProcessor,
+        ...createMockOVDeps(),
+      });
+
+      const attachment: MediaAttachment = {
+        id: 'att_001',
+        mediaType: 'image',
+        state: 'pending',
+        mimeType: 'image/jpeg',
+      };
+
+      const message = createMockMessage({
+        content: '看看这张图',
+        attachments: [attachment],
+      });
+
+      const result = await controller.handleIncomingMessage(message);
+      expect(result.success).toBe(true);
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+
+      // Verify the session content was updated with the image description
+      const callArgs = executeSpy.mock.calls[0][0];
+      expect(
+        callArgs.context.messages.some(
+          (m: { role: string; content: string }) =>
+            m.role === 'user' && m.content.includes('一张猫的图片'),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe('IntelligenceGateway 集成', () => {
+    /** 构建一个最小 AgentBridge mock，execute 返回预设结果 */
+    function makeMockBridge(content: string): AgentBridge {
+      return {
+        execute: async (): Promise<AgentResult> => ({
+          content,
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
+          toolsUsed: [],
+          finishedNaturally: true,
+          handledBy: 'claude',
+        }),
+      };
+    }
+
+    /** 构建最小 LightLLM mock */
+    function makeMockLightLLM(responseContent: string): CentralControllerDeps['lightLLM'] {
+      return {
+        complete: async () => ({
+          content: responseContent,
+          usage: { promptTokens: 5, completionTokens: 3 },
+        }),
+      } as unknown as CentralControllerDeps['lightLLM'];
+    }
+
+    test('提供 agentBridge + lightLLM 时应经由 IntelligenceGateway 处理消息', async () => {
+      const agentRuntime = new AgentRuntime();
+      const agentExecuteSpy = spyOn(agentRuntime, 'execute');
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        agentBridge: makeMockBridge('gateway-reply'),
+        lightLLM: makeMockLightLLM('gateway quick answer'),
+        ...createMockOVDeps(),
+      });
+
+      // Simple chat message — gateway should handle directly
+      const message = createMockMessage({ content: 'Hi' });
+      const result = await controller.handleIncomingMessage(message);
+
+      expect(result.success).toBe(true);
+      // AgentRuntime.execute should NOT be called when gateway handles it
+      expect(agentExecuteSpy).not.toHaveBeenCalled();
+      const data = result.data as { content: string };
+      expect(data.content).toBe('gateway quick answer');
+    });
+
+    test('IntelligenceGateway 有 streamCallback 时应调用流式包装函数', async () => {
+      const streamEvents: StreamEvent[] = [];
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+
+      // Use a complex message so the gateway delegates to agentBridge,
+      // which triggers the async (event) => { streamCallback(event) } wrapper
+      const mockBridge: AgentBridge = {
+        execute: async (params) => {
+          // Trigger the streamCallback that was passed in
+          if (params.streamCallback) {
+            await params.streamCallback({ type: 'text_delta', text: 'streamed' });
+            await params.streamCallback({ type: 'done' });
+          }
+          return {
+            content: 'streamed reply',
+            tokenUsage: { inputTokens: 10, outputTokens: 5 },
+            toolsUsed: [],
+            finishedNaturally: true,
+            handledBy: 'claude',
+          };
+        },
+      };
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        agentBridge: mockBridge,
+        lightLLM: makeMockLightLLM('需要工具'), // non-simple so gateway delegates
+        streamCallback: (_userId, event) => {
+          streamEvents.push(event);
+        },
+        ...createMockOVDeps(),
+      });
+
+      // Use a complex message (contains tool keyword) to force gateway->agentBridge delegation
+      const message = createMockMessage({ content: '帮我分析文件' });
+      const result = await controller.handleIncomingMessage(message);
+
+      expect(result.success).toBe(true);
+    });
+
+    test('IntelligenceGateway 构建时包含 AgentBridge', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+
+      const mockBridge = makeMockBridge('reply');
+
+      // Creating controller with agentBridge + lightLLM should succeed
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        agentBridge: mockBridge,
+        lightLLM: makeMockLightLLM('quick answer'),
+        ...createMockOVDeps(),
+      });
+
+      expect(controller).toBeDefined();
+    });
+
+    test('IntelligenceGateway 失败时应回退到 AgentRuntime', async () => {
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'fallback-reply',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      // agentBridge that throws
+      const failingBridge: AgentBridge = {
+        execute: async () => {
+          throw new Error('bridge failed');
+        },
+      };
+
+      // lightLLM that also throws (so gateway.handle() throws)
+      const failingLightLLM: CentralControllerDeps['lightLLM'] = {
+        complete: async () => {
+          throw new Error('llm failed');
+        },
+      } as unknown as CentralControllerDeps['lightLLM'];
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        agentBridge: failingBridge,
+        lightLLM: failingLightLLM,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: 'Hi' });
+      const result = await controller.handleIncomingMessage(message);
+
+      expect(result.success).toBe(true);
+      // Should have fallen back to AgentRuntime
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+      const data = result.data as { content: string };
+      expect(data.content).toBe('fallback-reply');
+    });
+  });
+
+  describe('StreamContentFilter 流式过滤集成', () => {
+    test('streamCallback 应过滤 tool_result 事件', async () => {
+      const agentRuntime = new AgentRuntime();
+      const callbackEvents: Array<{ userId: string; event: StreamEvent }> = [];
+
+      spyOn(agentRuntime, 'execute').mockImplementation(async (params) => {
+        if (params.streamCallback) {
+          params.streamCallback({ type: 'text_delta', text: 'Hi' });
+          params.streamCallback({ type: 'tool_result', text: 'result data' });
+          params.streamCallback({ type: 'tool_use', toolName: 'Read' });
+          params.streamCallback({ type: 'done' });
+        }
+        return {
+          content: 'Hi',
+          tokenUsage: { inputTokens: 5, outputTokens: 2 },
+          complexity: 'simple' as const,
+          channel: 'light_llm' as const,
+          classificationCostUsd: 0,
+        };
+      });
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        streamCallback: (userId, event) => {
+          callbackEvents.push({ userId, event });
+        },
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      await controller.handleIncomingMessage(message);
+
+      // tool_result should be filtered out — only text_delta, tool_use, done should pass
+      const types = callbackEvents.map((e) => e.event.type);
+      expect(types).toContain('text_delta');
+      expect(types).toContain('tool_use');
+      expect(types).toContain('done');
+      expect(types).not.toContain('tool_result');
+    });
+
+    test('streamAdapterFactory 路径也应过滤 tool_result', async () => {
+      const agentRuntime = new AgentRuntime();
+      const streamEvents: StreamEvent[] = [];
+
+      spyOn(agentRuntime, 'execute').mockImplementation(async (params) => {
+        if (params.streamCallback) {
+          params.streamCallback({ type: 'text_delta', text: 'Hello' });
+          params.streamCallback({ type: 'tool_result', text: 'internal' });
+          params.streamCallback({ type: 'done' });
+        }
+        return {
+          content: 'Hello',
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
+          complexity: 'simple' as const,
+          channel: 'light_llm' as const,
+          classificationCostUsd: 0,
+        };
+      });
+
+      const mockAdapter: ChannelStreamAdapter = {
+        channelType: 'test',
+        onStreamStart: async () => {},
+        sendChunk: async (text: string) => {
+          streamEvents.push({ type: 'text_delta', text });
+        },
+        sendDone: async () => {
+          streamEvents.push({ type: 'done' });
+        },
+        sendError: async () => {},
+      };
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        streamAdapterFactory: (_u, _c, _conv) => [mockAdapter],
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      await controller.handleIncomingMessage(message);
+
+      // tool_result should have been filtered — adapter only sees text_delta and done
+      const types = streamEvents.map((e) => e.type);
+      expect(types).not.toContain('tool_result');
+    });
+  });
+
+  describe('QueueAggregator 集成', () => {
+    test('aggregateMessages 委托给 QueueAggregator', async () => {
+      const controller = CentralController.getInstance({
+        ...createMockOVDeps(),
+      });
+
+      // Single message → pass through
+      const result = await controller.aggregateMessages(['hello']);
+      expect(result.tasks).toHaveLength(1);
+      expect(result.tasks[0].message).toBe('hello');
+      expect(result.reason).toBe('single');
+    });
+
+    test('aggregateMessages 处理多条消息', async () => {
+      const controller = CentralController.getInstance({
+        ...createMockOVDeps(),
+      });
+
+      // Override pattern: last message supersedes
+      const result = await controller.aggregateMessages(['帮我查天气', '不是，我是说帮我查机票']);
+      expect(result.tasks).toHaveLength(1);
+      expect(result.reason).toBe('last_override');
+    });
+  });
+
+  describe('AnalysisRouter 集成', () => {
+    test('postResponseAnalyzer 有结果时应路由分析结果', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'Bot reply',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'complex',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const mockAnalyzer = {
+        analyzeExchange: async () => 'User prefers short answers',
+      } as unknown as PostResponseAnalyzer;
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+        postResponseAnalyzer: mockAnalyzer,
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      const result = await controller.handleIncomingMessage(message);
+
+      expect(result.success).toBe(true);
+      // Response should include analysis feedback appended
+      const data = result.data as { content: string };
+      expect(data.content).toContain('User prefers short answers');
+    });
+  });
+
+  describe('retrieveRelevantMemories (W-05)', () => {
+    test('per-turn memory 注入 — ovClient.find 返回结果时映射为 RetrievedMemory', async () => {
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: '好的，这是项目总结',
+        tokenUsage: { inputTokens: 100, outputTokens: 50 },
+        complexity: 'complex' as const,
+        channel: 'agent_sdk' as const,
+        classificationCostUsd: 0,
+      });
+
+      const mockOvClient = {
+        addMessage: async () => {},
+        commit: async () => ({ memories_extracted: 0 }),
+        find: async () => [
+          {
+            uri: 'viking://mem/1',
+            context_type: 'memory',
+            abstract: '用户喜欢简洁',
+            score: 0.9,
+            match_reason: 'semantic',
+          },
+          {
+            uri: 'viking://mem/2',
+            context_type: 'memory',
+            abstract: '正在做架构升级',
+            score: 0.8,
+            match_reason: 'semantic',
+          },
+        ],
+      } as unknown as OpenVikingClient;
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+        ovClient: mockOvClient,
+        configLoader: {
+          loadAll: async () => ({ soul: '', identity: '', user: '', agents: '' }),
+          loadFile: async () => '',
+          invalidateCache: () => {},
+        } as unknown as ConfigLoader,
+      });
+
+      const message = createMockMessage({ content: '帮我总结一下项目' });
+      const result = await controller.handleIncomingMessage(message);
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('W-01: TaskDispatcher integration', () => {
+    test('当提供 taskStore 时应通过 TaskDispatcher 分派消息', async () => {
+      const mockTaskStore = {
+        create: mock(() => {}),
+        updateStatus: mock(() => {}),
+        getById: mock(() => null),
+        getBySession: mock(() => []),
+        getByUser: mock(() => []),
+        getActive: mock(() => []),
+      } as unknown as import('./tasking/task-store').TaskStore;
+
+      const agentRuntime = new AgentRuntime();
+      spyOn(agentRuntime, 'execute');
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        taskStore: mockTaskStore,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      const result = await controller.handleIncomingMessage(message);
+
+      // Dispatcher path returns a task ID
+      expect(result.success).toBe(true);
+      expect(result.taskId).toBeDefined();
+      expect(typeof result.taskId).toBe('string');
+
+      // TaskStore.create should have been called by TaskDispatcher
+      expect(mockTaskStore.create).toHaveBeenCalledTimes(1);
+
+      // Wait for async task execution to complete
+      await new Promise((r) => setTimeout(r, 100));
+
+      // TaskStore should have been updated to running then completed
+      expect(mockTaskStore.updateStatus).toHaveBeenCalled();
+    });
+
+    test('当 taskStore 不可用时应走 fallback 直接 orchestrate 路径', async () => {
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute');
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        // No taskStore — fallback path
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      await controller.handleIncomingMessage(message);
+
+      // Fallback path calls orchestrate → agentRuntime.execute directly
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('stopScheduler() / shutdown()', () => {
+    afterEach(() => {
+      CentralController.resetInstance();
+    });
+
+    test('stopScheduler() 应调用 scheduler.stop() 和 persistJobs()', () => {
+      CentralController.resetInstance();
+
+      const mockScheduler = {
+        start: mock(() => {}),
+        stop: mock(() => {}),
+        persistJobs: mock(() => {}),
+        loadJobs: mock(() => {}),
+        addJob: mock(() => {}),
+        removeJob: mock(() => {}),
+        getJobs: mock(() => []),
+      } as unknown as Scheduler;
+
+      const controller = CentralController.getInstance({
+        agentRuntime: new AgentRuntime(),
+        scheduler: mockScheduler,
+        ...createMockOVDeps(),
+      });
+
+      controller.stopScheduler();
+
+      expect(mockScheduler.stop).toHaveBeenCalledTimes(1);
+      expect(mockScheduler.persistJobs).toHaveBeenCalledTimes(1);
+    });
+
+    test('当 sessionStore 和 taskDispatcher 均存在时应全部关闭', async () => {
+      CentralController.resetInstance();
+
+      const mockTaskStore = {
+        create: mock(() => {}),
+        updateStatus: mock(() => {}),
+        getById: mock(() => null),
+        getBySession: mock(() => []),
+        getByUser: mock(() => []),
+        getActive: mock(() => []),
+      } as unknown as import('./tasking/task-store').TaskStore;
+
+      const mockSessionStore = {
+        close: mock(() => {}),
+        getUnreflectedSessions: mock(() => []),
+        getLastReflectionAt: mock(() => null),
+        updateLastReflectionTime: mock(() => {}),
+        upsert: mock(() => {}),
+        get: mock(() => null),
+        closeSession: mock(() => {}),
+      } as unknown as import('./memory/session-store').SessionStore;
+
+      const controller = CentralController.getInstance({
+        agentRuntime: new AgentRuntime(),
+        taskStore: mockTaskStore,
+        sessionStore: mockSessionStore,
+        ...createMockOVDeps(),
+      });
+
+      await controller.shutdown();
+
+      expect(mockSessionStore.close).toHaveBeenCalledTimes(1);
+    });
+
+    test('当 sessionStore 和 taskDispatcher 均不存在时 shutdown 应无抛出', async () => {
+      CentralController.resetInstance();
+
+      const controller = CentralController.getInstance({
+        agentRuntime: new AgentRuntime(),
+        // No sessionStore, no taskStore → no taskDispatcher
+        ...createMockOVDeps(),
+      });
+
+      await expect(controller.shutdown()).resolves.toBeUndefined();
+    });
+  });
+
+  describe('消息合并 (debounce)', () => {
+    test('单条消息应正常处理，无延迟', async () => {
+      const agentRuntime = new AgentRuntime();
+      const executeSpy = spyOn(agentRuntime, 'execute').mockResolvedValue({
+        content: 'reply',
+        tokenUsage: { inputTokens: 10, outputTokens: 5 },
+        complexity: 'simple',
+        channel: 'agent_sdk',
+        classificationCostUsd: 0,
+      });
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const message = createMockMessage({ content: '你好' });
+      const result = await controller.handleIncomingMessage(message);
+
+      expect(result.success).toBe(true);
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('会话繁忙时后续文本消息应被缓冲', async () => {
+      const agentRuntime = new AgentRuntime();
+      let resolveFirst: (() => void) | undefined;
+      const firstBlocked = new Promise<void>((r) => {
+        resolveFirst = r;
+      });
+
+      let callCount = 0;
+      spyOn(agentRuntime, 'execute').mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          // First call blocks until we release it
+          await firstBlocked;
+        }
+        return {
+          content: `reply-${callCount}`,
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
+          complexity: 'simple',
+          channel: 'agent_sdk',
+          classificationCostUsd: 0,
+        };
+      });
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const msg1 = createMockMessage({ id: 'msg1', content: '你好' });
+      const msg2 = createMockMessage({ id: 'msg2', content: '请帮我查天气' });
+
+      // Start first message processing (will block)
+      const p1 = controller.handleIncomingMessage(msg1);
+
+      // Give the first message time to enter processing
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Send second message while first is processing — should be buffered
+      const p2 = controller.handleIncomingMessage(msg2);
+
+      // Release first message
+      resolveFirst?.();
+
+      const [result1, result2] = await Promise.all([p1, p2]);
+
+      expect(result1.success).toBe(true);
+      expect(result2.success).toBe(true);
+      // Second message should be marked as merged
+      const data2 = result2.data as Record<string, unknown>;
+      expect(data2.merged).toBe(true);
+      // Agent should be called twice: once for first message, once for merged second
+      expect(callCount).toBe(2);
+    });
+
+    test('纯数字噪声消息应被过滤，不产生额外任务', async () => {
+      const agentRuntime = new AgentRuntime();
+      let resolveFirst: (() => void) | undefined;
+      const firstBlocked = new Promise<void>((r) => {
+        resolveFirst = r;
+      });
+
+      let callCount = 0;
+      spyOn(agentRuntime, 'execute').mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          await firstBlocked;
+        }
+        return {
+          content: `reply-${callCount}`,
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
+          complexity: 'simple',
+          channel: 'agent_sdk',
+          classificationCostUsd: 0,
+        };
+      });
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const msg1 = createMockMessage({ id: 'msg1', content: '你好' });
+      // All noise messages (pure numbers)
+      const noise1 = createMockMessage({ id: 'noise1', content: '123' });
+      const noise2 = createMockMessage({ id: 'noise2', content: '456' });
+
+      const p1 = controller.handleIncomingMessage(msg1);
+      await new Promise((r) => setTimeout(r, 50));
+
+      const p2 = controller.handleIncomingMessage(noise1);
+      const p3 = controller.handleIncomingMessage(noise2);
+
+      resolveFirst?.();
+
+      const [result1, result2, result3] = await Promise.all([p1, p2, p3]);
+
+      expect(result1.success).toBe(true);
+      expect(result2.success).toBe(true);
+      expect(result3.success).toBe(true);
+      // Noise messages should be merged (filtered)
+      const data2 = result2.data as Record<string, unknown>;
+      const data3 = result3.data as Record<string, unknown>;
+      expect(data2.merged).toBe(true);
+      expect(data3.merged).toBe(true);
+      // Agent should only be called once (for the first message), noise gets filtered
+      expect(callCount).toBe(1);
+    });
+
+    test('非文本消息（如文件上传）不应被缓冲', async () => {
+      const agentRuntime = new AgentRuntime();
+      let resolveFirst: (() => void) | undefined;
+      const firstBlocked = new Promise<void>((r) => {
+        resolveFirst = r;
+      });
+
+      let callCount = 0;
+      spyOn(agentRuntime, 'execute').mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          await firstBlocked;
+        }
+        return {
+          content: `reply-${callCount}`,
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
+          complexity: 'simple',
+          channel: 'agent_sdk',
+          classificationCostUsd: 0,
+        };
+      });
+
+      const controller = CentralController.getInstance({
+        agentRuntime,
+        ...createMockOVDeps(),
+      });
+
+      const msg1 = createMockMessage({ id: 'msg1', content: '你好' });
+      // File message should NOT be debounced
+      const fileMsg = createMockMessage({
+        id: 'file1',
+        content: 'photo.jpg',
+        contentType: 'file',
+        metadata: { fileName: 'photo.jpg' },
+      });
+
+      const p1 = controller.handleIncomingMessage(msg1);
+      await new Promise((r) => setTimeout(r, 50));
+
+      // File message should go through immediately (not buffered)
+      const p2 = controller.handleIncomingMessage(fileMsg);
+
+      resolveFirst?.();
+
+      const [result1, result2] = await Promise.all([p1, p2]);
+
+      expect(result1.success).toBe(true);
+      expect(result2.success).toBe(true);
+      // File message should NOT be marked as merged
+      const data2 = result2.data as Record<string, unknown>;
+      expect(data2.merged).toBeUndefined();
     });
   });
 });

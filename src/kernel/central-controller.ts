@@ -1,35 +1,51 @@
-import { LessonsLearnedUpdater } from '../lessons/lessons-updater';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { UnifiedClassifyResult } from '../shared/classifier/classifier-types';
 import { ERROR_CODES } from '../shared/errors/error-codes';
 import { YourBotError } from '../shared/errors/yourbot-error';
 import { Logger } from '../shared/logging/logger';
-import type { BotMessage } from '../shared/messaging/bot-message.types';
+import type { BotMessage, ChannelType } from '../shared/messaging/bot-message.types';
 import type { IChannel } from '../shared/messaging/channel-adapter.types';
 import type { MediaRef } from '../shared/messaging/media-attachment.types';
 import type { StreamEvent } from '../shared/messaging/stream-event.types';
 import type { TaskResult } from '../shared/tasking/task-result.types';
 import type { Session, Task, TaskType } from '../shared/tasking/task.types';
 import { isAdminUser } from '../shared/utils/admin';
-import { generateTaskId, generateTraceId } from '../shared/utils/crypto';
-import { AgentRuntime } from './agents/agent-runtime';
-import type { ClaudeAgentBridge } from './agents/claude-agent-bridge';
+import { generateId, generateTaskId, generateTraceId } from '../shared/utils/crypto';
+import type { AgentBridge } from './agents/agent-bridge';
+import { AgentRuntime, type EnhancedAgentResult } from './agents/agent-runtime';
+import { IntelligenceGateway } from './agents/intelligence-gateway';
+import type { LightLlmCompletable } from './agents/intelligence-gateway';
 import type { LightLLMClient } from './agents/light-llm-client';
+import { McpConfigBuilder } from './agents/mcp-config-builder';
+import { TaskGuidanceBuilder } from './agents/task-guidance-builder';
 import { TaskClassifier } from './classifier/task-classifier';
-import { ConflictResolver } from './evolution/conflict-resolver';
+import { type AnalysisItem, routeAnalysis } from './evolution/analysis-router';
+import { shouldTriggerDigest } from './evolution/digest/digest-trigger';
 import { EvolutionScheduler } from './evolution/evolution-scheduler';
+import { FrozenContextManager } from './evolution/frozen-context-manager';
 import { KnowledgeRouter } from './evolution/knowledge-router';
-import { PostResponseAnalyzer } from './evolution/post-response-analyzer';
+import { LessonsLearnedUpdater } from './evolution/learning/lessons-updater';
+import { PostResponseAnalyzer } from './evolution/learning/post-response-analyzer';
+import { ReflectionPromptBuilder } from './evolution/reflection-prompt-builder';
+import { ReflectionTrigger } from './evolution/reflection-trigger';
 import { TokenBudgetAllocator } from './evolution/token-budget-allocator';
 import { FileUploadHandler } from './files/file-upload-handler';
 import { MediaDownloader } from './media/media-downloader';
 import { MediaProcessor } from './media/media-processor';
 import { MediaUnderstanding } from './media/media-understanding';
-import { ConfigLoader } from './memory/config-loader';
 import { ContextManager } from './memory/context-manager';
 import { EntityManager } from './memory/graph/entity-manager';
 import { OpenVikingClient } from './memory/openviking/openviking-client';
-import { UserConfigLoader } from './memory/user-config-loader';
+import { SessionStore } from './memory/session-store';
 import { OnboardingManager } from './onboarding';
+import { ConfigLoader } from './prompt/config-loader';
+import { ConflictResolver } from './prompt/conflict-resolver';
+import { type MemoryItem, buildMemorySnapshot } from './prompt/memory-snapshot-builder';
+import { buildPrependContext } from './prompt/prepend-context-builder';
+import { SystemPromptBuilder } from './prompt/system-prompt-builder';
+import { buildTurnContext } from './prompt/turn-context-builder';
+import { UserConfigLoader } from './prompt/user-config-loader';
 import { JobStore } from './scheduling/job-store';
 import { nlToCron } from './scheduling/nl-to-cron';
 import { ScheduleCancelManager } from './scheduling/schedule-cancel-manager';
@@ -41,10 +57,30 @@ import {
   WorktreePool,
   generateBranchName,
 } from './sessioning';
+import { SkillIndexBuilder } from './skills/skill-index-builder';
+import type { SkillManager } from './skills/skill-manager';
+import { StreamContentFilter } from './streaming/stream-content-filter';
 import { StreamHandler } from './streaming/stream-handler';
 import type { ChannelStreamAdapter } from './streaming/stream-protocol';
+import { classifyExecutionMode } from './tasking/execution-mode-classifier';
+import { QueueAggregator } from './tasking/queue-aggregator';
+import { TaskDispatcher } from './tasking/task-dispatcher';
 import { TaskQueue } from './tasking/task-queue';
+import type { TaskStore } from './tasking/task-store';
 import { WorkspaceManager } from './workspace';
+
+/** Map OpenViking memory URI path segments to MemoryCategory for snapshot builder */
+function uriToMemoryCategory(
+  uri: string,
+): 'preference' | 'fact' | 'context' | 'instruction' | 'task' | 'insight' {
+  const lower = uri.toLowerCase();
+  if (lower.includes('/preference')) return 'preference';
+  if (lower.includes('/instruction') || lower.includes('/procedure')) return 'instruction';
+  if (lower.includes('/context') || lower.includes('/episodic')) return 'context';
+  if (lower.includes('/insight') || lower.includes('/semantic')) return 'insight';
+  if (lower.includes('/task')) return 'task';
+  return 'fact'; // default: facts, meta, unknown
+}
 
 export interface CentralControllerDeps {
   sessionManager?: SessionManager;
@@ -52,7 +88,7 @@ export interface CentralControllerDeps {
   scheduler?: Scheduler;
   taskQueue?: TaskQueue;
   classifier?: TaskClassifier;
-  claudeBridge?: ClaudeAgentBridge;
+  agentBridge?: AgentBridge;
   lightLLM?: LightLLMClient;
   streamHandler?: StreamHandler;
   streamCallback?: (userId: string, event: StreamEvent) => void;
@@ -60,7 +96,10 @@ export interface CentralControllerDeps {
     userId: string,
     channel: string,
     conversationId: string,
+    options?: { existingCardId?: string },
   ) => ChannelStreamAdapter[];
+  /** DD-021: Send placeholder card before agent execution, returns cardId + messageId */
+  placeholderSender?: (chatId: string) => Promise<{ cardId: string; messageId: string }>;
   ovClient?: OpenVikingClient;
   configLoader?: ConfigLoader;
   contextManager?: ContextManager;
@@ -75,6 +114,9 @@ export interface CentralControllerDeps {
   sessionSerializer?: SessionSerializer;
   harnessMutex?: HarnessMutex;
   worktreePool?: WorktreePool;
+  sessionStore?: SessionStore;
+  taskStore?: TaskStore;
+  skillManager?: SkillManager;
 }
 
 export class CentralController {
@@ -86,13 +128,17 @@ export class CentralController {
   private readonly taskQueue: TaskQueue;
   private readonly logger: Logger;
   private readonly activeRequests: Map<string, AbortController> = new Map();
+  /** Side-channel for preserving full TaskResult through TaskDispatcher string contract */
+  private readonly dispatchResults: Map<string, TaskResult> = new Map();
   private readonly streamHandler: StreamHandler;
   private readonly streamCallback?: (userId: string, event: StreamEvent) => void;
   private streamAdapterFactory?: (
     userId: string,
     channel: string,
     conversationId: string,
+    options?: { existingCardId?: string },
   ) => ChannelStreamAdapter[];
+  private placeholderSender?: (chatId: string) => Promise<{ cardId: string; messageId: string }>;
   private readonly ovClient: OpenVikingClient;
   private readonly configLoader: ConfigLoader;
   private readonly contextManager: ContextManager;
@@ -110,9 +156,38 @@ export class CentralController {
   private readonly fileUploadHandler: FileUploadHandler;
   private readonly mediaProcessor: MediaProcessor;
   private channelResolver?: (channelType: string) => IChannel | undefined;
+  private readonly sessionStore?: SessionStore;
+  private readonly taskStore?: TaskStore;
+  private readonly skillManager?: SkillManager;
+  private readonly systemPromptBuilder: SystemPromptBuilder;
+  private readonly intelligenceGateway?: IntelligenceGateway;
+  private readonly queueAggregator: QueueAggregator;
+  private readonly reflectionTrigger: ReflectionTrigger;
+  private readonly frozenContextManager: FrozenContextManager;
+  private readonly mcpConfigBuilder: McpConfigBuilder;
+  private readonly taskGuidanceBuilder: TaskGuidanceBuilder;
+  private readonly taskDispatcher: TaskDispatcher | undefined;
+
+  // ── DD-017: Message debounce for rapid-fire messages ──
+  /** Sessions currently processing a task (sessionKey → true) */
+  private readonly activeSessions = new Set<string>();
+  /** Buffered messages waiting for active task to complete */
+  private readonly messageBuffers = new Map<
+    string,
+    {
+      messages: BotMessage[];
+      waiters: Array<{ resolve: (r: TaskResult) => void; reject: (e: Error) => void }>;
+    }
+  >();
 
   private constructor(deps?: CentralControllerDeps) {
-    this.sessionManager = deps?.sessionManager ?? new SessionManager();
+    // Store optional persistence stores
+    this.sessionStore = deps?.sessionStore;
+    this.taskStore = deps?.taskStore;
+    this.skillManager = deps?.skillManager;
+
+    this.sessionManager =
+      deps?.sessionManager ?? new SessionManager({ sessionStore: this.sessionStore });
     this.scheduler = deps?.scheduler ?? new Scheduler(new JobStore());
     this.scheduleCancelManager = new ScheduleCancelManager(this.scheduler);
     this.taskQueue = deps?.taskQueue ?? new TaskQueue();
@@ -120,6 +195,7 @@ export class CentralController {
     this.streamHandler = deps?.streamHandler ?? new StreamHandler();
     this.streamCallback = deps?.streamCallback;
     this.streamAdapterFactory = deps?.streamAdapterFactory;
+    this.placeholderSender = deps?.placeholderSender;
 
     // Build classifier and AgentRuntime with injected dependencies
     this.classifier = deps?.classifier ?? new TaskClassifier(deps?.lightLLM ?? null);
@@ -127,7 +203,7 @@ export class CentralController {
       deps?.agentRuntime ??
       new AgentRuntime({
         classifier: this.classifier,
-        claudeBridge: deps?.claudeBridge ?? null,
+        agentBridge: deps?.agentBridge ?? null,
         lightLLM: deps?.lightLLM ?? null,
       });
 
@@ -141,8 +217,31 @@ export class CentralController {
     // ContextManager — Pre-Compaction flush
     this.contextManager = deps?.contextManager ?? new ContextManager(this.ovClient);
 
-    // Evolution modules
-    this.evolutionScheduler = deps?.evolutionScheduler ?? new EvolutionScheduler(this.ovClient);
+    // Evolution modules — inject LightLLM for reflect() and digest distill
+    const reflectLlmCall = deps?.lightLLM
+      ? async (prompt: string): Promise<string> => {
+          const res = await deps.lightLLM?.complete({
+            messages: [{ role: 'user', content: prompt }],
+          });
+          return res?.content ?? '';
+        }
+      : undefined;
+    const digestLlmDistill = deps?.lightLLM
+      ? async (clusterContent: string) => {
+          const res = await deps.lightLLM?.complete({
+            messages: [
+              {
+                role: 'user',
+                content: `请将以下记忆碎片提炼为一条洞察。输出 JSON：{"topic":"...","insight":"...","questions":[],"relatedSkills":[],"sourceUris":[]}\n\n${clusterContent}`,
+              },
+            ],
+          });
+          return JSON.parse(res?.content ?? '{}');
+        }
+      : undefined;
+    this.evolutionScheduler =
+      deps?.evolutionScheduler ??
+      new EvolutionScheduler(this.ovClient, reflectLlmCall, digestLlmDistill);
     this.lessonsUpdater =
       deps?.lessonsUpdater ?? new LessonsLearnedUpdater(this.ovClient, this.configLoader);
     this.entityManager = deps?.entityManager ?? new EntityManager(this.ovClient);
@@ -180,12 +279,33 @@ export class CentralController {
     this.harnessMutex = deps?.harnessMutex ?? new HarnessMutex();
     this.worktreePool = deps?.worktreePool ?? new WorktreePool();
 
+    // IntelligenceGateway — Layer 1 快速预处理（DD-014）
+    // 仅在 agent bridge 和 lightLLM 都可用时启用
+    if (lightLLM && deps?.agentBridge) {
+      this.intelligenceGateway = new IntelligenceGateway(
+        lightLLM as unknown as LightLlmCompletable,
+        deps.agentBridge,
+      );
+    }
+
     // OnboardingManager — guides new users through setup
     this.onboardingManager = new OnboardingManager(deps?.lightLLM ?? null);
 
     // FileUploadHandler — handles USER.md uploads
     this.fileUploadHandler = new FileUploadHandler();
     this.channelResolver = deps?.channelResolver;
+
+    // SystemPromptBuilder — session-level frozen prompt (DD-018)
+    this.systemPromptBuilder = new SystemPromptBuilder(deps?.configLoader ?? this.configLoader);
+
+    // DD-013/DD-017: Auxiliary modules for queue aggregation, reflection, and frozen context
+    this.queueAggregator = new QueueAggregator();
+    this.reflectionTrigger = new ReflectionTrigger();
+    this.frozenContextManager = new FrozenContextManager();
+
+    // W-06/W-07: McpConfigBuilder + TaskGuidanceBuilder
+    this.mcpConfigBuilder = new McpConfigBuilder();
+    this.taskGuidanceBuilder = new TaskGuidanceBuilder();
 
     // MediaProcessor — handles image/media attachments
     this.mediaProcessor =
@@ -194,6 +314,48 @@ export class CentralController {
         downloader: new MediaDownloader({ channelResolver: deps?.channelResolver }),
         understanding: new MediaUnderstanding({ lightLLM: deps?.lightLLM ?? null }),
       });
+
+    // W-01: TaskDispatcher wraps orchestrate() for persistence + session serialization
+    if (this.taskStore) {
+      // biome-ignore lint/style/noNonNullAssertion: assigned to readonly field conditionally in constructor
+      (this as unknown as { taskDispatcher: TaskDispatcher }).taskDispatcher = new TaskDispatcher(
+        this.taskStore,
+        async (_taskRecord, payload, signal) => {
+          const session = await this.sessionManager.resolveSession(
+            payload.message.userId,
+            payload.message.channel,
+            payload.message.conversationId,
+          );
+          const classifyResult = payload.metadata?.classifyResult as
+            | UnifiedClassifyResult
+            | undefined;
+          const task: Task = {
+            id: _taskRecord.id,
+            traceId: generateTraceId(),
+            type: payload.type as TaskType,
+            message: payload.message,
+            session,
+            priority: this.calculatePriority(payload.type as TaskType),
+            createdAt: _taskRecord.createdAt,
+            signal,
+            metadata: {
+              userId: payload.message.userId,
+              channel: payload.message.channel,
+              conversationId: payload.message.conversationId,
+            },
+            classifyResult,
+          };
+          const result = await this.orchestrate(task);
+          // Store full TaskResult in side-channel to preserve structured data (streamed, complexity, etc.)
+          this.dispatchResults.set(_taskRecord.id, result);
+          // Adapt TaskResult → string for TaskDispatcher handler contract
+          if (!result.success && result.error) return result.error;
+          const data = result.data as { content?: string } | undefined;
+          return data?.content ?? result.taskId;
+        },
+        { concurrency: 4 },
+      );
+    }
 
     // Wire session close to worktree release + OpenViking commit + evolution scheduling
     this.sessionManager.setOnSessionClose(async (_summary, sessionId, session) => {
@@ -215,16 +377,123 @@ export class CentralController {
 
       try {
         const commitResult = await this.ovClient.commit(sessionId);
-        if (commitResult.memories_extracted > 0) {
-          // Schedule evolution for newly extracted memories
-          // Note: commit doesn't return URIs directly, so schedule general evolution
-          this.evolutionScheduler.schedulePostCommit([]);
+        // OV commit is now async — returns { status: 'accepted', task_id } instead of
+        // synchronous memories_extracted count. Trigger evolution if commit was accepted
+        // OR if sync extraction reported any memories.
+        const hasCommit =
+          commitResult.status === 'accepted' || (commitResult.memories_extracted ?? 0) > 0;
+        if (hasCommit) {
+          // Retrieve newly extracted memory URIs for link evolution
+          // (find may return empty if async extraction hasn't finished yet — that's ok)
+          let extractedUris: string[] = [];
+          try {
+            const recentMemories = await this.ovClient.find({
+              query:
+                session?.messages
+                  ?.slice(-3)
+                  .map((m) => m.content)
+                  .join(' ') ?? '',
+              target_uri: 'viking://user/default/memories',
+              limit: 20,
+            });
+            extractedUris = recentMemories.map((m) => m.uri);
+          } catch {
+            // Non-critical: link will be skipped, reflect still runs
+          }
+          this.evolutionScheduler.schedulePostCommit(extractedUris);
         }
       } catch (err) {
         this.logger.warn('会话提交失败', {
           sessionId,
           error: err instanceof Error ? err.message : String(err),
         });
+      }
+
+      // DD-012: Check if background reflection should trigger
+      if (this.sessionStore && session) {
+        try {
+          const unreflected = this.sessionStore.getUnreflectedSessions(session.userId);
+          const lastReflectionAt = this.sessionStore.getLastReflectionAt(session.userId);
+          const shouldReflect = this.reflectionTrigger.shouldReflect({
+            lastReflectionAt,
+            unreflectedSessionCount: unreflected.length,
+          });
+          if (shouldReflect && this.taskDispatcher) {
+            // Get session summaries for reflection
+            const sessions = this.sessionStore?.getUnreflectedSessions(session.userId, 10) ?? [];
+            const summaries = sessions.map((s) => ({
+              id: s.id,
+              summary: s.summary || '',
+              startedAt: s.startedAt,
+              channel: s.channel,
+            }));
+
+            // Build reflection prompt
+            const reflectionPromptBuilder = new ReflectionPromptBuilder();
+            const userMessage = reflectionPromptBuilder.buildUserMessage({
+              sessionSummaries: summaries,
+            });
+
+            // Dispatch as background task (fire-and-forget)
+            this.taskDispatcher
+              .dispatch(`reflection-${session.userId}`, {
+                type: 'system',
+                message: {
+                  id: `reflection-${Date.now()}`,
+                  channel: session.channel as ChannelType,
+                  userId: session.userId,
+                  userName: 'system',
+                  conversationId: `reflection-${session.userId}`,
+                  content: userMessage,
+                  contentType: 'text',
+                  timestamp: Date.now(),
+                  metadata: {},
+                },
+                executionMode: 'async',
+                source: 'system',
+              })
+              .then(() => {
+                // Mark sessions as reflection-processed
+                for (const s of sessions) {
+                  this.sessionStore?.markReflectionProcessed(s.id);
+                }
+                // Track last reflection time for this user
+                this.sessionStore?.updateLastReflectionTime(session.userId, Date.now());
+                this.logger.info('后台反思任务已提交', {
+                  userId: session.userId,
+                  sessionCount: sessions.length,
+                });
+              })
+              .catch((err) => {
+                this.logger.warn('后台反思任务提交失败', {
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              });
+          }
+        } catch (err) {
+          this.logger.warn('反思触发检查失败', {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // DD-022: Check if digest should trigger
+      if (session) {
+        try {
+          const digestState = {
+            undigestedCount: this.sessionStore?.getUnreflectedSessions(session.userId).length ?? 0,
+            lastDigestAt: this.sessionStore?.getLastReflectionAt(session.userId) ?? null,
+          };
+          if (shouldTriggerDigest(digestState)) {
+            this.evolutionScheduler.scheduleDigest(session.userId);
+          }
+        } catch (err) {
+          this.logger.warn('Digest 触发检查失败', {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
     });
   }
@@ -249,6 +518,119 @@ export class CentralController {
       userId: message.userId,
     });
 
+    // ── DD-017: Debounce rapid-fire text messages within same session ──
+    const sessionKey = `${message.userId}:${message.channel}:${message.conversationId}`;
+    if (message.contentType === 'text' && this.activeSessions.has(sessionKey)) {
+      this.logger.info('消息缓冲（会话繁忙）', {
+        traceId,
+        messageId: message.id,
+        sessionKey,
+      });
+      return this.bufferPendingMessage(sessionKey, message);
+    }
+
+    this.activeSessions.add(sessionKey);
+    try {
+      const result = await this.processMessageInternal(message, traceId);
+
+      // Drain any messages that buffered while we were processing
+      await this.drainMessageBuffer(sessionKey);
+
+      return result;
+    } finally {
+      this.activeSessions.delete(sessionKey);
+    }
+  }
+
+  /**
+   * Buffer a message that arrived while the session is busy processing another task.
+   * The promise resolves when the active task completes and drains the buffer.
+   */
+  private bufferPendingMessage(sessionKey: string, message: BotMessage): Promise<TaskResult> {
+    return new Promise((resolve, reject) => {
+      let entry = this.messageBuffers.get(sessionKey);
+      if (!entry) {
+        entry = { messages: [], waiters: [] };
+        this.messageBuffers.set(sessionKey, entry);
+      }
+      entry.messages.push(message);
+      entry.waiters.push({ resolve, reject });
+    });
+  }
+
+  /**
+   * After a task completes, drain any buffered messages for that session.
+   * Aggregates buffered messages via QueueAggregator before processing.
+   */
+  private async drainMessageBuffer(sessionKey: string): Promise<void> {
+    while (this.messageBuffers.has(sessionKey)) {
+      const entry = this.messageBuffers.get(sessionKey);
+      if (!entry || entry.messages.length === 0) {
+        this.messageBuffers.delete(sessionKey);
+        break;
+      }
+
+      // Take all buffered messages atomically
+      const messages = entry.messages.splice(0);
+      const waiters = entry.waiters.splice(0);
+      this.messageBuffers.delete(sessionKey);
+
+      // Aggregate via QueueAggregator
+      const contents = messages.map((m) => m.content);
+      const aggregated = await this.queueAggregator.aggregate(contents);
+
+      this.logger.info('消息合并', {
+        sessionKey,
+        originalCount: messages.length,
+        mergedCount: aggregated.tasks.length,
+        filteredCount: aggregated.filtered.length,
+        reason: aggregated.reason,
+      });
+
+      // Process merged tasks (usually 0 or 1)
+      let lastResult: TaskResult | undefined;
+      for (const mergedTask of aggregated.tasks) {
+        const primaryMessage = messages[0] as BotMessage;
+        const mergedMessage: BotMessage = {
+          ...primaryMessage,
+          id: generateId('merged'),
+          content: mergedTask.message,
+          metadata: {
+            ...primaryMessage.metadata,
+            mergedFrom: mergedTask.original,
+            mergedCount: messages.length,
+          },
+        };
+
+        const mergeTraceId = generateTraceId();
+        try {
+          lastResult = await this.processMessageInternal(mergedMessage, mergeTraceId);
+        } catch (err) {
+          this.logger.warn('合并消息处理失败', {
+            sessionKey,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // Resolve all waiters — their messages were merged into the task(s) above
+      const mergedResult: TaskResult = lastResult ?? {
+        success: true,
+        taskId: generateTaskId(),
+        data: { content: '', streamed: true, merged: true },
+        completedAt: Date.now(),
+      };
+      for (const w of waiters) {
+        w.resolve({
+          ...mergedResult,
+          data: { ...(mergedResult.data as Record<string, unknown>), streamed: true, merged: true },
+        });
+      }
+    }
+  }
+
+  /** Core message processing logic (extracted from handleIncomingMessage). */
+  private async processMessageInternal(message: BotMessage, traceId: string): Promise<TaskResult> {
     try {
       let session = await this.sessionManager.resolveSession(
         message.userId,
@@ -310,6 +692,8 @@ export class CentralController {
           completedAt: Date.now(),
         };
       }
+
+      // DD-017: Message aggregation now handled by handleIncomingMessage debounce + drainMessageBuffer.
 
       // --- File upload detection ---
       if (
@@ -420,12 +804,40 @@ export class CentralController {
         complexity: classifyResult.complexity,
       });
 
+      const sessionKey = `${message.userId}:${message.channel}:${message.conversationId}`;
+
+      // W-01: Dispatch through TaskDispatcher when available (persistence + session serialization)
+      if (this.taskDispatcher) {
+        const { taskId, result } = await this.taskDispatcher.dispatchAndAwait(sessionKey, {
+          type: classifyResult.taskType,
+          message,
+          executionMode: classifyResult.executionMode,
+          source: 'user',
+          metadata: {
+            traceId,
+            classifyResult,
+          },
+        });
+        // Retrieve full TaskResult from side-channel (preserves streamed, complexity, etc.)
+        const fullResult = this.dispatchResults.get(taskId);
+        this.dispatchResults.delete(taskId);
+        if (fullResult) {
+          return fullResult;
+        }
+        return {
+          success: true,
+          taskId,
+          data: { content: result, channel: message.channel },
+          completedAt: Date.now(),
+        };
+      }
+
+      // Fallback: direct orchestrate (no persistence)
       const abortController = new AbortController();
       this.activeRequests.set(task.id, abortController);
       task.signal = abortController.signal;
 
       try {
-        const sessionKey = `${message.userId}:${message.channel}:${message.conversationId}`;
         const result = await this.sessionSerializer.run(sessionKey, () => this.orchestrate(task));
         return result;
       } finally {
@@ -468,7 +880,29 @@ export class CentralController {
   }
 
   async classifyIntent(message: BotMessage): Promise<UnifiedClassifyResult> {
-    return this.classifier.classify(message.content, { userId: message.userId });
+    // 有附件（图片/文件）的消息强制走 complex — LightLLM 不支持多模态
+    if (message.attachments?.length) {
+      return {
+        taskType: 'chat',
+        complexity: 'complex',
+        reason: '含附件，强制 complex',
+        classifiedBy: 'rule',
+        executionMode: 'sync',
+      };
+    }
+
+    const result = await this.classifier.classify(message.content, { userId: message.userId });
+
+    // DD-014: Enrich with execution mode classification
+    const executionMode = classifyExecutionMode({
+      taskType: result.taskType,
+      complexity: result.complexity,
+      source: 'user',
+      content: message.content,
+    });
+    result.executionMode = executionMode;
+
+    return result;
   }
 
   calculatePriority(taskType: TaskType): number {
@@ -600,11 +1034,17 @@ export class CentralController {
     const sessionKey = `${task.message.userId}:${task.message.channel}:${task.message.conversationId}`;
 
     // --- Media processing ---
+    // Set uploads directory so downloader persists files to disk
+    if (task.session.workspacePath) {
+      this.mediaProcessor.setUploadsDir(join(task.session.workspacePath, 'workspace', 'uploads'));
+    }
+
     let mediaRefs: MediaRef[] | undefined;
     if (task.message.attachments?.length) {
       try {
+        // Claude 原生支持读图片（通过临时文件），跳过 LightLLM understanding 避免冗余调用
         const processed = await this.mediaProcessor.processAttachments(task.message.attachments, {
-          runUnderstanding: true,
+          runUnderstanding: false,
         });
         mediaRefs = processed
           .filter((a) => a.state === 'processed' || a.state === 'downloaded')
@@ -613,6 +1053,26 @@ export class CentralController {
         this.logger.warn('媒体处理失败，继续纯文本处理', {
           error: error instanceof Error ? error.message : String(error),
         });
+      }
+    } else {
+      // 当前消息无附件时，从 session 最近消息中取 mediaRefs（支持先发图再发文字的场景）
+      const recentMessages = this.sessionManager.getRecentMessages(sessionKey, 5);
+      for (let i = recentMessages.length - 1; i >= 0; i--) {
+        const msg = recentMessages[i];
+        if (msg?.role === 'user' && msg.mediaRefs?.length) {
+          // Restore base64 from disk if cleared from memory
+          for (const ref of msg.mediaRefs) {
+            if (!ref.base64Data && ref.localPath && existsSync(ref.localPath)) {
+              try {
+                ref.base64Data = readFileSync(ref.localPath).toString('base64');
+              } catch {
+                // ignore read errors
+              }
+            }
+          }
+          mediaRefs = msg.mediaRefs;
+          break;
+        }
       }
     }
 
@@ -638,7 +1098,30 @@ export class CentralController {
       // Non-critical, continue
     }
 
-    // Build stream callback
+    // Original content preservation: handled by SessionStore.appendMessage() which
+    // auto-indexes into SQLite FTS5 (session_messages_fts). The memory MCP server's
+    // session_search tool queries this for precise keyword matching.
+    // OV's addResource({content}) API doesn't support content-based creation (422),
+    // so we rely on FTS5 as the raw-text retrieval layer.
+
+    // DD-021: Send placeholder card for Feishu channel before agent execution
+    let existingCardId: string | undefined;
+    if (task.message.channel === 'feishu' && this.placeholderSender && !task.session.threadId) {
+      try {
+        const placeholder = await this.placeholderSender(task.message.conversationId);
+        existingCardId = placeholder.cardId;
+        // Bind threadId to session for grouped replies
+        this.sessionManager.updateThreadBinding(sessionKey, placeholder.messageId);
+      } catch (err) {
+        this.logger.warn('占位卡片发送失败，回退到默认流式', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Build stream callback with StreamContentFilter
+    // Filter: only pass text_delta, tool_use, error, done events; block thinking/tool_result
+    const streamFilter = new StreamContentFilter();
     let streamCallback: ((event: StreamEvent) => void) | undefined;
     let streamResultPromise: Promise<unknown> | undefined;
 
@@ -646,14 +1129,28 @@ export class CentralController {
       task.message.userId,
       task.message.channel,
       task.message.conversationId,
+      existingCardId ? { existingCardId } : undefined,
     );
 
     if (adapters && adapters.length > 0) {
       const stream = this.streamHandler.createStreamCallback(adapters);
-      streamCallback = stream.callback;
+      const rawCallback = stream.callback;
+      streamCallback = (event: StreamEvent) => {
+        const filtered = streamFilter.filter(event);
+        if (filtered) {
+          rawCallback(event); // Pass original event (adapter handles formatting)
+        }
+      };
       streamResultPromise = stream.result;
     } else if (this.streamCallback) {
-      streamCallback = (event: StreamEvent) => this.streamCallback?.(task.message.userId, event);
+      const rawUserCallback = this.streamCallback;
+      const userId = task.message.userId;
+      streamCallback = (event: StreamEvent) => {
+        const filtered = streamFilter.filter(event);
+        if (filtered) {
+          rawUserCallback(userId, event);
+        }
+      };
     }
 
     // Load AIEOS config + retrieve memories via OpenViking
@@ -667,43 +1164,249 @@ export class CentralController {
     );
     const anchor = await this.contextManager.checkAndFlush(task.session.id, estimatedTokens);
 
-    // Build knowledge-routed system prompt
-    const resolvedContext = await this.knowledgeRouter.buildContext(
-      task.message.userId,
-      task.message.content,
-      contextMessages,
-      'complex',
-      {
-        summaries,
-        workspaceInfo: this.getWorkspaceInfo(),
-        anchorText: anchor ?? undefined,
-        configLoader: task.session.userConfigLoader,
-      },
-    );
+    // DEPRECATED: Build knowledge-routed system prompt (kept as fallback)
+    // const resolvedContext = await this.knowledgeRouter.buildContext(
+    //   task.message.userId,
+    //   task.message.content,
+    //   contextMessages,
+    //   'complex',
+    //   {
+    //     summaries,
+    //     workspaceInfo: this.getWorkspaceInfo(),
+    //     anchorText: anchor ?? undefined,
+    //     configLoader: task.session.userConfigLoader,
+    //   },
+    // );
+
+    // ── DD-018: Session-level frozen prompt + per-turn context ──
+    // Build frozen system prompt once per session (or rebuild after compaction)
+    let systemPromptFallback: string | undefined;
+    if (!task.session.frozenSystemPrompt) {
+      try {
+        // W-03: Build skill index from real SkillIndexBuilder
+        const skillIndexBuilder = new SkillIndexBuilder();
+        const workspaceInfo = this.getWorkspaceInfo();
+        const skillIndex = skillIndexBuilder.build({
+          skills: workspaceInfo.availableSkills.map((name) => ({
+            name,
+            description: name,
+            dir: `skills/builtin/${name}`,
+          })),
+          channel: task.session.channel,
+        });
+
+        // W-04: Build memory snapshot from OpenViking long-term memories
+        const snapshotMemories = await this.fetchSnapshotMemories(task.session.userId);
+        const memorySnapshot = buildMemorySnapshot(snapshotMemories);
+
+        const frozen = await this.systemPromptBuilder.build({
+          userId: task.session.userId,
+          channel: task.session.channel,
+          workspacePath: task.session.workspacePath,
+          skillIndex,
+          memorySnapshot,
+        });
+        task.session.frozenSystemPrompt = {
+          ...frozen,
+          sections: frozen.sections as unknown as Record<string, string>,
+        };
+
+        // Build prepend context (first user message, OVERRIDE semantics)
+        const userConfig = (await task.session.userConfigLoader?.loadFile?.('USER.md')) || '';
+        const agentsConfig = (await task.session.userConfigLoader?.loadFile?.('AGENTS.md')) || '';
+        task.session.prependContext = buildPrependContext({
+          agentsConfig,
+          userConfig,
+        });
+      } catch (err) {
+        this.logger.warn('SystemPromptBuilder 失败，回退到 KnowledgeRouter', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // Fallback to KnowledgeRouter
+        try {
+          const resolvedContext = await this.knowledgeRouter.buildContext(
+            task.message.userId,
+            task.message.content,
+            contextMessages,
+            'complex',
+            {
+              summaries,
+              workspaceInfo: this.getWorkspaceInfo(),
+              anchorText: anchor ?? undefined,
+              configLoader: task.session.userConfigLoader,
+            },
+          );
+          systemPromptFallback = resolvedContext.systemPrompt;
+        } catch (fallbackErr) {
+          // Last resort: minimal hardcoded prompt that doesn't depend on any module
+          this.logger.error('KnowledgeRouter fallback 也失败，使用最小化兜底', {
+            error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
+          });
+          systemPromptFallback =
+            '你是一个 AI 助手。请尽力帮助用户。（系统提示加载失败，使用最小化配置）';
+        }
+      }
+    }
+
+    // Per-turn context injection
+    const taskGuidance = this.taskGuidanceBuilder.build({
+      taskType: task.classifyResult?.taskType || 'chat',
+      executionMode: task.classifyResult?.executionMode || 'sync',
+      workspacePath: task.session.workspacePath,
+    });
+    const turnContext = buildTurnContext({
+      memories: await this.retrieveRelevantMemories(task.message.content, task.session.userId),
+      taskType: task.classifyResult?.taskType || 'chat',
+      executionMode: task.classifyResult?.executionMode || 'sync',
+      taskGuidance,
+      invokedSkills: task.session.invokedSkills ? [...task.session.invokedSkills] : undefined,
+      postCompaction: task.session.postCompaction,
+      mcpServers:
+        task.session.activeMcpServers || task.session.previousMcpServers
+          ? {
+              current: task.session.activeMcpServers ? [...task.session.activeMcpServers] : [],
+              previous: task.session.previousMcpServers ? [...task.session.previousMcpServers] : [],
+            }
+          : undefined,
+    });
+
+    // Assemble final system prompt: frozen prompt (or fallback) + turn context
+    const isFirstMessage = task.session.messages.length <= 1;
+    const frozenContent = task.session.frozenSystemPrompt?.content ?? systemPromptFallback ?? '';
+    const prependBlock =
+      isFirstMessage && task.session.prependContext ? `${task.session.prependContext}\n\n` : '';
+    const finalSystemPrompt =
+      frozenContent +
+      (turnContext.content
+        ? `\n\n${prependBlock}${turnContext.content}`
+        : prependBlock
+          ? `\n\n${prependBlock}`
+          : '');
 
     const workspacePath = options?.cwdOverride ?? task.session.workspacePath;
 
-    // Execute via AgentRuntime
-    const result = await this.agentRuntime.execute({
-      agentId: 'default',
-      context: {
-        sessionId: task.session.id,
-        messages: contextMessages,
-        systemPrompt: resolvedContext.systemPrompt,
-        workspacePath,
-        claudeSessionId: task.session.claudeSessionId,
-      },
-      signal: task.signal,
-      streamCallback,
-      forceComplex: options?.forceComplex,
-      classifyResult: task.classifyResult,
-    });
+    // Assemble prependContext for gateway (first message only)
+    const prependContext =
+      isFirstMessage && task.session.prependContext ? task.session.prependContext : '';
+
+    // Execute via IntelligenceGateway (with AgentRuntime fallback)
+    let result: EnhancedAgentResult;
+
+    let streamDoneSent = false;
+    let executionFailed = false;
+    const guardedStreamCallback = streamCallback
+      ? (event: StreamEvent) => {
+          if (event.type === 'done' || event.type === 'error') streamDoneSent = true;
+          streamCallback(event);
+        }
+      : undefined;
+
+    try {
+      if (this.intelligenceGateway) {
+        try {
+          const gatewayResult = await this.intelligenceGateway.handle({
+            message: task.message.content,
+            complexity: task.classifyResult?.complexity || 'complex',
+            taskType: task.classifyResult?.taskType || 'chat',
+            hasAttachments:
+              (task.message.attachments?.length ?? 0) > 0 || (mediaRefs?.length ?? 0) > 0,
+            agentParams: {
+              systemPrompt: finalSystemPrompt,
+              prependContext,
+              userMessage: task.message.content,
+              sessionId: task.session.id,
+              claudeSessionId: task.session.claudeSessionId,
+              workspacePath,
+              mcpConfig: this.mcpConfigBuilder.build({
+                executionMode: task.classifyResult?.executionMode || 'sync',
+                taskType: task.classifyResult?.taskType || 'chat',
+                userId: task.session.userId,
+              }),
+              signal: task.signal,
+              streamCallback: guardedStreamCallback
+                ? async (event) => {
+                    guardedStreamCallback(event);
+                  }
+                : undefined,
+              executionMode: task.classifyResult?.executionMode || 'sync',
+              classifyResult: task.classifyResult as Record<string, unknown> | undefined,
+              maxTurns: task.classifyResult?.taskType === 'harness' ? 100 : 30,
+              mediaRefs,
+            },
+          });
+
+          // Gateway 快速路径不触发 streamCallback，需手动推送流式事件
+          // 否则 processStream 的 async iterator 永远等不到 done → 死锁
+          if (gatewayResult.handledBy === 'gateway' && guardedStreamCallback) {
+            if (gatewayResult.content) {
+              guardedStreamCallback({ type: 'text_delta', text: gatewayResult.content });
+            }
+            guardedStreamCallback({ type: 'done' });
+          }
+
+          // Map to EnhancedAgentResult for backward compatibility
+          result = {
+            content: gatewayResult.content,
+            tokenUsage: gatewayResult.tokenUsage,
+            toolsUsed: gatewayResult.toolsUsed,
+            claudeSessionId: gatewayResult.claudeSessionId,
+            complexity: gatewayResult.handledBy === 'gateway' ? 'simple' : 'complex',
+            channel: gatewayResult.handledBy === 'gateway' ? 'light_llm' : 'agent_sdk',
+            classificationCostUsd: task.classifyResult?.costUsd ?? 0,
+          };
+        } catch (gatewayError) {
+          this.logger.warn('IntelligenceGateway 失败，回退到 AgentRuntime (forceComplex)', {
+            error: gatewayError instanceof Error ? gatewayError.message : String(gatewayError),
+          });
+          // Gateway 失败（通常是 LightLLM 429/500），直接走 Claude 避免二次失败
+          result = await this.agentRuntime.execute({
+            agentId: 'default',
+            context: {
+              sessionId: task.session.id,
+              messages: contextMessages,
+              systemPrompt: finalSystemPrompt,
+              workspacePath,
+              claudeSessionId: task.session.claudeSessionId,
+            },
+            signal: task.signal,
+            streamCallback: guardedStreamCallback,
+            forceComplex: true,
+            classifyResult: task.classifyResult,
+          });
+        }
+      } else {
+        // No gateway available — use AgentRuntime directly
+        result = await this.agentRuntime.execute({
+          agentId: 'default',
+          context: {
+            sessionId: task.session.id,
+            messages: contextMessages,
+            systemPrompt: finalSystemPrompt,
+            workspacePath,
+            claudeSessionId: task.session.claudeSessionId,
+          },
+          signal: task.signal,
+          streamCallback: guardedStreamCallback,
+          forceComplex: options?.forceComplex,
+          classifyResult: task.classifyResult,
+        });
+      }
+    } catch (execError) {
+      executionFailed = true;
+      throw execError;
+    } finally {
+      // 安全网：仅在异常时确保 stream adapter 不会永远卡在 loading 状态
+      if (executionFailed && streamResultPromise && !streamDoneSent && streamCallback) {
+        streamCallback({ type: 'error', error: '执行异常，流式已关闭' });
+        streamCallback({ type: 'done' });
+      }
+    }
 
     if (streamResultPromise) {
       await streamResultPromise;
     }
 
-    // Clear base64 data from mediaRefs to prevent memory bloat in session history
+    // Clear base64 from memory (files already persisted to disk by MediaDownloader)
     if (mediaRefs?.length) {
       for (const ref of mediaRefs) {
         ref.base64Data = undefined;
@@ -728,6 +1431,35 @@ export class CentralController {
     );
     if (feedbackText) {
       responseContent += `\n\n---\n${feedbackText}`;
+    }
+
+    // DD-012: Route analysis results via AnalysisRouter
+    if (feedbackText) {
+      const items: AnalysisItem[] = [{ content: feedbackText, type: 'lesson' }];
+      const routed = routeAnalysis(items);
+
+      if (routed.memories.length > 0) {
+        this.logger.debug('分析结果路由到 Memory', { count: routed.memories.length });
+      }
+      if (routed.skillCandidates.length > 0) {
+        this.logger.debug('分析结果路由到 Skill', { count: routed.skillCandidates.length });
+        if (this.skillManager && task.session.workspacePath) {
+          for (const candidate of routed.skillCandidates) {
+            const skillName = `auto-${candidate.type}-${Date.now()}`;
+            try {
+              this.skillManager.addSkill(task.session.workspacePath, skillName, {
+                content: `---\nname: ${skillName}\ndescription: Auto-generated ${candidate.type} skill\ntype: ${candidate.type}\n---\n\n${candidate.content}`,
+              });
+              this.logger.info('自动创建技能', { skillName, type: candidate.type });
+            } catch (err) {
+              this.logger.warn('技能创建失败', {
+                skillName,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+        }
+      }
     }
 
     // Sync assistant message to OpenViking session
@@ -926,6 +1658,124 @@ export class CentralController {
     return { availableSkills: skills, recentToolsUsed: [] };
   }
 
+  /**
+   * W-05: Retrieve relevant memories for per-turn context injection.
+   *
+   * Dual-path search:
+   *   1. OV semantic search (memories + resources) — for theme/preference recall
+   *   2. SQLite FTS5 keyword search (session history) — for exact details (dates, numbers, names)
+   *
+   * Graceful degradation: returns empty array if both paths fail.
+   */
+  private async retrieveRelevantMemories(
+    query: string,
+    userId: string,
+  ): Promise<Array<{ content: string; updatedAt: number }>> {
+    const results: Array<{ content: string; updatedAt: number; score: number }> = [];
+
+    // ── Path 1: OV semantic search (memories + resources) ──
+    if (this.ovClient) {
+      try {
+        const [memoryHits, resourceHits] = await Promise.all([
+          this.ovClient.find({
+            query,
+            target_uri: 'viking://user/default/memories',
+            limit: 10,
+          }),
+          this.ovClient.find({
+            query,
+            target_uri: 'viking://resources',
+            limit: 5,
+          }),
+        ]);
+        for (const r of [...(memoryHits ?? []), ...(resourceHits ?? [])]) {
+          const content = r.abstract || String(r);
+          if (content && content.length > 5) {
+            results.push({ content, updatedAt: Date.now(), score: r.score ?? 0 });
+          }
+        }
+      } catch (err) {
+        this.logger.debug('OV per-turn 检索失败，降级', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // ── Path 2: FTS5 keyword search on session history ──
+    try {
+      // FTS5 keyword search — tokenization delegated to SessionStore.toFtsQuery()
+      const ftsQuery = SessionStore.toFtsQuery(query);
+      if (ftsQuery && this.sessionStore) {
+        const ftsResults = this.sessionStore.searchMessages({
+          userId,
+          query: ftsQuery,
+          limit: 5,
+        });
+        for (const r of ftsResults) {
+          // Truncate long session messages to keep context reasonable
+          const content = r.content.length > 500 ? `${r.content.slice(0, 500)}…` : r.content;
+          const dateStr = r.timestamp ? new Date(r.timestamp).toISOString().split('T')[0] : '';
+          results.push({
+            content: `[对话记录${dateStr ? ` ${dateStr}` : ''}] ${content}`,
+            updatedAt: r.timestamp ?? Date.now(),
+            score: 0.4, // FTS keyword hits get a moderate base score
+          });
+        }
+      }
+    } catch (err) {
+      this.logger.debug('FTS5 per-turn 检索失败，降级', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // Deduplicate and sort by score, return top 10
+    return results
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+      .map(({ content, updatedAt }) => ({ content, updatedAt }));
+  }
+
+  // FTS query building is delegated to SessionStore.toFtsQuery()
+
+  /**
+   * W-04: Fetch user's long-term memories from OpenViking for frozen system prompt snapshot.
+   * Searches across all memory categories and maps to MemoryItem format.
+   */
+  private async fetchSnapshotMemories(userId: string): Promise<MemoryItem[]> {
+    if (!this.ovClient) return [];
+    try {
+      const results = await this.ovClient.find({
+        query: '*',
+        target_uri: 'viking://user/default/memories',
+        limit: 30,
+      });
+      return (results || []).map((r) => ({
+        content: r.abstract || String(r),
+        category: uriToMemoryCategory(r.uri),
+        importance: r.score,
+        updatedAt: Date.now(),
+      }));
+    } catch (err) {
+      this.logger.warn('记忆快照加载失败，降级为空快照', {
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
+  }
+
+  /**
+   * Aggregate multiple pending messages before execution.
+   * Delegates to QueueAggregator for rule-based merging.
+   * Full queue integration requires TaskDispatcher to replace TaskQueue (DD-017).
+   */
+  async aggregateMessages(
+    messages: string[],
+    llmFallback?: (prompt: string) => Promise<string>,
+  ): Promise<import('./tasking/queue-aggregator').AggregationResult> {
+    return this.queueAggregator.aggregate(messages, llmFallback);
+  }
+
   cancelRequest(taskId: string): boolean {
     const controller = this.activeRequests.get(taskId);
     if (controller) {
@@ -944,13 +1794,26 @@ export class CentralController {
   /** Set channel resolver (called after ChannelManager is created) */
   setChannelResolver(resolver: (channelType: string) => IChannel | undefined): void {
     this.channelResolver = resolver;
+    this.mediaProcessor.setChannelResolver(resolver);
   }
 
   /** Set stream adapter factory (called after channel registration) */
   setStreamAdapterFactory(
-    factory: (userId: string, channel: string, conversationId: string) => ChannelStreamAdapter[],
+    factory: (
+      userId: string,
+      channel: string,
+      conversationId: string,
+      options?: { existingCardId?: string },
+    ) => ChannelStreamAdapter[],
   ): void {
     this.streamAdapterFactory = factory;
+  }
+
+  /** DD-021: Set placeholder sender (called after channel registration) */
+  setPlaceholderSender(
+    sender: (chatId: string) => Promise<{ cardId: string; messageId: string }>,
+  ): void {
+    this.placeholderSender = sender;
   }
 
   /**
@@ -1051,5 +1914,19 @@ export class CentralController {
     this.scheduler.stop();
     this.scheduler.persistJobs();
     this.logger.info('Scheduler 已停止并持久化');
+  }
+
+  /**
+   * Graceful shutdown: flush session store and cancel/drain task dispatcher.
+   */
+  async shutdown(): Promise<void> {
+    if (this.sessionStore) {
+      this.sessionStore.close();
+      this.logger.info('SessionStore 已关闭（写队列已刷新）');
+    }
+    if (this.taskDispatcher) {
+      await this.taskDispatcher.shutdown();
+      this.logger.info('TaskDispatcher 已关闭（运行中任务已取消）');
+    }
   }
 }

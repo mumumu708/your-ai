@@ -36,6 +36,20 @@ export interface Session {
   harnessWorktreePath?: string;
   harnessBranch?: string;
   harnessGroupChatId?: string;
+  /** DD-021: Feishu message thread ID — binds session to a reply thread */
+  threadId?: string;
+  // DD-018: Session-level frozen prompt + per-turn context state
+  frozenSystemPrompt?: {
+    content: string;
+    totalTokens: number;
+    builtAt: number;
+    sections: Record<string, string>;
+  };
+  prependContext?: string;
+  invokedSkills?: Set<string>;
+  activeMcpServers?: Set<string>;
+  previousMcpServers?: Set<string>;
+  postCompaction?: boolean;
 }
 
 export interface Task {
@@ -49,4 +63,72 @@ export interface Task {
   signal?: AbortSignal;
   metadata: TaskMetadata;
   classifyResult?: UnifiedClassifyResult;
+}
+
+// ── Session persistence types ──
+
+export interface SessionRecord {
+  id: string;
+  userId: string;
+  channel: string;
+  conversationId?: string;
+  startedAt: number;
+  endedAt?: number;
+  endReason?: string;
+  messageCount: number;
+  summary?: string;
+  reflectionProcessed: boolean;
+}
+
+export interface MessageRecord {
+  id?: number;
+  sessionId: string;
+  userId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  tokenEstimate?: number;
+  /** JSON-serialized MediaRef[] (without base64Data) for persistence */
+  mediaRefsJson?: string;
+}
+
+export interface SearchResult {
+  sessionId: string;
+  role: string;
+  content: string;
+  timestamp: number;
+  channel: string;
+  sessionSummary?: string;
+  highlight: string;
+}
+
+// ── Task persistence types (DD-017) ──
+
+export type ExecutionMode = 'sync' | 'async' | 'long-horizon';
+
+export interface TaskRecord {
+  id: string;
+  userId: string;
+  sessionId: string;
+  type: string;
+  executionMode: ExecutionMode;
+  source: 'user' | 'system' | 'scheduler';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  description?: string;
+  inboundMessageId?: string;
+  claudeSessionId?: string;
+  createdAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  resultSummary?: string;
+  errorMessage?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TaskPayload {
+  type: string;
+  message: BotMessage;
+  executionMode?: ExecutionMode;
+  source: 'user' | 'system' | 'scheduler';
+  metadata?: Record<string, unknown>;
 }

@@ -73,8 +73,12 @@ const KEYWORD_STOP_WORDS = new Set([
 ]);
 
 export class SessionMemoryExtractor {
-  private readonly logger = new Logger('SessionMemoryExtractor');
+  private readonly logger: Logger;
   private llmExtract: LlmExtractFn | null = null;
+
+  constructor() {
+    this.logger = new Logger('SessionMemoryExtractor');
+  }
 
   setLlmExtract(fn: LlmExtractFn): void {
     this.llmExtract = fn;
@@ -89,8 +93,8 @@ export class SessionMemoryExtractor {
       return this.emptySummary(sessionId, userId);
     }
 
-    const startedAt = messages[0]!.timestamp;
-    const endedAt = messages[messages.length - 1]!.timestamp;
+    const startedAt = messages[0]?.timestamp ?? Date.now();
+    const endedAt = messages[messages.length - 1]?.timestamp ?? Date.now();
 
     // Combine all user content for analysis
     const userContent = messages
@@ -154,7 +158,8 @@ export class SessionMemoryExtractor {
     // Count frequency
     const freq = new Map<string, number>();
     for (const token of tokens) {
-      freq.set(token, (freq.get(token) ?? 0) + 1);
+      const cur = freq.get(token);
+      freq.set(token, cur !== undefined ? cur + 1 : 1);
     }
 
     // Sort by frequency descending

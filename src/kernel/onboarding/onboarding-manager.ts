@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Logger } from '../../shared/logging/logger';
 import type { LightLLMClient } from '../agents/light-llm-client';
-import type { UserConfigLoader } from '../memory/user-config-loader';
+import type { UserConfigLoader } from '../prompt/user-config-loader';
 
 export type OnboardingStep = 'agent_name' | 'personality' | 'values' | 'confirm' | 'complete';
 

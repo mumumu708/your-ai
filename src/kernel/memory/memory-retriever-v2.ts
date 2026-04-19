@@ -31,7 +31,7 @@ export async function retrieveMemories(
   const [memoryResults, resourceResults] = await Promise.all([
     ov.find({
       query,
-      target_uri: 'viking://user/memories',
+      target_uri: 'viking://user/default/memories',
       limit: memoryTopK,
     }),
     ov.find({
@@ -52,11 +52,9 @@ export async function retrieveMemories(
     if (remaining <= 0) break;
 
     try {
-      const isFile = isFileUri(result.uri);
       if (remaining > 2000) {
-        // L1: overview (~500-2000 tokens)
-        // overview/abstract only work on directories; use read() for file URIs
-        const content = isFile ? await ov.read(result.uri) : await ov.overview(result.uri);
+        // L1: full content via read()
+        const content = await ov.read(result.uri);
         contextItems.push({
           uri: result.uri,
           content,
@@ -65,8 +63,15 @@ export async function retrieveMemories(
         });
         remaining -= 2000;
       } else if (remaining > 100) {
-        // L0: abstract (~50-100 tokens)
-        const content = isFile ? await ov.read(result.uri) : await ov.abstract(result.uri);
+        // L0: try abstract, fallback to truncated read
+        let content: string;
+        try {
+          content = isFileUri(result.uri)
+            ? (await ov.read(result.uri)).slice(0, 300)
+            : await ov.abstract(result.uri);
+        } catch {
+          content = (await ov.read(result.uri)).slice(0, 300);
+        }
         contextItems.push({
           uri: result.uri,
           content,

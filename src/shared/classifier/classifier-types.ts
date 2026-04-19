@@ -1,3 +1,5 @@
+import type { ExecutionMode } from '../tasking/task.types';
+
 export type TaskComplexity = 'simple' | 'complex';
 
 export interface UnifiedClassifyResult {
@@ -8,6 +10,8 @@ export interface UnifiedClassifyResult {
   confidence: number; // 0-1
   classifiedBy: 'rule' | 'llm';
   costUsd: number;
+  /** DD-014: Execution mode derived from ExecutionModeClassifier */
+  executionMode?: ExecutionMode;
 }
 
 /** @deprecated Use UnifiedClassifyResult instead */

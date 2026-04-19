@@ -1,13 +1,20 @@
 import { Logger } from '../../shared/logging/logger';
 import type { OpenVikingClient } from '../memory/openviking/openviking-client';
+import {
+  type LlmDistillFn,
+  clusterItemsWithOV,
+  distillClusters,
+  scanUndigested,
+  writeInsights,
+} from './digest/digest-pipeline';
 import { evolveMemory } from './evolve';
 import { linkMemory } from './link';
-import { reflect } from './reflect';
+import { type ReflectLlmCall, reflect } from './reflect';
 
 const logger = new Logger('EvolutionScheduler');
 
 interface EvolutionJob {
-  type: 'reflect' | 'link' | 'evolve';
+  type: 'reflect' | 'link' | 'evolve' | 'digest';
   payload: Record<string, unknown>;
   retries: number;
 }
@@ -22,7 +29,11 @@ export class EvolutionScheduler {
   private running = 0;
   private readonly pending: EvolutionJob[] = [];
 
-  constructor(private readonly ov: OpenVikingClient) {}
+  constructor(
+    private readonly ov: OpenVikingClient,
+    private readonly reflectLlmCall?: ReflectLlmCall,
+    private readonly digestLlmDistill?: LlmDistillFn,
+  ) {}
 
   /** Schedule post-commit evolution tasks for extracted memories */
   schedulePostCommit(extractedMemoryUris: string[]): void {
@@ -39,6 +50,16 @@ export class EvolutionScheduler {
       links: extractedMemoryUris.length,
       reflects: 3,
     });
+  }
+
+  /** Schedule a digest task (DD-022) */
+  scheduleDigest(userId: string): void {
+    this.enqueue({
+      type: 'digest',
+      payload: { userId },
+      retries: 0,
+    });
+    logger.info('消化任务已调度', { userId });
   }
 
   /** Schedule a single evolve task */
@@ -71,7 +92,7 @@ export class EvolutionScheduler {
     try {
       switch (job.type) {
         case 'reflect':
-          await reflect(this.ov, job.payload.category as string);
+          await reflect(this.ov, job.payload.category as string, this.reflectLlmCall);
           break;
         case 'link':
           await linkMemory(this.ov, job.payload.uri as string);
@@ -82,6 +103,9 @@ export class EvolutionScheduler {
             job.payload.newContent as string,
             job.payload.existingUri as string,
           );
+          break;
+        case 'digest':
+          await this.executeDigest(job.payload.userId as string);
           break;
       }
     } catch (err) {
@@ -94,5 +118,34 @@ export class EvolutionScheduler {
         this.enqueue({ ...job, retries: job.retries + 1 });
       }
     }
+  }
+
+  /** DD-022: Execute digest pipeline — scan → cluster → distill → write */
+  private async executeDigest(userId: string): Promise<void> {
+    if (!this.digestLlmDistill) {
+      logger.warn('Digest 跳过：未注入 LLM distill 函数', { userId });
+      return;
+    }
+
+    const items = await scanUndigested(this.ov, userId);
+    if (items.length === 0) {
+      logger.info('Digest 跳过：无未消化碎片', { userId });
+      return;
+    }
+
+    const clusters = await clusterItemsWithOV(items, this.ov);
+    if (clusters.length === 0) {
+      logger.info('Digest 跳过：聚类结果为空', { userId, scanned: items.length });
+      return;
+    }
+
+    const insights = await distillClusters(clusters, this.digestLlmDistill);
+    const written = await writeInsights(this.ov, userId, insights);
+    logger.info('Digest 完成', {
+      userId,
+      scanned: items.length,
+      clusters: clusters.length,
+      written,
+    });
   }
 }

@@ -9,7 +9,7 @@ function createMockOV(): OpenVikingClient {
       { uri: 'viking://m1', context_type: 'memory', abstract: 'a', score: 0.9, match_reason: 'r' },
       { uri: 'viking://m2', context_type: 'memory', abstract: 'b', score: 0.8, match_reason: 'r' },
     ]),
-    abstract: mock(async (uri: string) => `summary of ${uri}`),
+    read: mock(async (uri: string) => `summary of ${uri}`),
   } as unknown as OpenVikingClient;
 }
 

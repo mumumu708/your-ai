@@ -1,0 +1,399 @@
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import * as child_process from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { existsSync, readFileSync } from 'node:fs';
+
+import type { MediaRef } from '../../shared/messaging/media-attachment.types';
+import type { AgentExecuteParams } from './agent-bridge';
+import { CodexAgentBridge } from './codex-agent-bridge';
+
+/** Creates a mock child process with controllable streams */
+function createMockProcess() {
+  const proc = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    kill: ReturnType<typeof mock>;
+    stdin: null;
+  };
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  proc.kill = mock(() => {});
+  proc.stdin = null;
+  return proc;
+}
+
+function createBaseParams(overrides: Partial<AgentExecuteParams> = {}): AgentExecuteParams {
+  return {
+    systemPrompt: 'You are helpful.',
+    prependContext: '',
+    userMessage: 'Hello',
+    sessionId: 'test-session',
+    executionMode: 'sync',
+    ...overrides,
+  };
+}
+
+describe('CodexAgentBridge', () => {
+  let spawnSpy: ReturnType<typeof spyOn>;
+  let logSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    logSpy = spyOn(console, 'log').mockImplementation(() => {});
+    spawnSpy = spyOn(child_process, 'spawn');
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    spawnSpy.mockRestore();
+  });
+
+  test('constructor creates instance', () => {
+    const bridge = new CodexAgentBridge();
+    expect(bridge).toBeDefined();
+  });
+
+  test('buildArgs includes --full-auto and --json', () => {
+    const bridge = new CodexAgentBridge();
+    const args = bridge.buildArgs(createBaseParams());
+
+    expect(args).toContain('exec');
+    expect(args).toContain('--full-auto');
+    expect(args).toContain('--json');
+  });
+
+  test('buildArgs includes workspace path with -C flag', () => {
+    const bridge = new CodexAgentBridge();
+    const args = bridge.buildArgs(createBaseParams({ workspacePath: '/tmp/workspace' }));
+
+    expect(args).toContain('-C');
+    expect(args).toContain('/tmp/workspace');
+  });
+
+  test('buildArgs concatenates system prompt, prepend context, and user message', () => {
+    const bridge = new CodexAgentBridge();
+    const args = bridge.buildArgs(
+      createBaseParams({
+        systemPrompt: 'SYS',
+        prependContext: 'CTX',
+        userMessage: 'MSG',
+      }),
+    );
+
+    const prompt = args[args.length - 1];
+    expect(prompt).toContain('SYS');
+    expect(prompt).toContain('CTX');
+    expect(prompt).toContain('MSG');
+  });
+
+  test('buildArgs filters out empty strings from prompt parts', () => {
+    const bridge = new CodexAgentBridge();
+    const args = bridge.buildArgs(
+      createBaseParams({
+        systemPrompt: 'SYS',
+        prependContext: '',
+        userMessage: 'MSG',
+      }),
+    );
+
+    const prompt = args[args.length - 1];
+    expect(prompt).toBe('SYS\n\nMSG');
+  });
+
+  test('extractContent parses agent_message from JSONL', () => {
+    const bridge = new CodexAgentBridge();
+    const jsonl = [
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'agent_message', text: 'first reply' },
+      }),
+      JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'agent_message', text: 'final reply' },
+      }),
+    ].join('\n');
+
+    expect(bridge.extractContent(jsonl)).toBe('first reply\n\nfinal reply');
+  });
+
+  test('extractContent returns raw output when no agent_message found', () => {
+    const bridge = new CodexAgentBridge();
+    const output = 'plain text output';
+
+    expect(bridge.extractContent(output)).toBe('plain text output');
+  });
+
+  test('extractContent handles empty text gracefully', () => {
+    const bridge = new CodexAgentBridge();
+    const jsonl = JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: '' },
+    });
+
+    // text is empty string → falsy → not collected → falls through to raw trim
+    expect(bridge.extractContent(jsonl)).toBe(jsonl.trim());
+  });
+
+  test('extractContent ignores non-JSON lines', () => {
+    const bridge = new CodexAgentBridge();
+    const jsonl = [
+      'not json',
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'good' } }),
+      '{invalid json',
+    ].join('\n');
+
+    expect(bridge.extractContent(jsonl)).toBe('good');
+  });
+
+  test('execute resolves with content on success', async () => {
+    const bridge = new CodexAgentBridge();
+    const mockProc = createMockProcess();
+
+    spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+    const resultPromise = bridge.execute(createBaseParams());
+
+    // Simulate JSONL output (codex format)
+    mockProc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Done!' } })}\n`,
+      ),
+    );
+    mockProc.emit('close', 0);
+
+    const result = await resultPromise;
+    expect(result.content).toBe('Done!');
+    expect(result.handledBy).toBe('codex');
+    expect(result.finishedNaturally).toBe(true);
+    expect(result.tokenUsage).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+
+  test('execute rejects on non-zero exit code', async () => {
+    const bridge = new CodexAgentBridge();
+    const mockProc = createMockProcess();
+
+    spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+    const resultPromise = bridge.execute(createBaseParams());
+
+    mockProc.stderr.emit('data', Buffer.from('some error'));
+    mockProc.emit('close', 1);
+
+    await expect(resultPromise).rejects.toThrow('Codex CLI exited with code 1: some error');
+  });
+
+  test('execute rejects on spawn error', async () => {
+    const bridge = new CodexAgentBridge();
+    const mockProc = createMockProcess();
+
+    spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+    const resultPromise = bridge.execute(createBaseParams());
+
+    mockProc.emit('error', new Error('ENOENT'));
+
+    await expect(resultPromise).rejects.toThrow('ENOENT');
+  });
+
+  test('execute streams text_delta events via streamCallback', async () => {
+    const bridge = new CodexAgentBridge();
+    const mockProc = createMockProcess();
+    const streamEvents: Array<{ type: string; text?: string }> = [];
+
+    spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+    const resultPromise = bridge.execute(
+      createBaseParams({
+        streamCallback: async (event) => {
+          streamEvents.push(event);
+        },
+      }),
+    );
+
+    // Emit agent_message (actual codex JSONL format)
+    mockProc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'streaming...' } })}\n`,
+      ),
+    );
+    mockProc.emit('close', 0);
+
+    await resultPromise;
+    expect(streamEvents.length).toBe(2);
+    expect(streamEvents[0]).toEqual({ type: 'text_delta', text: 'streaming...' });
+    expect(streamEvents[1]).toEqual({ type: 'done' });
+  });
+
+  test('execute ignores non-assistant messages in stream', async () => {
+    const bridge = new CodexAgentBridge();
+    const mockProc = createMockProcess();
+    const streamEvents: Array<{ type: string; text?: string }> = [];
+
+    spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+    const resultPromise = bridge.execute(
+      createBaseParams({
+        streamCallback: async (event) => {
+          streamEvents.push(event);
+        },
+      }),
+    );
+
+    // Emit non-agent_message event (should be ignored)
+    mockProc.stdout.emit('data', Buffer.from(`${JSON.stringify({ type: 'turn.started' })}\n`));
+    // Emit non-JSON (should be ignored)
+    mockProc.stdout.emit('data', Buffer.from('not json\n'));
+    mockProc.emit('close', 0);
+
+    await resultPromise;
+    // Only the done event should be present (user/non-JSON messages are ignored)
+    expect(streamEvents.length).toBe(1);
+    expect(streamEvents[0]).toEqual({ type: 'done' });
+  });
+
+  test('execute handles AbortSignal', async () => {
+    const bridge = new CodexAgentBridge();
+    const mockProc = createMockProcess();
+    const controller = new AbortController();
+
+    spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+    const resultPromise = bridge.execute(
+      createBaseParams({
+        signal: controller.signal,
+      }),
+    );
+
+    // Abort
+    controller.abort();
+
+    // Verify kill was called
+    expect(mockProc.kill).toHaveBeenCalledWith('SIGTERM');
+
+    // Close to resolve
+    mockProc.emit('close', 0);
+    await resultPromise;
+  });
+
+  test('execute uses workspacePath as cwd', async () => {
+    const bridge = new CodexAgentBridge();
+    const mockProc = createMockProcess();
+
+    spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+    const resultPromise = bridge.execute(createBaseParams({ workspacePath: '/custom/workspace' }));
+
+    expect(spawnSpy).toHaveBeenCalledWith(
+      'codex',
+      expect.any(Array),
+      expect.objectContaining({ cwd: '/custom/workspace' }),
+    );
+
+    mockProc.emit('close', 0);
+    await resultPromise;
+  });
+
+  test('execute uses process.cwd() when no workspacePath', async () => {
+    const bridge = new CodexAgentBridge();
+    const mockProc = createMockProcess();
+
+    spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+    const resultPromise = bridge.execute(createBaseParams({ workspacePath: undefined }));
+
+    expect(spawnSpy).toHaveBeenCalledWith(
+      'codex',
+      expect.any(Array),
+      expect.objectContaining({ cwd: process.cwd() }),
+    );
+
+    mockProc.emit('close', 0);
+    await resultPromise;
+  });
+
+  describe('mediaRefs → --image 处理', () => {
+    const PNG_1PX_BASE64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+    test('buildArgs 无 mediaRefs 时不添加 --image', () => {
+      const bridge = new CodexAgentBridge();
+      const args = bridge.buildArgs(createBaseParams());
+      expect(args).not.toContain('--image');
+    });
+
+    test('buildArgs 有 imagePaths 时添加 --image 参数', () => {
+      const bridge = new CodexAgentBridge();
+      const args = bridge.buildArgs(createBaseParams(), ['/tmp/img-0.png', '/tmp/img-1.png']);
+      const imageIdx = args.indexOf('--image');
+      expect(imageIdx).toBeGreaterThan(-1);
+      expect(args[imageIdx + 1]).toBe('/tmp/img-0.png');
+      // Second image
+      const secondIdx = args.indexOf('--image', imageIdx + 1);
+      expect(secondIdx).toBeGreaterThan(imageIdx);
+      expect(args[secondIdx + 1]).toBe('/tmp/img-1.png');
+    });
+
+    test('execute 写入临时文件并传 --image 给 codex', async () => {
+      const bridge = new CodexAgentBridge();
+      const mockProc = createMockProcess();
+      spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+      const mediaRefs: MediaRef[] = [
+        { mediaType: 'image', mimeType: 'image/png', base64Data: PNG_1PX_BASE64 },
+      ];
+
+      const resultPromise = bridge.execute(createBaseParams({ mediaRefs }));
+
+      // Verify spawn was called with --image flag pointing to a temp file
+      const spawnArgs = spawnSpy.mock.calls[0]?.[1] as string[];
+      const imageIdx = spawnArgs.indexOf('--image');
+      expect(imageIdx).toBeGreaterThan(-1);
+      const tempPath = spawnArgs[imageIdx + 1]!;
+      expect(tempPath).toContain('yourbot-codex-img-');
+      expect(tempPath).toMatch(/\.png$/);
+      // Temp file should exist and contain the image data
+      expect(existsSync(tempPath)).toBe(true);
+      const written = readFileSync(tempPath);
+      expect(written.toString('base64')).toBe(PNG_1PX_BASE64);
+
+      mockProc.emit('close', 0);
+      await resultPromise;
+    });
+
+    test('execute 忽略非 image 类型的 mediaRefs', async () => {
+      const bridge = new CodexAgentBridge();
+      const mockProc = createMockProcess();
+      spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+      const mediaRefs: MediaRef[] = [
+        { mediaType: 'audio', mimeType: 'audio/mp3', base64Data: 'abc' },
+      ];
+
+      const resultPromise = bridge.execute(createBaseParams({ mediaRefs }));
+
+      const spawnArgs = spawnSpy.mock.calls[0]?.[1] as string[];
+      expect(spawnArgs).not.toContain('--image');
+
+      mockProc.emit('close', 0);
+      await resultPromise;
+    });
+
+    test('execute 无 base64Data 且无 localPath 时跳过', async () => {
+      const bridge = new CodexAgentBridge();
+      const mockProc = createMockProcess();
+      spawnSpy.mockReturnValue(mockProc as unknown as child_process.ChildProcess);
+
+      const mediaRefs: MediaRef[] = [{ mediaType: 'image', mimeType: 'image/png' }];
+
+      const resultPromise = bridge.execute(createBaseParams({ mediaRefs }));
+
+      const spawnArgs = spawnSpy.mock.calls[0]?.[1] as string[];
+      expect(spawnArgs).not.toContain('--image');
+
+      mockProc.emit('close', 0);
+      await resultPromise;
+    });
+  });
+});

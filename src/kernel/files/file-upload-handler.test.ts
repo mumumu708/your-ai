@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
-import type { UserConfigLoader } from '../memory/user-config-loader';
+import type { UserConfigLoader } from '../prompt/user-config-loader';
 import { FileUploadHandler } from './file-upload-handler';
 
 function createMockUCL(): UserConfigLoader {
