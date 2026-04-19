@@ -231,7 +231,7 @@ if [ "${WRITE_CONF:-false}" = true ] || [ ! -f "$OV_CONF_FILE" ]; then
     "provider": "volcengine",
     "api_key": "$VOLCENGINE_API_KEY",
     "model": "$OV_VLM_MODEL",
-    "api_base": "https://ark.cn-beijing.volces.com/api/v3",
+    "api_base": "https://ark.cn-beijing.volces.com/api/coding/v3",
     "temperature": 0.1,
     "max_retries": 3
   },

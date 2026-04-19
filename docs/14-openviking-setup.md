@@ -361,6 +361,34 @@ curl -X POST /api/v1/resources -d '{"path": "/local/file.md"}'
 
 用 PM2 启动时，工作目录默认是 `ecosystem.config.js` 所在目录（即项目根目录），所以数据会在项目根目录下。
 
+### 坑 9: 修改 `.env` 后 `pm2 restart` 不刷新 ov.conf
+
+PM2 启动 `openviking-server` 前，`ecosystem.config.cjs` 顶层会 `execFileSync` 调用 `src/setup/generate-ov-conf.ts` 读取 `.env` 重新生成 `~/.openviking/ov.conf`。但这段逻辑**只在 PM2 读取 ecosystem 文件时执行一次**。
+
+```bash
+# ❌ 不会刷新 ov.conf（PM2 用缓存的 app 配置）
+pm2 restart openviking-server
+
+# ✅ 必须这样（强制重新加载 ecosystem.config.cjs）
+pm2 delete openviking-server && pm2 start ecosystem.config.cjs --only openviking-server
+
+# ✅ 或者重启全部
+pm2 restart ecosystem.config.cjs
+```
+
+可改的 env 变量：`VOLCENGINE_API_KEY` / `OV_VLM_MODEL` / `OV_EMBEDDING_MODEL`。其他字段（`api_base`、`port` 等）目前硬编码在 `src/setup/generate-ov-conf.ts`，需改代码。
+
+#### 为什么 conf 生成没做成 PM2 app
+
+最初实现是加一个 `ov-conf-gen` PM2 app（`autorestart: false` 跑一次就退），但 PM2 的 `require-in-the-middle` 插桩跟 bun 跑带 top-level `await` 的 TS 文件不兼容，会报：
+
+```
+TypeError: require() async module "...generate-ov-conf.ts" is unsupported.
+use "await import()" instead.
+```
+
+改成在 `ecosystem.config.cjs` 顶层 `execFileSync` 同步执行即可绕开。
+
 ---
 
 ## API 端点参考

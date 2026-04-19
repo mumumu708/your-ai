@@ -9,11 +9,10 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 
-import type { AgentBridge, AgentExecuteParams, AgentResult } from '../../kernel/agents/agent-bridge';
+import type { AgentBridge, AgentExecuteParams } from '../../kernel/agents/agent-bridge';
 import { AgentBridgeWithFallback } from '../../kernel/agents/agent-bridge-fallback';
 import type { CentralControllerDeps } from '../../kernel/central-controller';
 import type { ChannelStreamAdapter } from '../../kernel/streaming/stream-protocol';
-import type { StreamEvent } from '../../shared/messaging/stream-event.types';
 import {
   type ControllerTestContext,
   cleanupController,
@@ -34,15 +33,26 @@ function createCapturingAdapter() {
     errors: [] as string[],
   };
   const adapter: ChannelStreamAdapter = {
-    onStreamStart: mock(async () => { captured.started = true; }),
-    sendChunk: mock(async (text: string) => { captured.chunks.push(text); }),
-    sendDone: mock(async (fullText: string) => { captured.doneText = fullText; captured.doneCalled = true; }),
-    sendError: mock(async (error: string) => { captured.errors.push(error); }),
+    onStreamStart: mock(async () => {
+      captured.started = true;
+    }),
+    sendChunk: mock(async (text: string) => {
+      captured.chunks.push(text);
+    }),
+    sendDone: mock(async (fullText: string) => {
+      captured.doneText = fullText;
+      captured.doneCalled = true;
+    }),
+    sendError: mock(async (error: string) => {
+      captured.errors.push(error);
+    }),
   };
   return { adapter, captured };
 }
 
-function createPipelineTestController(overrides?: Partial<CentralControllerDeps>): ControllerTestContext {
+function createPipelineTestController(
+  overrides?: Partial<CentralControllerDeps>,
+): ControllerTestContext {
   return createTestController({ taskStore: undefined, ...overrides });
 }
 
@@ -77,14 +87,20 @@ describe('BUG-HUNT-01: Both gateway and runtime fail → stream adapter must sti
   test('sendDone must be called even when all execution paths throw', async () => {
     // LightLLM that always throws → gateway fails
     const lightLLM = {
-      complete: mock(async () => { throw new Error('LightLLM 500'); }),
-      stream: mock(async function* () { throw new Error('LightLLM 500'); }),
+      complete: mock(async () => {
+        throw new Error('LightLLM 500');
+      }),
+      stream: mock(async function* () {
+        throw new Error('LightLLM 500');
+      }),
       getDefaultModel: () => 'mock',
     } as unknown as CentralControllerDeps['lightLLM'];
 
     // AgentBridge that always throws → runtime fallback also fails
     const agentBridge: AgentBridge = {
-      execute: mock(async () => { throw new Error('Bridge also dead'); }),
+      execute: mock(async () => {
+        throw new Error('Bridge also dead');
+      }),
     };
 
     const { adapter, captured } = createCapturingAdapter();
@@ -288,7 +304,7 @@ describe('BUG-HUNT-05: Concurrent messages in same session', () => {
         callCount++;
         const myCount = callCount;
         // Simulate processing time
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 50));
         if (params.streamCallback) {
           await params.streamCallback({ type: 'text_delta', text: `Response_${myCount}` });
           await params.streamCallback({ type: 'done' });
@@ -307,8 +323,16 @@ describe('BUG-HUNT-05: Concurrent messages in same session', () => {
       lightLLM: undefined,
     });
 
-    const msg1 = createMessage({ content: 'first', userId: 'user_race', conversationId: 'conv_race' });
-    const msg2 = createMessage({ content: 'second', userId: 'user_race', conversationId: 'conv_race' });
+    const msg1 = createMessage({
+      content: 'first',
+      userId: 'user_race',
+      conversationId: 'conv_race',
+    });
+    const msg2 = createMessage({
+      content: 'second',
+      userId: 'user_race',
+      conversationId: 'conv_race',
+    });
 
     // Fire both concurrently
     const [r1, r2] = await Promise.all([

@@ -18,3 +18,5 @@ openviking-data/*
 .worktrees/
 
 graphify-out/
+
+test-data/

@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { AgentBridge } from '../../kernel/agents/agent-bridge';
+import type { AgentBridge, AgentExecuteParams } from '../../kernel/agents/agent-bridge';
 import { AgentBridgeWithFallback } from '../../kernel/agents/agent-bridge-fallback';
 import { AgentRuntime } from '../../kernel/agents/agent-runtime';
 import { CodexAgentBridge } from '../../kernel/agents/codex-agent-bridge';
@@ -961,5 +961,217 @@ describe('CP-22: claudeSessionId persists across turns', () => {
     expect(executeSpy).toHaveBeenCalledTimes(2);
     const secondCallArgs = executeSpy.mock.calls[1]?.[0];
     expect(secondCallArgs.context.claudeSessionId).toBe(SESSION_ID);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+// CP-23 ~ CP-25: Image mediaRefs passthrough to AgentBridge
+// ════════════════════════════════════════════════════════════════
+
+describe('CP-23: Image attachment mediaRefs passed through to AgentBridge', () => {
+  let ctx: ControllerTestContext;
+
+  afterEach(() => cleanupController(ctx));
+
+  test('mediaRefs with base64Data reach AgentBridge.execute()', async () => {
+    // Capture the params received by AgentBridge (deep-copy mediaRefs since
+    // CentralController clears base64Data after execution to save memory)
+    let capturedMediaRefs: AgentExecuteParams['mediaRefs'];
+    let capturedParams: AgentExecuteParams | undefined;
+    const agentBridge: AgentBridge = {
+      execute: mock(async (params: AgentExecuteParams) => {
+        capturedParams = params;
+        capturedMediaRefs = params.mediaRefs?.map((r) => ({ ...r }));
+        if (params.streamCallback) {
+          await params.streamCallback({ type: 'text_delta', text: '我看到了图片' });
+          await params.streamCallback({ type: 'done' });
+        }
+        return {
+          content: '我看到了图片',
+          tokenUsage: { inputTokens: 10, outputTokens: 5 },
+          toolsUsed: [],
+          finishedNaturally: true,
+          handledBy: 'claude' as const,
+        };
+      }),
+    };
+
+    const mediaProcessor = {
+      processAttachments: mock(async () => [
+        {
+          id: 'img1',
+          mediaType: 'image',
+          state: 'processed',
+          mimeType: 'image/png',
+          description: '一只猫在桌子上',
+          base64Data: 'iVBORw0KGgoAAAANSUhEUg==', // Minimal valid-looking base64
+        },
+      ]),
+      toMediaRef: mock((a: { description?: string; mimeType?: string; base64Data?: string }) => ({
+        mediaType: 'image' as const,
+        mimeType: a.mimeType ?? 'image/png',
+        description: a.description ?? '[图片]',
+        base64Data: a.base64Data,
+      })),
+    };
+
+    ctx = createPipelineTestController({
+      agentBridge,
+      lightLLM: undefined, // Disable gateway → AgentRuntime → AgentBridge
+      mediaProcessor: mediaProcessor as unknown as CentralControllerDeps['mediaProcessor'],
+    });
+
+    const msg = createMessage({
+      content: '帮我看看这张图',
+      attachments: [
+        {
+          id: 'img1',
+          mediaType: 'image' as const,
+          state: 'pending' as const,
+          mimeType: 'image/png',
+          sourceRef: { channel: 'web' as const, base64: 'iVBORw0KGgoAAAANSUhEUg==' },
+        },
+      ],
+    });
+
+    const result = await ctx.controller.handleIncomingMessage(msg);
+
+    expect(result.success).toBe(true);
+    expect(mediaProcessor.processAttachments).toHaveBeenCalledTimes(1);
+
+    // Core assertion: mediaRefs reached the AgentBridge
+    expect(capturedParams).toBeDefined();
+    expect(capturedMediaRefs).toBeDefined();
+    expect(capturedMediaRefs?.length).toBe(1);
+    expect(capturedMediaRefs?.[0]?.mediaType).toBe('image');
+    expect(capturedMediaRefs?.[0]?.base64Data).toBe('iVBORw0KGgoAAAANSUhEUg==');
+    expect(capturedMediaRefs?.[0]?.description).toBe('一只猫在桌子上');
+  });
+});
+
+describe('CP-24: No attachment → mediaRefs is undefined on AgentBridge', () => {
+  let ctx: ControllerTestContext;
+
+  afterEach(() => cleanupController(ctx));
+
+  test('plain text message has no mediaRefs on bridge params', async () => {
+    let capturedParams: AgentExecuteParams | undefined;
+    const agentBridge: AgentBridge = {
+      execute: mock(async (params: AgentExecuteParams) => {
+        capturedParams = params;
+        if (params.streamCallback) {
+          await params.streamCallback({ type: 'text_delta', text: '你好' });
+          await params.streamCallback({ type: 'done' });
+        }
+        return {
+          content: '你好',
+          tokenUsage: { inputTokens: 5, outputTokens: 3 },
+          toolsUsed: [],
+          finishedNaturally: true,
+          handledBy: 'claude' as const,
+        };
+      }),
+    };
+
+    ctx = createPipelineTestController({
+      agentBridge,
+      lightLLM: undefined,
+    });
+
+    const msg = createMessage({ content: '你好' });
+    const result = await ctx.controller.handleIncomingMessage(msg);
+
+    expect(result.success).toBe(true);
+    expect(capturedParams).toBeDefined();
+    // No attachments → no mediaRefs
+    expect(capturedParams?.mediaRefs).toBeUndefined();
+  });
+});
+
+describe('CP-25: Multiple images → all mediaRefs passed through', () => {
+  let ctx: ControllerTestContext;
+
+  afterEach(() => cleanupController(ctx));
+
+  test('two image attachments produce two mediaRefs on bridge params', async () => {
+    let capturedMediaRefs: AgentExecuteParams['mediaRefs'];
+    const agentBridge: AgentBridge = {
+      execute: mock(async (params: AgentExecuteParams) => {
+        capturedMediaRefs = params.mediaRefs?.map((r) => ({ ...r }));
+        if (params.streamCallback) {
+          await params.streamCallback({ type: 'text_delta', text: '两张图' });
+          await params.streamCallback({ type: 'done' });
+        }
+        return {
+          content: '两张图',
+          tokenUsage: { inputTokens: 15, outputTokens: 5 },
+          toolsUsed: [],
+          finishedNaturally: true,
+          handledBy: 'claude' as const,
+        };
+      }),
+    };
+
+    const mediaProcessor = {
+      processAttachments: mock(async () => [
+        {
+          id: 'img1',
+          mediaType: 'image',
+          state: 'processed',
+          mimeType: 'image/png',
+          description: '第一张图',
+          base64Data: 'base64data1',
+        },
+        {
+          id: 'img2',
+          mediaType: 'image',
+          state: 'processed',
+          mimeType: 'image/jpeg',
+          description: '第二张图',
+          base64Data: 'base64data2',
+        },
+      ]),
+      toMediaRef: mock((a: { description?: string; mimeType?: string; base64Data?: string }) => ({
+        mediaType: 'image' as const,
+        mimeType: a.mimeType ?? 'image/png',
+        description: a.description ?? '[图片]',
+        base64Data: a.base64Data,
+      })),
+    };
+
+    ctx = createPipelineTestController({
+      agentBridge,
+      lightLLM: undefined,
+      mediaProcessor: mediaProcessor as unknown as CentralControllerDeps['mediaProcessor'],
+    });
+
+    const msg = createMessage({
+      content: '对比这两张图',
+      attachments: [
+        {
+          id: 'img1',
+          mediaType: 'image' as const,
+          state: 'pending' as const,
+          mimeType: 'image/png',
+          sourceRef: { channel: 'web' as const, base64: 'base64data1' },
+        },
+        {
+          id: 'img2',
+          mediaType: 'image' as const,
+          state: 'pending' as const,
+          mimeType: 'image/jpeg',
+          sourceRef: { channel: 'web' as const, base64: 'base64data2' },
+        },
+      ],
+    });
+
+    const result = await ctx.controller.handleIncomingMessage(msg);
+
+    expect(result.success).toBe(true);
+    expect(capturedMediaRefs?.length).toBe(2);
+    expect(capturedMediaRefs?.[0]?.description).toBe('第一张图');
+    expect(capturedMediaRefs?.[0]?.mimeType).toBe('image/png');
+    expect(capturedMediaRefs?.[1]?.description).toBe('第二张图');
+    expect(capturedMediaRefs?.[1]?.mimeType).toBe('image/jpeg');
   });
 });
