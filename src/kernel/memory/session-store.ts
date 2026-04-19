@@ -58,7 +58,7 @@ export class SessionStore {
         content,
         content=session_messages,
         content_rowid=id,
-        tokenize='unicode61'
+        tokenize='trigram'
       );
     `);
 
@@ -82,6 +82,17 @@ export class SessionStore {
           VALUES('delete', old.id, old.content);
       END;
     `);
+
+    // ── Migrations for existing databases ──
+    this.migrateAddColumn('session_messages', 'media_refs_json', 'TEXT');
+  }
+
+  /** Safely add a column if it doesn't already exist (idempotent). */
+  private migrateAddColumn(table: string, column: string, type: string): void {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (cols.some((c) => c.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    this.logger.info('数据库迁移：添加列', { table, column });
   }
 
   // ── Session lifecycle ──
@@ -170,6 +181,38 @@ export class SessionStore {
     limit?: number;
   }): SearchResult[] {
     const limit = params.limit ?? 10;
+    const ftsQuery = SessionStore.toFtsQuery(params.query);
+
+    // Path 1: FTS5 trigram search (fast, needs 3+ char terms)
+    if (ftsQuery) {
+      try {
+        const results = this.db
+          .prepare(
+            `SELECT
+            m.session_id as sessionId,
+            m.role,
+            m.content,
+            m.timestamp,
+            s.channel,
+            s.summary as sessionSummary,
+            highlight(session_messages_fts, 0, '<mark>', '</mark>') as highlight
+          FROM session_messages_fts fts
+          JOIN session_messages m ON fts.rowid = m.id
+          JOIN sessions s ON m.session_id = s.id
+          WHERE fts.content MATCH ?
+            AND m.user_id = ?
+          ORDER BY m.timestamp DESC
+          LIMIT ?`,
+          )
+          .all(ftsQuery, params.userId, limit) as SearchResult[];
+        if (results.length > 0) return results;
+      } catch {
+        // FTS query syntax error — fall through to LIKE
+      }
+    }
+
+    // Path 2: LIKE fallback for short terms (2-char) or FTS failures
+    const likePattern = `%${params.query.replace(/[%_]/g, '')}%`;
     return this.db
       .prepare(
         `SELECT
@@ -179,16 +222,42 @@ export class SessionStore {
         m.timestamp,
         s.channel,
         s.summary as sessionSummary,
-        highlight(session_messages_fts, 0, '<mark>', '</mark>') as highlight
-      FROM session_messages_fts fts
-      JOIN session_messages m ON fts.rowid = m.id
+        '' as highlight
+      FROM session_messages m
       JOIN sessions s ON m.session_id = s.id
-      WHERE fts.content MATCH ?
+      WHERE m.content LIKE ?
         AND m.user_id = ?
       ORDER BY m.timestamp DESC
       LIMIT ?`,
       )
-      .all(params.query, params.userId, limit) as SearchResult[];
+      .all(likePattern, params.userId, limit) as SearchResult[];
+  }
+
+  /**
+   * Convert a natural language query to FTS5 MATCH syntax.
+   *
+   * With trigram tokenizer, FTS5 supports direct substring matching.
+   * We extract meaningful phrases (3+ chars) by splitting on punctuation
+   * and single-char function words, then join with OR.
+   */
+  static toFtsQuery(raw: string): string | null {
+    // Split on punctuation and whitespace
+    const phrases = raw
+      .split(/[？?，。！!、：:；;（）()\s]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 3); // trigram needs at least 3 chars
+
+    // Deduplicate and limit to avoid overly broad queries
+    const unique = [...new Set(phrases)].slice(0, 6);
+    if (unique.length === 0) {
+      // Fallback: try 2-char tokens
+      const short = raw
+        .split(/[？?，。！!、：:；;（）()\s]+/)
+        .filter((s) => s.length >= 2)
+        .slice(0, 6);
+      return short.length > 0 ? short.join(' OR ') : null;
+    }
+    return unique.join(' OR ');
   }
 
   getRecentSessions(params: {

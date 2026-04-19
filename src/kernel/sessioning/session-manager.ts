@@ -139,6 +139,19 @@ export class SessionManager {
     return this.sessions.get(key);
   }
 
+  /**
+   * Destroy a session without triggering onSessionClose callback.
+   * Used by benchmark QA phase to avoid polluting the memory store.
+   */
+  destroySession(key: string): void {
+    const session = this.findSessionByKey(key);
+    if (session) {
+      session.status = 'closed';
+      this.sessions.delete(key);
+      this.logger.debug('会话销毁（无回调）', { sessionId: session.id, key });
+    }
+  }
+
   private findSessionByKey(key: string): Session | undefined {
     // Try direct key lookup first
     const direct = this.sessions.get(key);

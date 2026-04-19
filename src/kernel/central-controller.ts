@@ -21,6 +21,7 @@ import { McpConfigBuilder } from './agents/mcp-config-builder';
 import { TaskGuidanceBuilder } from './agents/task-guidance-builder';
 import { TaskClassifier } from './classifier/task-classifier';
 import { type AnalysisItem, routeAnalysis } from './evolution/analysis-router';
+import { shouldTriggerDigest } from './evolution/digest/digest-trigger';
 import { EvolutionScheduler } from './evolution/evolution-scheduler';
 import { FrozenContextManager } from './evolution/frozen-context-manager';
 import { KnowledgeRouter } from './evolution/knowledge-router';
@@ -36,11 +37,11 @@ import { MediaUnderstanding } from './media/media-understanding';
 import { ContextManager } from './memory/context-manager';
 import { EntityManager } from './memory/graph/entity-manager';
 import { OpenVikingClient } from './memory/openviking/openviking-client';
-import type { SessionStore } from './memory/session-store';
+import { SessionStore } from './memory/session-store';
 import { OnboardingManager } from './onboarding';
 import { ConfigLoader } from './prompt/config-loader';
 import { ConflictResolver } from './prompt/conflict-resolver';
-import { buildMemorySnapshot } from './prompt/memory-snapshot-builder';
+import { type MemoryItem, buildMemorySnapshot } from './prompt/memory-snapshot-builder';
 import { buildPrependContext } from './prompt/prepend-context-builder';
 import { SystemPromptBuilder } from './prompt/system-prompt-builder';
 import { buildTurnContext } from './prompt/turn-context-builder';
@@ -67,6 +68,19 @@ import { TaskDispatcher } from './tasking/task-dispatcher';
 import { TaskQueue } from './tasking/task-queue';
 import type { TaskStore } from './tasking/task-store';
 import { WorkspaceManager } from './workspace';
+
+/** Map OpenViking memory URI path segments to MemoryCategory for snapshot builder */
+function uriToMemoryCategory(
+  uri: string,
+): 'preference' | 'fact' | 'context' | 'instruction' | 'task' | 'insight' {
+  const lower = uri.toLowerCase();
+  if (lower.includes('/preference')) return 'preference';
+  if (lower.includes('/instruction') || lower.includes('/procedure')) return 'instruction';
+  if (lower.includes('/context') || lower.includes('/episodic')) return 'context';
+  if (lower.includes('/insight') || lower.includes('/semantic')) return 'insight';
+  if (lower.includes('/task')) return 'task';
+  return 'fact'; // default: facts, meta, unknown
+}
 
 export interface CentralControllerDeps {
   sessionManager?: SessionManager;
@@ -203,8 +217,31 @@ export class CentralController {
     // ContextManager — Pre-Compaction flush
     this.contextManager = deps?.contextManager ?? new ContextManager(this.ovClient);
 
-    // Evolution modules
-    this.evolutionScheduler = deps?.evolutionScheduler ?? new EvolutionScheduler(this.ovClient);
+    // Evolution modules — inject LightLLM for reflect() and digest distill
+    const reflectLlmCall = deps?.lightLLM
+      ? async (prompt: string): Promise<string> => {
+          const res = await deps.lightLLM?.complete({
+            messages: [{ role: 'user', content: prompt }],
+          });
+          return res?.content ?? '';
+        }
+      : undefined;
+    const digestLlmDistill = deps?.lightLLM
+      ? async (clusterContent: string) => {
+          const res = await deps.lightLLM?.complete({
+            messages: [
+              {
+                role: 'user',
+                content: `请将以下记忆碎片提炼为一条洞察。输出 JSON：{"topic":"...","insight":"...","questions":[],"relatedSkills":[],"sourceUris":[]}\n\n${clusterContent}`,
+              },
+            ],
+          });
+          return JSON.parse(res?.content ?? '{}');
+        }
+      : undefined;
+    this.evolutionScheduler =
+      deps?.evolutionScheduler ??
+      new EvolutionScheduler(this.ovClient, reflectLlmCall, digestLlmDistill);
     this.lessonsUpdater =
       deps?.lessonsUpdater ?? new LessonsLearnedUpdater(this.ovClient, this.configLoader);
     this.entityManager = deps?.entityManager ?? new EntityManager(this.ovClient);
@@ -340,10 +377,30 @@ export class CentralController {
 
       try {
         const commitResult = await this.ovClient.commit(sessionId);
-        if (commitResult.memories_extracted > 0) {
-          // Schedule evolution for newly extracted memories
-          // Note: commit doesn't return URIs directly, so schedule general evolution
-          this.evolutionScheduler.schedulePostCommit([]);
+        // OV commit is now async — returns { status: 'accepted', task_id } instead of
+        // synchronous memories_extracted count. Trigger evolution if commit was accepted
+        // OR if sync extraction reported any memories.
+        const hasCommit =
+          commitResult.status === 'accepted' || (commitResult.memories_extracted ?? 0) > 0;
+        if (hasCommit) {
+          // Retrieve newly extracted memory URIs for link evolution
+          // (find may return empty if async extraction hasn't finished yet — that's ok)
+          let extractedUris: string[] = [];
+          try {
+            const recentMemories = await this.ovClient.find({
+              query:
+                session?.messages
+                  ?.slice(-3)
+                  .map((m) => m.content)
+                  .join(' ') ?? '',
+              target_uri: 'viking://user/default/memories',
+              limit: 20,
+            });
+            extractedUris = recentMemories.map((m) => m.uri);
+          } catch {
+            // Non-critical: link will be skipped, reflect still runs
+          }
+          this.evolutionScheduler.schedulePostCommit(extractedUris);
         }
       } catch (err) {
         this.logger.warn('会话提交失败', {
@@ -415,6 +472,24 @@ export class CentralController {
           }
         } catch (err) {
           this.logger.warn('反思触发检查失败', {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // DD-022: Check if digest should trigger
+      if (session) {
+        try {
+          const digestState = {
+            undigestedCount: this.sessionStore?.getUnreflectedSessions(session.userId).length ?? 0,
+            lastDigestAt: this.sessionStore?.getLastReflectionAt(session.userId) ?? null,
+          };
+          if (shouldTriggerDigest(digestState)) {
+            this.evolutionScheduler.scheduleDigest(session.userId);
+          }
+        } catch (err) {
+          this.logger.warn('Digest 触发检查失败', {
             sessionId,
             error: err instanceof Error ? err.message : String(err),
           });
@@ -961,9 +1036,7 @@ export class CentralController {
     // --- Media processing ---
     // Set uploads directory so downloader persists files to disk
     if (task.session.workspacePath) {
-      this.mediaProcessor.setUploadsDir(
-        join(task.session.workspacePath, 'workspace', 'uploads'),
-      );
+      this.mediaProcessor.setUploadsDir(join(task.session.workspacePath, 'workspace', 'uploads'));
     }
 
     let mediaRefs: MediaRef[] | undefined;
@@ -1024,6 +1097,12 @@ export class CentralController {
     } catch {
       // Non-critical, continue
     }
+
+    // Original content preservation: handled by SessionStore.appendMessage() which
+    // auto-indexes into SQLite FTS5 (session_messages_fts). The memory MCP server's
+    // session_search tool queries this for precise keyword matching.
+    // OV's addResource({content}) API doesn't support content-based creation (422),
+    // so we rely on FTS5 as the raw-text retrieval layer.
 
     // DD-021: Send placeholder card for Feishu channel before agent execution
     let existingCardId: string | undefined;
@@ -1116,8 +1195,9 @@ export class CentralController {
           channel: task.session.channel,
         });
 
-        // W-04: Build memory snapshot from real builder (empty data until OpenViking integration)
-        const memorySnapshot = buildMemorySnapshot([]);
+        // W-04: Build memory snapshot from OpenViking long-term memories
+        const snapshotMemories = await this.fetchSnapshotMemories(task.session.userId);
+        const memorySnapshot = buildMemorySnapshot(snapshotMemories);
 
         const frozen = await this.systemPromptBuilder.build({
           userId: task.session.userId,
@@ -1228,7 +1308,8 @@ export class CentralController {
             message: task.message.content,
             complexity: task.classifyResult?.complexity || 'complex',
             taskType: task.classifyResult?.taskType || 'chat',
-            hasAttachments: (task.message.attachments?.length ?? 0) > 0,
+            hasAttachments:
+              (task.message.attachments?.length ?? 0) > 0 || (mediaRefs?.length ?? 0) > 0,
             agentParams: {
               systemPrompt: finalSystemPrompt,
               prependContext,
@@ -1579,24 +1660,106 @@ export class CentralController {
 
   /**
    * W-05: Retrieve relevant memories for per-turn context injection.
-   * Graceful degradation: returns empty array if OpenViking is unavailable.
+   *
+   * Dual-path search:
+   *   1. OV semantic search (memories + resources) — for theme/preference recall
+   *   2. SQLite FTS5 keyword search (session history) — for exact details (dates, numbers, names)
+   *
+   * Graceful degradation: returns empty array if both paths fail.
    */
   private async retrieveRelevantMemories(
     query: string,
     userId: string,
   ): Promise<Array<{ content: string; updatedAt: number }>> {
+    const results: Array<{ content: string; updatedAt: number; score: number }> = [];
+
+    // ── Path 1: OV semantic search (memories + resources) ──
+    if (this.ovClient) {
+      try {
+        const [memoryHits, resourceHits] = await Promise.all([
+          this.ovClient.find({
+            query,
+            target_uri: 'viking://user/default/memories',
+            limit: 10,
+          }),
+          this.ovClient.find({
+            query,
+            target_uri: 'viking://resources',
+            limit: 5,
+          }),
+        ]);
+        for (const r of [...(memoryHits ?? []), ...(resourceHits ?? [])]) {
+          const content = r.abstract || String(r);
+          if (content && content.length > 5) {
+            results.push({ content, updatedAt: Date.now(), score: r.score ?? 0 });
+          }
+        }
+      } catch (err) {
+        this.logger.debug('OV per-turn 检索失败，降级', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // ── Path 2: FTS5 keyword search on session history ──
+    try {
+      // FTS5 keyword search — tokenization delegated to SessionStore.toFtsQuery()
+      const ftsQuery = SessionStore.toFtsQuery(query);
+      if (ftsQuery && this.sessionStore) {
+        const ftsResults = this.sessionStore.searchMessages({
+          userId,
+          query: ftsQuery,
+          limit: 5,
+        });
+        for (const r of ftsResults) {
+          // Truncate long session messages to keep context reasonable
+          const content = r.content.length > 500 ? `${r.content.slice(0, 500)}…` : r.content;
+          const dateStr = r.timestamp ? new Date(r.timestamp).toISOString().split('T')[0] : '';
+          results.push({
+            content: `[对话记录${dateStr ? ` ${dateStr}` : ''}] ${content}`,
+            updatedAt: r.timestamp ?? Date.now(),
+            score: 0.4, // FTS keyword hits get a moderate base score
+          });
+        }
+      }
+    } catch (err) {
+      this.logger.debug('FTS5 per-turn 检索失败，降级', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // Deduplicate and sort by score, return top 10
+    return results
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+      .map(({ content, updatedAt }) => ({ content, updatedAt }));
+  }
+
+  // FTS query building is delegated to SessionStore.toFtsQuery()
+
+  /**
+   * W-04: Fetch user's long-term memories from OpenViking for frozen system prompt snapshot.
+   * Searches across all memory categories and maps to MemoryItem format.
+   */
+  private async fetchSnapshotMemories(userId: string): Promise<MemoryItem[]> {
     if (!this.ovClient) return [];
     try {
       const results = await this.ovClient.find({
-        query,
-        target_uri: `viking://user/${userId}/memories`,
-        limit: 5,
+        query: '*',
+        target_uri: 'viking://user/default/memories',
+        limit: 30,
       });
       return (results || []).map((r) => ({
         content: r.abstract || String(r),
+        category: uriToMemoryCategory(r.uri),
+        importance: r.score,
         updatedAt: Date.now(),
       }));
-    } catch {
+    } catch (err) {
+      this.logger.warn('记忆快照加载失败，降级为空快照', {
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
       return [];
     }
   }
